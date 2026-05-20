@@ -14,7 +14,8 @@ import {
   FileText,
   HelpCircle,
   Upload,
-  LogOut
+  LogOut,
+  FolderOpen
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 
@@ -32,7 +33,8 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     selectFileButton: 'Selecionar Arquivo de Entrada',
     loading: 'Carregando...',
     exitButton: 'Sair',
-    inputSourceTitle: 'Origem do Programa de Entrada',
+    inputSourceTitle: 'Imagem de Programa',
+    openImageHint: 'Abrir Imagem de Programa',
     clickToBrowse: 'Clique para navegar no seu sistema',
     supportedFormats: 'Formatos CAS, WAV, DSK ou BIN',
     fileNameLabel: 'Nome do Arquivo:',
@@ -100,7 +102,8 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     selectFileButton: 'Select Input File',
     loading: 'Loading...',
     exitButton: 'Exit',
-    inputSourceTitle: 'Input Program Source',
+    inputSourceTitle: 'Program Image',
+    openImageHint: 'Open Program Image',
     clickToBrowse: 'Click to browse your system',
     supportedFormats: 'CAS, WAV, DSK or BIN formats',
     fileNameLabel: 'File Name:',
@@ -788,6 +791,32 @@ export default function App() {
 
         {/* Premium Toolbar */}
         <div className="flex items-center gap-3 bg-slate-900/40 border border-[var(--border)] p-1.5 px-3 rounded-xl backdrop-blur-md">
+          {/* Abrir Imagem (Open File Icon) */}
+          <button
+            onClick={handleSelectFile}
+            className="p-2 text-[var(--primary)] hover:text-white border border-[var(--primary)]/30 hover:border-[var(--primary)] bg-[var(--primary-glow)] hover:bg-[var(--primary)] hover:text-slate-950 rounded-lg transition-all flex items-center justify-center cursor-pointer"
+            title={t('openImageHint')}
+          >
+            <FolderOpen size={14} />
+          </button>
+
+          {/* Montar e Compilar ROM (Cpu Icon) */}
+          <button
+            disabled={!extractedPayload}
+            onClick={handleCompile}
+            className={`p-2 rounded-lg transition-all flex items-center justify-center cursor-pointer ${
+              !extractedPayload
+                ? 'opacity-30 cursor-not-allowed border border-slate-800 text-slate-500'
+                : 'text-purple-400 hover:text-white border border-purple-900/40 hover:border-purple-600 bg-purple-950/20 hover:bg-purple-900/30 shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+            }`}
+            title={t('compileButton')}
+          >
+            <Cpu size={14} />
+          </button>
+
+          {/* Divider */}
+          <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+
           {/* BR and US Buttons */}
           <button
             onClick={() => changeLanguage('pt-br')}
