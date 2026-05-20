@@ -1,0 +1,63 @@
+{
+  "name": "coco-ccc-converter",
+  "version": "1.0.0",
+  "description": "TRS-80 Color Computer CAS/WAV/DSK to CCC EPROM Converter",
+  "main": "./out/main/index.js",
+  "author": "Antigravity CoCo Team",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "postinstall": "electron-builder install-app-deps",
+    "package:win": "electron-vite build && electron-builder --win --dir",
+    "package:linux": "electron-vite build && electron-builder --linux --dir",
+    "dist:win": "electron-vite build && electron-builder --win",
+    "dist:linux": "electron-vite build && electron-builder --linux",
+    "web:dev": "vite --config vite.config.web.ts",
+    "web:build": "vite build --config vite.config.web.ts"
+  },
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "lucide-react": "^0.395.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.8",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-vite": "^2.3.0",
+    "typescript": "^5.5.2",
+    "vite": "^5.3.1"
+  },
+  "build": {
+    "appId": "com.emucoco.cccconverter",
+    "productName": "CoCo CCC Converter",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development"
+    }
+  }
+}
