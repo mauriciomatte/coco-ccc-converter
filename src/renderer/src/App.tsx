@@ -740,7 +740,7 @@ export default function App() {
       </header>
 
       {/* Main App Grid */}
-      <main className="flex-1 overflow-hidden grid grid-cols-12 gap-4 p-4" style={{ minHeight: 0, height: 0 }}>
+      <main className="flex-1 overflow-hidden grid grid-cols-12 gap-4 p-4" style={{ minHeight: 0 }}>
         
         {/* LEFT COLUMN: Input Details & Configuration (4 cols) */}
         <div className="col-span-4 flex flex-col gap-4 overflow-y-auto pr-1 h-full max-h-full" style={{ minHeight: 0 }}>
@@ -750,7 +750,7 @@ export default function App() {
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            className={`glass-panel p-5 flex flex-col gap-4 animate-slideup relative transition-all duration-300 ${isDragging ? 'border-[var(--primary)] bg-slate-900/80 shadow-[0_0_20px_rgba(20,250,200,0.15)]' : ''}`}
+            className={`glass-panel p-4 flex flex-col gap-3 animate-slideup relative transition-all duration-300 ${isDragging ? 'border-[var(--primary)] bg-slate-900/80 shadow-[0_0_20px_rgba(20,250,200,0.15)]' : ''}`}
           >
             {isDragging && (
               <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm rounded-xl border border-[var(--primary)] flex flex-col items-center justify-center gap-3 z-50 pointer-events-none animate-fadein">
@@ -802,7 +802,7 @@ export default function App() {
                 </div>
               </div>
             ) : (
-              <div className="flex flex-col gap-3 text-xs bg-slate-950/30 p-3 rounded-lg border border-[var(--border)]">
+              <div className="flex flex-col gap-2 text-xs bg-slate-950/30 p-2.5 rounded-lg border border-[var(--border)]">
                 <div className="flex justify-between">
                   <span className="text-[var(--text-secondary)]">{t('fileNameLabel')}</span>
                   <span className="font-semibold text-white select-all">{fileDetails.fileName}</span>
@@ -838,7 +838,7 @@ export default function App() {
                     
                     {/* Botão de abrir modal para o payload extraído */}
                     {extractedPayload && (
-                      <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-[var(--border)]">
+                      <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-[var(--border)]">
                         <button
                            onClick={() => {
                             setModalBuffer(extractedPayload);
@@ -866,7 +866,7 @@ export default function App() {
 
             {/* DSK directory selector */}
             {dskFiles.length > 0 && (
-              <div className="flex flex-col gap-2 border-t border-[var(--border)] pt-3">
+              <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
                 <h3 className="text-xs font-bold text-white tracking-wider uppercase mb-1 flex items-center gap-1">
                   <Disc size={12} className="text-yellow-400" />
                   {t('dskFilesTitle')}
@@ -900,7 +900,7 @@ export default function App() {
 
             {/* CAS tape blocks tracker */}
             {casBlocks.length > 0 && (
-              <div className="flex flex-col gap-2 border-t border-[var(--border)] pt-3">
+              <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
                 <h3 className="text-xs font-bold text-white tracking-wider uppercase mb-1 flex items-center gap-1">
                   <FileAudio size={12} className="text-purple-400" />
                   {t('casBlocksTitle')} ({casBlocks.length})
@@ -921,13 +921,13 @@ export default function App() {
           </section>
 
           {/* Cartridge build configuration card */}
-          <section className="glass-panel p-5 flex flex-col gap-4 animate-slideup" style={{ animationDelay: '0.1s' }}>
+          <section className="glass-panel p-4 flex flex-col gap-3 animate-slideup" style={{ animationDelay: '0.1s' }}>
             <h2 className="text-sm font-bold text-white border-b border-[var(--border)] pb-2 tracking-wide uppercase flex items-center gap-2">
               <Sliders className="text-purple-400" size={16} />
               {t('epromConfigTitle')}
             </h2>
 
-            <div className="flex flex-col gap-4 text-xs">
+            <div className="flex flex-col gap-2.5 text-xs">
               {/* Target ROM Size */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-[var(--text-secondary)] font-semibold flex justify-between items-center">
@@ -962,7 +962,7 @@ export default function App() {
               </div>
 
               {/* Loader Type Stage */}
-              <div className="flex flex-col gap-2 bg-slate-900/40 p-3 rounded-lg border border-[var(--border)]">
+              <div className="flex flex-col gap-1.5 bg-slate-900/40 py-2 px-3 rounded-lg border border-[var(--border)]">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-white flex items-center gap-1.5">
                     {t('allRamLabel')}
@@ -991,7 +991,7 @@ export default function App() {
               </div>
 
               {/* Dragon 32/64 compatibility */}
-              <div className="flex flex-col gap-2 bg-slate-900/40 p-3 rounded-lg border border-[var(--border)]">
+              <div className="flex flex-col gap-1.5 bg-slate-900/40 py-2 px-3 rounded-lg border border-[var(--border)]">
                 <div className="flex justify-between items-center">
                   <span className="font-semibold text-white flex items-center gap-1.5">
                     {t('dragonLabel')}
@@ -1020,7 +1020,7 @@ export default function App() {
               </div>
 
               {/* Filler Byte */}
-              <div className="flex flex-col gap-2 bg-slate-900/10 p-3 rounded-lg border border-[var(--border)]/40">
+              <div className="flex flex-col gap-1.5 bg-slate-900/10 py-2 px-3 rounded-lg border border-[var(--border)]/40">
                 <div className="flex justify-between items-center">
                   <label className="text-[var(--text-secondary)] font-semibold flex items-center gap-1.5">
                     {t('fillerByteLabel')}
