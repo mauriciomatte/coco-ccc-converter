@@ -786,3 +786,33 @@ input[type="number"] {
   transform: translateX(-50%) translateY(0);
 }
 
+/* Splitter styles */
+.splitter-v {
+  width: 6px;
+  background-color: var(--border);
+  cursor: col-resize;
+  transition: all 0.2s ease;
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.splitter-v:hover, .splitter-v:active {
+  background-color: var(--primary);
+  box-shadow: 0 0 10px var(--primary);
+}
+
+.splitter-h {
+  height: 6px;
+  background-color: var(--border);
+  cursor: row-resize;
+  transition: all 0.2s ease;
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
+}
+
+.splitter-h:hover, .splitter-h:active {
+  background-color: var(--primary);
+  box-shadow: 0 0 10px var(--primary);
+}

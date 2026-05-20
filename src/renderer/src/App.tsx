@@ -13,7 +13,8 @@ import {
   CheckCircle2, 
   FileText,
   HelpCircle,
-  Upload
+  Upload,
+  LogOut
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 
@@ -30,6 +31,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     subtitle: 'CONSTRUTOR DE CARTUCHOS EPROM PARA TRS-80 COLOR COMPUTER',
     selectFileButton: 'Selecionar Arquivo de Entrada',
     loading: 'Carregando...',
+    exitButton: 'Sair',
     inputSourceTitle: 'Origem do Programa de Entrada',
     clickToBrowse: 'Clique para navegar no seu sistema',
     supportedFormats: 'Formatos CAS, WAV, DSK ou BIN',
@@ -97,6 +99,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     subtitle: 'EPROM CARTRIDGE BUILDER FOR TRS-80 COLOR COMPUTER',
     selectFileButton: 'Select Input File',
     loading: 'Loading...',
+    exitButton: 'Exit',
     inputSourceTitle: 'Input Program Source',
     clickToBrowse: 'Click to browse your system',
     supportedFormats: 'CAS, WAV, DSK or BIN formats',
@@ -314,6 +317,75 @@ export default function App() {
 
   // Estado e métodos para Drag & Drop
   const [isDragging, setIsDragging] = useState<boolean>(false);
+
+  // Estados para reajuste de layout (Splitters)
+  const [width1, setWidth1] = useState<number>(380); // Largura padrão da Coluna 1
+  const [width2, setWidth2] = useState<number>(380); // Largura padrão da Coluna 2
+  const [consoleHeight, setConsoleHeight] = useState<number>(140); // Altura padrão do terminal no rodapé
+  const [isResizing, setIsResizing] = useState<boolean>(false);
+
+  const startResizing1 = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+    const startX = mouseDownEvent.clientX;
+    const startWidth = width1;
+
+    const doDrag = (mouseMoveEvent: MouseEvent) => {
+      const deltaX = mouseMoveEvent.clientX - startX;
+      setWidth1(Math.max(300, Math.min(600, startWidth + deltaX)));
+    };
+
+    const stopDrag = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', doDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  };
+
+  const startResizing2 = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+    const startX = mouseDownEvent.clientX;
+    const startWidth = width2;
+
+    const doDrag = (mouseMoveEvent: MouseEvent) => {
+      const deltaX = mouseMoveEvent.clientX - startX;
+      setWidth2(Math.max(300, Math.min(600, startWidth + deltaX)));
+    };
+
+    const stopDrag = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', doDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  };
+
+  const startResizingConsole = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+    const startY = mouseDownEvent.clientY;
+    const startHeight = consoleHeight;
+
+    const doDrag = (mouseMoveEvent: MouseEvent) => {
+      const currentDeltaY = mouseMoveEvent.clientY - startY;
+      setConsoleHeight(Math.max(80, Math.min(350, startHeight - currentDeltaY)));
+    };
+
+    const stopDrag = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', doDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -714,445 +786,495 @@ export default function App() {
           </div>
         </div>
 
-        {/* Global actions */}
-        <div className="flex items-center gap-4">
-          {/* Flags Language Selector */}
-          <div className="flex items-center gap-2 bg-slate-900/60 border border-[var(--border)] p-1 px-2.5 rounded-full backdrop-blur-md shadow-inner">
-            <button
-              onClick={() => changeLanguage('pt-br')}
-              className={`text-xl transition-all cursor-pointer ${currentLang === 'pt-br' ? 'scale-110 filter drop-shadow-[0_0_5px_rgba(20,250,200,0.8)] opacity-100' : 'opacity-40 hover:opacity-80 hover:scale-105'}`}
-              title="Português (Brasil)"
-            >
-              🇧🇷
-            </button>
-            <div className="w-[1px] h-4 bg-[var(--border)]" />
-            <button
-              onClick={() => changeLanguage('en-us')}
-              className={`text-xl transition-all cursor-pointer ${currentLang === 'en-us' ? 'scale-110 filter drop-shadow-[0_0_5px_rgba(20,250,200,0.8)] opacity-100' : 'opacity-40 hover:opacity-80 hover:scale-105'}`}
-              title="English (United States)"
-            >
-              🇺🇸
-            </button>
-          </div>
+        {/* Premium Toolbar */}
+        <div className="flex items-center gap-3 bg-slate-900/40 border border-[var(--border)] p-1.5 px-3 rounded-xl backdrop-blur-md">
+          {/* BR and US Buttons */}
+          <button
+            onClick={() => changeLanguage('pt-br')}
+            className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              currentLang === 'pt-br'
+                ? 'bg-[var(--primary)] text-slate-950 shadow-[0_0_10px_var(--primary-glow)] font-extrabold'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
+            }`}
+            title="Português (Brasil)"
+          >
+            <span>🇧🇷</span> BR
+          </button>
+          <button
+            onClick={() => changeLanguage('en-us')}
+            className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              currentLang === 'en-us'
+                ? 'bg-[var(--primary)] text-slate-950 shadow-[0_0_10px_var(--primary-glow)] font-extrabold'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
+            }`}
+            title="English (United States)"
+          >
+            <span>🇺🇸</span> US
+          </button>
 
+          {/* Divider */}
+          <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
 
+          {/* Exit Button */}
+          <button
+            onClick={() => {
+              addLog('Fechando o aplicativo...', 'Closing application...', 'info');
+              setTimeout(() => {
+                window.close();
+              }, 200);
+            }}
+            className="px-3 py-1 text-xs font-bold text-rose-400 hover:text-white border border-rose-950/40 hover:border-rose-700/60 bg-rose-950/10 hover:bg-rose-950/50 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            title={t('exitButton')}
+          >
+            <LogOut size={12} />
+            <span>{t('exitButton')}</span>
+          </button>
         </div>
       </header>
 
-      {/* Main App Grid */}
-      <main className="flex-1 overflow-hidden grid grid-cols-12 gap-4 p-4" style={{ minHeight: 0 }}>
+      {/* Main App Container */}
+      <main className={`flex-1 flex flex-col overflow-hidden ${isResizing ? 'select-none' : ''}`} style={{ minHeight: 0 }}>
         
-        {/* LEFT COLUMN: Input Details & Configuration (4 cols) */}
-        <div className="col-span-4 flex flex-col gap-4 overflow-y-auto pr-1 h-full max-h-full" style={{ minHeight: 0 }}>
+        {/* Top Section with resizable vertical panels */}
+        <div className="flex-1 flex flex-row overflow-hidden p-4 pb-0 gap-0" style={{ minHeight: 0 }}>
           
-          {/* File Upload card */}
-          <section 
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            className={`glass-panel p-4 flex flex-col gap-3 animate-slideup relative transition-all duration-300 ${isDragging ? 'border-[var(--primary)] bg-slate-900/80 shadow-[0_0_20px_rgba(20,250,200,0.15)]' : ''}`}
+          {/* PANEL 1: Input Program Source (Column 1) */}
+          <div 
+            className="flex flex-col gap-4 overflow-y-auto pr-2 h-full max-h-full flex-shrink-0"
+            style={{ width: width1, minHeight: 0 }}
           >
-            {isDragging && (
-              <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm rounded-xl border border-[var(--primary)] flex flex-col items-center justify-center gap-3 z-50 pointer-events-none animate-fadein">
-                <div className="p-4 bg-[var(--primary-glow)] rounded-full text-[var(--primary)] animate-bounce">
-                  <Upload size={32} />
-                </div>
-                <div className="text-center px-4">
-                  <p className="text-sm text-white font-bold uppercase tracking-wider">
-                    {currentLang === 'pt-br' ? 'Solte para Importar' : 'Drop to Import'}
-                  </p>
-                  <p className="text-[10px] text-[var(--text-secondary)] mt-1">
-                    {currentLang === 'pt-br' ? 'Fita, Imagem de Disco ou Binário CoCo' : 'Tape, Disk Image or CoCo Binary'}
-                  </p>
-                </div>
-              </div>
-            )}
-            <div className="flex justify-between items-center border-b border-[var(--border)] pb-2">
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
-                <Disc className="text-cyan-400" size={16} />
-                {t('inputSourceTitle')}
-              </h2>
-              {fileDetails && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleSelectFile}
-                    className="text-[10px] bg-[var(--primary-glow)] hover:bg-[var(--primary)] hover:text-slate-950 text-[var(--primary)] border border-[var(--primary)]/30 font-bold px-2 py-0.5 rounded transition-all flex items-center gap-1 cursor-pointer"
-                  >
-                    <Upload size={10} />
-                    {currentLang === 'pt-br' ? 'Navegar' : 'Browse'}
-                  </button>
-                  <span className="text-[10px] bg-slate-800 text-cyan-400 py-0.5 px-2 rounded-full font-bold uppercase">
-                    {fileDetails.fileExt}
-                  </span>
+            {/* File Upload card */}
+            <section 
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={`glass-panel p-4 flex flex-col gap-3 animate-slideup relative transition-all duration-300 ${isDragging ? 'border-[var(--primary)] bg-slate-900/80 shadow-[0_0_20px_rgba(20,250,200,0.15)]' : ''}`}
+            >
+              {isDragging && (
+                <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm rounded-xl border border-[var(--primary)] flex flex-col items-center justify-center gap-3 z-50 pointer-events-none animate-fadein">
+                  <div className="p-4 bg-[var(--primary-glow)] rounded-full text-[var(--primary)] animate-bounce">
+                    <Upload size={32} />
+                  </div>
+                  <div className="text-center px-4">
+                    <p className="text-sm text-white font-bold uppercase tracking-wider">
+                      {currentLang === 'pt-br' ? 'Solte para Importar' : 'Drop to Import'}
+                    </p>
+                    <p className="text-[10px] text-[var(--text-secondary)] mt-1">
+                      {currentLang === 'pt-br' ? 'Fita, Imagem de Disco ou Binário CoCo' : 'Tape, Disk Image or CoCo Binary'}
+                    </p>
+                  </div>
                 </div>
               )}
-            </div>
-
-            {!fileDetails ? (
-              <div 
-                onClick={handleSelectFile}
-                className="border-2 border-dashed border-[var(--border)] hover:border-[var(--primary)] transition-all cursor-pointer rounded-lg py-5 px-4 flex flex-col items-center justify-center gap-2 bg-slate-950/20"
-              >
-                <div className="p-2 bg-slate-900 rounded-full text-slate-500">
-                  <Binary size={24} />
-                </div>
-                <div className="text-center">
-                  <p className="text-xs text-white font-semibold">{t('clickToBrowse')}</p>
-                  <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{t('supportedFormats')}</p>
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2 text-xs bg-slate-950/30 p-2.5 rounded-lg border border-[var(--border)]">
-                <div className="flex justify-between">
-                  <span className="text-[var(--text-secondary)]">{t('fileNameLabel')}</span>
-                  <span className="font-semibold text-white select-all">{fileDetails.fileName}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-[var(--text-secondary)]">{t('sizeLabel')}</span>
-                  <span className="font-mono text-white">{(fileDetails.size / 1024).toFixed(2)} KB ({fileDetails.size} bytes)</span>
-                </div>
-                {rawFileBuffer && (
-                  <>
-                    <div className="flex justify-between border-t border-[var(--border)] pt-2 mt-2">
-                      <span className="text-[var(--text-secondary)]">{t('cocoProgramNameLabel')}</span>
-                      <input 
-                        type="text" 
-                        maxLength={8}
-                        className="input-text py-0 px-2 text-xs font-mono w-24 text-right"
-                        value={programName} 
-                        onChange={(e) => setProgramName(e.target.value.toUpperCase())}
-                      />
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--text-secondary)]">{t('loadAddrLabel')}</span>
-                      <span className="font-mono text-cyan-400 font-bold">${loadAddr.toString(16).toUpperCase().padStart(4, '0')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--text-secondary)]">{t('execAddrLabel')}</span>
-                      <span className="font-mono text-purple-400 font-bold">${execAddr.toString(16).toUpperCase().padStart(4, '0')}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-[var(--text-secondary)]">{t('payloadSizeLabel')}</span>
-                      <span className="font-mono text-white">{extractedPayload ? extractedPayload.length : 0} bytes</span>
-                    </div>
-                    
-                    {/* Botão de abrir modal para o payload extraído */}
-                    {extractedPayload && (
-                      <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-[var(--border)]">
-                        <button
-                           onClick={() => {
-                            setModalBuffer(extractedPayload);
-                            setModalFileName(fileDetails ? fileDetails.fileName : 'extracted_payload');
-                            setIsHexModalOpen(true);
-                          }}
-                          className="btn btn-secondary w-full py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary-glow)]"
-                        >
-                          <Binary size={12} />
-                          {t('extractedPayloadButton')}
-                        </button>
-                        <button
-                          onClick={handleExportBin}
-                          className="btn btn-secondary w-full py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-cyan-900 text-cyan-400 hover:bg-cyan-950/20"
-                        >
-                          <Download size={12} />
-                          {t('exportBinButton')}
-                        </button>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* DSK directory selector */}
-            {dskFiles.length > 0 && (
-              <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
-                <h3 className="text-xs font-bold text-white tracking-wider uppercase mb-1 flex items-center gap-1">
-                  <Disc size={12} className="text-yellow-400" />
-                  {t('dskFilesTitle')}
-                </h3>
-                <div className="max-h-48 overflow-y-auto border border-[var(--border)] rounded-md">
-                  <table className="w-full text-left border-collapse text-[11px]">
-                    <thead>
-                      <tr className="bg-slate-900 text-[var(--text-muted)] font-bold border-b border-[var(--border)]">
-                        <th className="p-2">{t('dskColName')}</th>
-                        <th className="p-2 text-center">{t('dskColType')}</th>
-                        <th className="p-2 text-right">{t('dskColSize')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {dskFiles.map((f, idx) => (
-                        <tr 
-                          key={idx}
-                          onClick={() => handleExtractDskFile(f)}
-                          className={`hover:bg-slate-800 cursor-pointer border-b border-[var(--border)]/40 ${selectedDskFile?.fullName === f.fullName ? 'bg-cyan-950/40 text-cyan-300 font-semibold' : 'text-[var(--text-secondary)]'}`}
-                        >
-                          <td className="p-2 font-mono">{f.fullName}</td>
-                          <td className="p-2 text-center font-semibold">{f.fileTypeName}</td>
-                          <td className="p-2 text-right font-mono">{f.totalSize} B</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {/* CAS tape blocks tracker */}
-            {casBlocks.length > 0 && (
-              <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
-                <h3 className="text-xs font-bold text-white tracking-wider uppercase mb-1 flex items-center gap-1">
-                  <FileAudio size={12} className="text-purple-400" />
-                  {t('casBlocksTitle')} ({casBlocks.length})
-                </h3>
-                <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 bg-slate-950/20 rounded border border-[var(--border)]">
-                  {casBlocks.map((b, idx) => (
-                    <span 
-                      key={idx} 
-                      className={`text-[8px] font-mono px-1.5 py-0.5 rounded font-bold uppercase ${b.type === 0 ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-900' : b.type === 1 ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-900' : 'bg-rose-950/60 text-rose-400 border border-rose-900'}`}
-                      title={`Tipo: ${b.typeName}, Tamanho: ${b.length} bytes`}
+              <div className="flex justify-between items-center border-b border-[var(--border)] pb-2">
+                <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
+                  <Disc className="text-cyan-400" size={16} />
+                  {t('inputSourceTitle')}
+                </h2>
+                {fileDetails && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleSelectFile}
+                      className="text-[10px] bg-[var(--primary-glow)] hover:bg-[var(--primary)] hover:text-slate-950 text-[var(--primary)] border border-[var(--primary)]/30 font-bold px-2 py-0.5 rounded transition-all flex items-center gap-1 cursor-pointer"
                     >
-                      {b.type === 0 ? 'HDR' : b.type === 1 ? 'DAT' : 'EOF'}
+                      <Upload size={10} />
+                      {currentLang === 'pt-br' ? 'Navegar' : 'Browse'}
+                    </button>
+                    <span className="text-[10px] bg-slate-800 text-cyan-400 py-0.5 px-2 rounded-full font-bold uppercase">
+                      {fileDetails.fileExt}
                     </span>
-                  ))}
-                </div>
+                  </div>
+                )}
               </div>
-            )}
-          </section>
 
-          {/* Cartridge build configuration card */}
-          <section className="glass-panel p-4 flex flex-col gap-3 animate-slideup" style={{ animationDelay: '0.1s' }}>
-            <h2 className="text-sm font-bold text-white border-b border-[var(--border)] pb-2 tracking-wide uppercase flex items-center gap-2">
-              <Sliders className="text-purple-400" size={16} />
-              {t('epromConfigTitle')}
-            </h2>
-
-            <div className="flex flex-col gap-2.5 text-xs">
-              {/* Target ROM Size */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[var(--text-secondary)] font-semibold flex justify-between items-center">
-                  <span className="flex items-center gap-1.5">
-                    {t('epromSizeLabel')}
-                    <button 
-                      type="button"
-                      onClick={() => toggleHint('eprom')}
-                      className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'eprom' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
-                      title="Ajuda"
-                    >
-                      <HelpCircle size={12} />
-                    </button>
-                  </span>
-                  <span className="text-white font-mono">{epromSizeKb} KB ({epromSizeKb * 1024} bytes)</span>
-                </label>
-                <select 
-                  className="input-select"
-                  value={epromSizeKb}
-                  onChange={(e) => setEpromSizeKb(parseInt(e.target.value))}
+              {!fileDetails ? (
+                <div 
+                  onClick={handleSelectFile}
+                  className="border-2 border-dashed border-[var(--border)] hover:border-[var(--primary)] transition-all cursor-pointer rounded-lg py-5 px-4 flex flex-col items-center justify-center gap-2 bg-slate-950/20"
                 >
-                  <option value={8}>{t('eprom8kOption')}</option>
-                  <option value={16}>{t('eprom16kOption')}</option>
-                  <option value={32}>{t('eprom32kOption')}</option>
-                </select>
-                {activeHint === 'eprom' && (
-                  <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
-                    <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
-                    <span>{t('epromSizeHint')}</span>
+                  <div className="p-2 bg-slate-900 rounded-full text-slate-500">
+                    <Binary size={24} />
                   </div>
-                )}
-              </div>
-
-              {/* Loader Type Stage */}
-              <div className="flex flex-col gap-1.5 bg-slate-900/40 py-2 px-3 rounded-lg border border-[var(--border)]">
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold text-white flex items-center gap-1.5">
-                    {t('allRamLabel')}
-                    <button 
-                      type="button"
-                      onClick={() => toggleHint('allRam')}
-                      className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'allRam' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
-                      title="Ajuda"
-                    >
-                      <HelpCircle size={12} />
-                    </button>
-                  </span>
-                  <input 
-                    type="checkbox" 
-                    className="w-4 h-4 accent-[var(--primary)] cursor-pointer flex-shrink-0"
-                    checked={useTwoStage}
-                    onChange={(e) => setUseTwoStage(e.target.checked)}
-                  />
+                  <div className="text-center">
+                    <p className="text-xs text-white font-semibold">{t('clickToBrowse')}</p>
+                    <p className="text-[10px] text-[var(--text-secondary)] mt-0.5">{t('supportedFormats')}</p>
+                  </div>
                 </div>
-                {activeHint === 'allRam' && (
-                  <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
-                    <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
-                    <span>{t('allRamHint')}</span>
+              ) : (
+                <div className="flex flex-col gap-2 text-xs bg-slate-950/30 p-2.5 rounded-lg border border-[var(--border)]">
+                  <div className="flex justify-between">
+                    <span className="text-[var(--text-secondary)]">{t('fileNameLabel')}</span>
+                    <span className="font-semibold text-white select-all">{fileDetails.fileName}</span>
                   </div>
-                )}
-              </div>
-
-              {/* Dragon 32/64 compatibility */}
-              <div className="flex flex-col gap-1.5 bg-slate-900/40 py-2 px-3 rounded-lg border border-[var(--border)]">
-                <div className="flex justify-between items-center">
-                  <span className="font-semibold text-white flex items-center gap-1.5">
-                    {t('dragonLabel')}
-                    <button 
-                      type="button"
-                      onClick={() => toggleHint('dragon')}
-                      className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'dragon' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
-                      title="Ajuda"
-                    >
-                      <HelpCircle size={12} />
-                    </button>
-                  </span>
-                  <input 
-                    type="checkbox" 
-                    className="w-4 h-4 accent-[var(--primary)] cursor-pointer flex-shrink-0"
-                    checked={useDragonHeader}
-                    onChange={(e) => setUseDragonHeader(e.target.checked)}
-                  />
+                  <div className="flex justify-between">
+                    <span className="text-[var(--text-secondary)]">{t('sizeLabel')}</span>
+                    <span className="font-mono text-white">{(fileDetails.size / 1024).toFixed(2)} KB ({fileDetails.size} bytes)</span>
+                  </div>
+                  {rawFileBuffer && (
+                    <>
+                      <div className="flex justify-between border-t border-[var(--border)] pt-2 mt-2">
+                        <span className="text-[var(--text-secondary)]">{t('cocoProgramNameLabel')}</span>
+                        <input 
+                          type="text" 
+                          maxLength={8}
+                          className="input-text py-0 px-2 text-xs font-mono w-24 text-right"
+                          value={programName} 
+                          onChange={(e) => setProgramName(e.target.value.toUpperCase())}
+                        />
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--text-secondary)]">{t('loadAddrLabel')}</span>
+                        <span className="font-mono text-cyan-400 font-bold">${loadAddr.toString(16).toUpperCase().padStart(4, '0')}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--text-secondary)]">{t('execAddrLabel')}</span>
+                        <span className="font-mono text-purple-400 font-bold">${execAddr.toString(16).toUpperCase().padStart(4, '0')}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-[var(--text-secondary)]">{t('payloadSizeLabel')}</span>
+                        <span className="font-mono text-white">{extractedPayload ? extractedPayload.length : 0} bytes</span>
+                      </div>
+                      
+                      {/* Botão de abrir modal para o payload extraído */}
+                      {extractedPayload && (
+                        <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-[var(--border)]">
+                          <button
+                             onClick={() => {
+                              setModalBuffer(extractedPayload);
+                              setModalFileName(fileDetails ? fileDetails.fileName : 'extracted_payload');
+                              setIsHexModalOpen(true);
+                            }}
+                            className="btn btn-secondary w-full py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-[var(--primary)] text-[var(--primary)] hover:bg-[var(--primary-glow)]"
+                          >
+                            <Binary size={12} />
+                            {t('extractedPayloadButton')}
+                          </button>
+                          <button
+                            onClick={handleExportBin}
+                            className="btn btn-secondary w-full py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-cyan-900 text-cyan-400 hover:bg-cyan-950/20"
+                          >
+                            <Download size={12} />
+                            {t('exportBinButton')}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
-                {activeHint === 'dragon' && (
-                  <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
-                    <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
-                    <span>{t('dragonHint')}</span>
-                  </div>
-                )}
-              </div>
+              )}
 
-              {/* Filler Byte */}
-              <div className="flex flex-col gap-1.5 bg-slate-900/10 py-2 px-3 rounded-lg border border-[var(--border)]/40">
-                <div className="flex justify-between items-center">
-                  <label className="text-[var(--text-secondary)] font-semibold flex items-center gap-1.5">
-                    {t('fillerByteLabel')}
-                    <button 
-                      type="button"
-                      onClick={() => toggleHint('fillerByte')}
-                      className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'fillerByte' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
-                      title="Ajuda"
-                    >
-                      <HelpCircle size={12} />
-                    </button>
+              {/* DSK directory selector */}
+              {dskFiles.length > 0 && (
+                <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
+                  <h3 className="text-xs font-bold text-white tracking-wider uppercase mb-1 flex items-center gap-1">
+                    <Disc size={12} className="text-yellow-400" />
+                    {t('dskFilesTitle')}
+                  </h3>
+                  <div className="max-h-48 overflow-y-auto border border-[var(--border)] rounded-md">
+                    <table className="w-full text-left border-collapse text-[11px]">
+                      <thead>
+                        <tr className="bg-slate-900 text-[var(--text-muted)] font-bold border-b border-[var(--border)]">
+                          <th className="p-2">{t('dskColName')}</th>
+                          <th className="p-2 text-center">{t('dskColType')}</th>
+                          <th className="p-2 text-right">{t('dskColSize')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dskFiles.map((f, idx) => (
+                          <tr 
+                            key={idx}
+                            onClick={() => handleExtractDskFile(f)}
+                            className={`hover:bg-slate-800 cursor-pointer border-b border-[var(--border)]/40 ${selectedDskFile?.fullName === f.fullName ? 'bg-cyan-950/40 text-cyan-300 font-semibold' : 'text-[var(--text-secondary)]'}`}
+                          >
+                            <td className="p-2 font-mono">{f.fullName}</td>
+                            <td className="p-2 text-center font-semibold">{f.fileTypeName}</td>
+                            <td className="p-2 text-right font-mono">{f.totalSize} B</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* CAS tape blocks tracker */}
+              {casBlocks.length > 0 && (
+                <div className="flex flex-col gap-1.5 border-t border-[var(--border)] pt-2.5">
+                  <h3 className="text-xs font-bold text-white tracking-wider uppercase mb-1 flex items-center gap-1">
+                    <FileAudio size={12} className="text-purple-400" />
+                    {t('casBlocksTitle')} ({casBlocks.length})
+                  </h3>
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto p-1 bg-slate-950/20 rounded border border-[var(--border)]">
+                    {casBlocks.map((b, idx) => (
+                      <span 
+                        key={idx} 
+                        className={`text-[8px] font-mono px-1.5 py-0.5 rounded font-bold uppercase ${b.type === 0 ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-900' : b.type === 1 ? 'bg-cyan-950/60 text-cyan-400 border border-cyan-900' : 'bg-rose-950/60 text-rose-400 border border-rose-900'}`}
+                        title={`Tipo: ${b.typeName}, Tamanho: ${b.length} bytes`}
+                      >
+                        {b.type === 0 ? 'HDR' : b.type === 1 ? 'DAT' : 'EOF'}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+
+          {/* SPLITTER 1 */}
+          <div className="splitter-v" onMouseDown={startResizing1} />
+
+          {/* PANEL 2: EPROM Settings & Memory Map (Column 2) */}
+          <div 
+            className="flex flex-col gap-4 overflow-y-auto px-2 h-full max-h-full flex-shrink-0"
+            style={{ width: width2, minHeight: 0 }}
+          >
+            {/* Cartridge build configuration card */}
+            <section className="glass-panel p-4 flex flex-col gap-3 animate-slideup">
+              <h2 className="text-sm font-bold text-white border-b border-[var(--border)] pb-2 tracking-wide uppercase flex items-center gap-2">
+                <Sliders className="text-purple-400" size={16} />
+                {t('epromConfigTitle')}
+              </h2>
+
+              <div className="flex flex-col gap-2.5 text-xs">
+                {/* Target ROM Size */}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-[var(--text-secondary)] font-semibold flex justify-between items-center">
+                    <span className="flex items-center gap-1.5">
+                      {t('epromSizeLabel')}
+                      <button 
+                        type="button"
+                        onClick={() => toggleHint('eprom')}
+                        className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'eprom' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
+                        title="Ajuda"
+                      >
+                        <HelpCircle size={12} />
+                      </button>
+                    </span>
+                    <span className="text-white font-mono">{epromSizeKb} KB ({epromSizeKb * 1024} bytes)</span>
                   </label>
-                  <input 
-                    type="number" 
-                    min={0}
-                    max={255}
-                    className="input-text py-1 w-16 text-center font-mono"
-                    value={fillerByte}
-                    onChange={(e) => setFillerByte(Math.max(0, Math.min(255, parseInt(e.target.value) || 0)))}
-                  />
+                  <select 
+                    className="input-select"
+                    value={epromSizeKb}
+                    onChange={(e) => setEpromSizeKb(parseInt(e.target.value))}
+                  >
+                    <option value={8}>{t('eprom8kOption')}</option>
+                    <option value={16}>{t('eprom16kOption')}</option>
+                    <option value={32}>{t('eprom32kOption')}</option>
+                  </select>
+                  {activeHint === 'eprom' && (
+                    <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
+                      <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
+                      <span>{t('epromSizeHint')}</span>
+                    </div>
+                  )}
                 </div>
-                {activeHint === 'fillerByte' && (
-                  <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
-                    <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
-                    <span>{t('fillerByteHint')}</span>
+
+                {/* Loader Type Stage */}
+                <div className="flex flex-col gap-1.5 bg-slate-900/40 py-2 px-3 rounded-lg border border-[var(--border)]">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-white flex items-center gap-1.5">
+                      {t('allRamLabel')}
+                      <button 
+                        type="button"
+                        onClick={() => toggleHint('allRam')}
+                        className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'allRam' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
+                        title="Ajuda"
+                      >
+                        <HelpCircle size={12} />
+                      </button>
+                    </span>
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 accent-[var(--primary)] cursor-pointer flex-shrink-0"
+                      checked={useTwoStage}
+                      onChange={(e) => setUseTwoStage(e.target.checked)}
+                    />
                   </div>
-                )}
-              </div>
+                  {activeHint === 'allRam' && (
+                    <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
+                      <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
+                      <span>{t('allRamHint')}</span>
+                    </div>
+                  )}
+                </div>
 
+                {/* Dragon 32/64 compatibility */}
+                <div className="flex flex-col gap-1.5 bg-slate-900/40 py-2 px-3 rounded-lg border border-[var(--border)]">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-white flex items-center gap-1.5">
+                      {t('dragonLabel')}
+                      <button 
+                        type="button"
+                        onClick={() => toggleHint('dragon')}
+                        className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'dragon' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
+                        title="Ajuda"
+                      >
+                        <HelpCircle size={12} />
+                      </button>
+                    </span>
+                    <input 
+                      type="checkbox" 
+                      className="w-4 h-4 accent-[var(--primary)] cursor-pointer flex-shrink-0"
+                      checked={useDragonHeader}
+                      onChange={(e) => setUseDragonHeader(e.target.checked)}
+                    />
+                  </div>
+                  {activeHint === 'dragon' && (
+                    <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
+                      <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
+                      <span>{t('dragonHint')}</span>
+                    </div>
+                  )}
+                </div>
 
-              {/* Compile and Save actions */}
-              <div className="flex flex-col gap-2 pt-3 border-t border-[var(--border)]">
-                <button 
-                  disabled={!extractedPayload}
-                  onClick={handleCompile}
-                  className="btn btn-primary w-full py-2.5 font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <Cpu size={16} />
-                  {t('compileButton')}
-                </button>
+                {/* Filler Byte */}
+                <div className="flex flex-col gap-1.5 bg-slate-900/10 py-2 px-3 rounded-lg border border-[var(--border)]/40">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[var(--text-secondary)] font-semibold flex items-center gap-1.5">
+                      {t('fillerByteLabel')}
+                      <button 
+                        type="button"
+                        onClick={() => toggleHint('fillerByte')}
+                        className={`w-5 h-5 rounded-full flex items-center justify-center transition-all ${activeHint === 'fillerByte' ? 'bg-[var(--primary-glow)] text-[var(--primary)] border border-[var(--primary)]/30' : 'text-slate-500 hover:text-[var(--primary)] hover:bg-slate-800/40'}`}
+                        title="Ajuda"
+                      >
+                        <HelpCircle size={12} />
+                      </button>
+                    </label>
+                    <input 
+                      type="number" 
+                      min={0}
+                      max={255}
+                      className="input-text py-1 w-16 text-center font-mono"
+                      value={fillerByte}
+                      onChange={(e) => setFillerByte(Math.max(0, Math.min(255, parseInt(e.target.value) || 0)))}
+                    />
+                  </div>
+                  {activeHint === 'fillerByte' && (
+                    <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed mt-1 animate-slideup shadow-[0_0_10px_rgba(20,250,200,0.03)] flex gap-2 items-start">
+                      <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
+                      <span>{t('fillerByteHint')}</span>
+                    </div>
+                  )}
+                </div>
 
-                {compilationSuccess && compiledRom && (
+                {/* Compile and Save actions */}
+                <div className="flex flex-col gap-2 pt-3 border-t border-[var(--border)]">
                   <button 
-                    onClick={handleSaveRom}
-                    className="btn btn-secondary w-full py-2.5 font-bold uppercase tracking-wider text-emerald-400 border-emerald-900/60 hover:bg-emerald-950/30 flex items-center justify-center gap-2 pulse-primary"
+                    disabled={!extractedPayload}
+                    onClick={handleCompile}
+                    className="btn btn-primary w-full py-2.5 font-bold uppercase tracking-wider disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
-                    <Download size={16} />
-                    {t('exportRomButton')}
+                    <Cpu size={16} />
+                    {t('compileButton')}
                   </button>
-                )}
-              </div>
-            </div>
-          </section>
-        </div>
 
-        {/* RIGHT COLUMN: Hex Editor & visual memory maps (8 cols) */}
-        <div className="col-span-8 flex flex-col gap-4 overflow-hidden h-full" style={{ minHeight: 0 }}>
-          
-          {/* Visual Memory Map */}
-          {extractedPayload && (
-            <section className="glass-panel p-4 flex flex-col gap-2 animate-slideup">
-              <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                <Sliders size={14} className="text-cyan-400" />
-                {t('memoryMapTitle')}
-              </h3>
-              
-              {/* EPROM Visual Map */}
-              <div className="flex flex-col gap-1 text-[10px]">
-                <div className="flex justify-between text-[var(--text-secondary)]">
-                  <span>{t('epromLayoutLabel')} ($C000 - ${ (0xC000 + epromSizeKb * 1024 - 1).toString(16).toUpperCase() })</span>
-                  <span>{epromSizeKb} KB</span>
-                </div>
-                <div className="mem-bar mt-1">
-                  {/* Loader portion */}
-                  <div 
-                    className="mem-block bg-purple-600 border-r border-purple-800"
-                    style={{ width: `${Math.max(5, (loaderSize / (epromSizeKb * 1024)) * 100)}%` }}
-                    title={`Bootstrap: ${loaderSize} bytes`}
-                  >
-                    {loaderSize > 0 && t('bootLabel')}
-                  </div>
-                  {/* Game payload portion */}
-                  <div 
-                    className="mem-block bg-cyan-600 border-r border-cyan-800"
-                    style={{ width: `${(extractedPayload.length / (epromSizeKb * 1024)) * 100}%` }}
-                    title={`Payload: ${extractedPayload.length} bytes`}
-                  >
-                    {extractedPayload.length > 2000 ? `${(extractedPayload.length / 1024).toFixed(1)}K ${t('payloadLabel')}` : t('payloadLabel')}
-                  </div>
-                  {/* Remaining empty space */}
-                  <div 
-                    className="mem-block bg-slate-900 text-slate-500 font-normal"
-                    style={{ flex: 1 }}
-                    title={`Free space: ${epromSizeKb * 1024 - loaderSize - extractedPayload.length} bytes`}
-                  >
-                    {t('freeSpaceLabel')}
-                  </div>
+                  {compilationSuccess && compiledRom && (
+                    <button 
+                      onClick={handleSaveRom}
+                      className="btn btn-secondary w-full py-2.5 font-bold uppercase tracking-wider text-emerald-400 border-emerald-900/60 hover:bg-emerald-950/30 flex items-center justify-center gap-2 pulse-primary"
+                    >
+                      <Download size={16} />
+                      {t('exportRomButton')}
+                    </button>
+                  )}
                 </div>
               </div>
             </section>
-          )}
 
-          {/* Hex Editor Container (fills remaining space) */}
-          <section className="glass-panel flex-1 overflow-hidden flex flex-col animate-slideup">
-            {rawFileBuffer ? (
-              <HexEditor 
-                buffer={rawFileBuffer}
-                onChange={(newBuf) => {
-                  setRawFileBuffer(newBuf);
-                  setCompiledRom(null);
-                  setCompilationSuccess(false);
-                  // Sync raw edit back to extractedPayload if the raw file is a standalone executable/rom payload
-                  if (fileDetails && (fileDetails.fileExt === '.bin' || fileDetails.fileExt === '.ccc')) {
-                    setExtractedPayload(newBuf);
-                  }
-                }}
-                baseAddress={loadAddr}
-                t={t}
-              />
-            ) : (
-              <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--text-secondary)]">
-                <FileCode size={48} className="opacity-20 animate-pulse text-cyan-400" />
-                <div className="text-center max-w-sm">
-                  <p className="text-sm font-semibold text-white">{t('noFileLoadedTitle')}</p>
-                  <p className="text-xs mt-1">{t('noFileLoadedDesc')}</p>
+            {/* Visual Memory Map */}
+            {extractedPayload && (
+              <section className="glass-panel p-4 flex flex-col gap-2 animate-slideup">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Sliders size={14} className="text-cyan-400" />
+                  {t('memoryMapTitle')}
+                </h3>
+                
+                {/* EPROM Visual Map */}
+                <div className="flex flex-col gap-1 text-[10px]">
+                  <div className="flex justify-between text-[var(--text-secondary)]">
+                    <span>{t('epromLayoutLabel')} ($C000 - ${ (0xC000 + epromSizeKb * 1024 - 1).toString(16).toUpperCase() })</span>
+                    <span>{epromSizeKb} KB</span>
+                  </div>
+                  <div className="mem-bar mt-1">
+                    {/* Loader portion */}
+                    <div 
+                      className="mem-block bg-purple-600 border-r border-purple-800"
+                      style={{ width: `${Math.max(5, (loaderSize / (epromSizeKb * 1024)) * 100)}%` }}
+                      title={`Bootstrap: ${loaderSize} bytes`}
+                    >
+                      {loaderSize > 0 && t('bootLabel')}
+                    </div>
+                    {/* Game payload portion */}
+                    <div 
+                      className="mem-block bg-cyan-600 border-r border-cyan-800"
+                      style={{ width: `${(extractedPayload.length / (epromSizeKb * 1024)) * 100}%` }}
+                      title={`Payload: ${extractedPayload.length} bytes`}
+                    >
+                      {extractedPayload.length > 2000 ? `${(extractedPayload.length / 1024).toFixed(1)}K ${t('payloadLabel')}` : t('payloadLabel')}
+                    </div>
+                    {/* Remaining empty space */}
+                    <div 
+                      className="mem-block bg-slate-900 text-slate-500 font-normal"
+                      style={{ flex: 1 }}
+                      title={`Free space: ${epromSizeKb * 1024 - loaderSize - extractedPayload.length} bytes`}
+                    >
+                      {t('freeSpaceLabel')}
+                    </div>
+                  </div>
                 </div>
-              </div>
+              </section>
             )}
-          </section>
+          </div>
 
+          {/* SPLITTER 2 */}
+          <div className="splitter-v" onMouseDown={startResizing2} />
+
+          {/* PANEL 3: Hex Editor (Column 3) */}
+          <div 
+            className="flex-1 flex flex-col gap-4 overflow-hidden h-full pl-2"
+            style={{ minHeight: 0 }}
+          >
+            {/* Hex Editor Container (fills remaining space) */}
+            <section className="glass-panel flex-1 overflow-hidden flex flex-col animate-slideup">
+              {rawFileBuffer ? (
+                <HexEditor 
+                  buffer={rawFileBuffer}
+                  onChange={(newBuf) => {
+                    setRawFileBuffer(newBuf);
+                    setCompiledRom(null);
+                    setCompilationSuccess(false);
+                    // Sync raw edit back to extractedPayload if the raw file is a standalone executable/rom payload
+                    if (fileDetails && (fileDetails.fileExt === '.bin' || fileDetails.fileExt === '.ccc')) {
+                      setExtractedPayload(newBuf);
+                    }
+                  }}
+                  baseAddress={loadAddr}
+                  t={t}
+                />
+              ) : (
+                <div className="flex-1 flex flex-col items-center justify-center gap-3 text-[var(--text-secondary)]">
+                  <FileCode size={48} className="opacity-20 animate-pulse text-cyan-400" />
+                  <div className="text-center max-w-sm">
+                    <p className="text-sm font-semibold text-white">{t('noFileLoadedTitle')}</p>
+                    <p className="text-xs mt-1">{t('noFileLoadedDesc')}</p>
+                  </div>
+                </div>
+              )}
+            </section>
+          </div>
+
+        </div>
+
+        {/* SPLITTER 3 (Horizontal) */}
+        <div className="splitter-h" onMouseDown={startResizingConsole} />
+
+        {/* BOTTOM PANEL: Diagnostic Console */}
+        <div 
+          className="w-full flex flex-col overflow-hidden px-4 pb-4 bg-slate-950/20"
+          style={{ height: consoleHeight, minHeight: 0 }}
+        >
           {/* Action Log Console */}
-          <section className="glass-panel h-36 flex flex-col overflow-hidden animate-slideup bg-slate-950/40">
+          <section className="glass-panel h-full w-full flex flex-col overflow-hidden bg-slate-950/40">
             <div className="flex justify-between items-center px-4 py-2 border-b border-[var(--border)] bg-slate-900/40">
               <span className="text-[10px] font-bold text-white tracking-widest uppercase flex items-center gap-1.5">
                 <Terminal size={12} className="text-[var(--primary)]" />
@@ -1183,6 +1305,7 @@ export default function App() {
             </div>
           </section>
         </div>
+
       </main>
 
       {/* Floating Sub-editor Hexadecimal Modal Overlay */}
