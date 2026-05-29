@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "outDir": "out-tools",
+    "rootDir": ".",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "types": ["node"]
+  },
+  "include": [
+    "tools/inspect.ts",
+    "src/main/converter/cas.ts",
+    "src/main/converter/dsk.ts",
+    "src/main/converter/bin.ts",
+    "src/main/converter/wav.ts",
+    "src/main/converter/bootstrap.ts",
+    "src/main/converter/export.ts"
+  ]
+}

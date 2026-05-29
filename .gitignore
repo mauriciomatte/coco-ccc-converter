@@ -33,3 +33,16 @@ desktop.ini
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Build/dev artifacts (this project)
+out-tools/
+build/
+docs/refs/
+
+# Sample disk/cassette/cartridge images (kept local; commercial content)
+amostras/
+
+# Scratch/dev helper files
+run.bat
+scratch_helpmodal.txt
+updateHelp.js

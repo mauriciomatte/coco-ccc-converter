@@ -11,6 +11,7 @@ export interface ParsedBin {
   execAddr: number;
   payload: Buffer; // Contiguous payload from loadAddr to maxAddr (with gaps filled)
   totalPayloadSize: number;
+  gapBytes: number; // filler bytes inserted to bridge non-contiguous segments
 }
 
 /**
@@ -93,10 +94,12 @@ export function parseBin(binBuffer: Buffer, fillerByte: number = 0xFF): ParsedBi
   const totalSize = maxEndAddr - minLoadAddr;
   const payload = Buffer.alloc(totalSize, fillerByte);
 
+  let dataBytes = 0;
   for (const seg of segments) {
     if (seg.type === 0x00) {
       const targetOffset = seg.loadAddr - minLoadAddr;
       seg.data.copy(payload, targetOffset);
+      dataBytes += seg.data.length;
     }
   }
 
@@ -105,6 +108,7 @@ export function parseBin(binBuffer: Buffer, fillerByte: number = 0xFF): ParsedBi
     loadAddr: minLoadAddr,
     execAddr,
     payload,
-    totalPayloadSize: totalSize
+    totalPayloadSize: totalSize,
+    gapBytes: Math.max(0, totalSize - dataBytes)
   };
 }

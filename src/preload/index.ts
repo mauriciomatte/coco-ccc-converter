@@ -9,8 +9,29 @@ const api = {
   readDskDirectory: (dskBuffer: Uint8Array) => 
     ipcRenderer.invoke('read-dsk-directory', dskBuffer),
     
-  extractDskProgram: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) => 
+  extractDskProgram: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('extract-dsk-program', dskBuffer, fileEntry),
+
+  dskAddFile: (dskBuffer: Uint8Array) =>
+    ipcRenderer.invoke('dsk-add-file', dskBuffer),
+
+  dskDeleteFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
+    ipcRenderer.invoke('dsk-delete-file', dskBuffer, fileEntry),
+
+  openDskPane: () =>
+    ipcRenderer.invoke('open-dsk-pane'),
+
+  dskExtractRaw: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
+    ipcRenderer.invoke('dsk-extract-raw', dskBuffer, fileEntry),
+
+  dskAddBytes: (dskBuffer: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, data: Uint8Array) =>
+    ipcRenderer.invoke('dsk-add-bytes', dskBuffer, name, ext, fileType, asciiFlag, data),
+
+  dskNewBlank: () =>
+    ipcRenderer.invoke('dsk-new-blank'),
+
+  pickCocoFile: () =>
+    ipcRenderer.invoke('pick-coco-file'),
     
   decodeWavAudio: (wavBuffer: Uint8Array) => 
     ipcRenderer.invoke('decode-wav-audio', wavBuffer),
@@ -21,14 +42,33 @@ const api = {
   parseBinPayload: (binBuffer: Uint8Array) => 
     ipcRenderer.invoke('parse-bin-payload', binBuffer),
     
-  compileCartridge: (payloadBuffer: Uint8Array, config: BootstrapConfig) => 
+  compileCartridge: (payloadBuffer: Uint8Array, config: BootstrapConfig) =>
     ipcRenderer.invoke('compile-cartridge', payloadBuffer, config),
-    
-  saveCartridgeFile: (romBuffer: Uint8Array, defaultName: string) => 
-    ipcRenderer.invoke('save-cartridge-file', romBuffer, defaultName),
+
+  buildEmulatorCas: (files: any[]) =>
+    ipcRenderer.invoke('build-emulator-cas', files),
+
+  buildEmulatorDsk: (files: any[]) =>
+    ipcRenderer.invoke('build-emulator-dsk', files),
+
+  buildCocoFlashBin: (romImage: Uint8Array) =>
+    ipcRenderer.invoke('build-cocoflash-bin', romImage),
+
+  saveCartridgeFile: (romBuffer: Uint8Array, defaultName: string, title?: string, filters?: any[]) => 
+    ipcRenderer.invoke('save-cartridge-file', romBuffer, defaultName, title, filters),
     
   loadConfig: () => ipcRenderer.invoke('load-config'),
-  saveConfig: (config: any) => ipcRenderer.invoke('save-config', config)
+  saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
+
+  // Greaseweazle
+  gwInfo: (opts: any) => ipcRenderer.invoke('gw-info', opts),
+  gwRead: (opts: any) => ipcRenderer.invoke('gw-read', opts),
+  gwWrite: (opts: any, image: Uint8Array) => ipcRenderer.invoke('gw-write', opts, image),
+  onGwLog: (cb: (line: string) => void) => {
+    const handler = (_e: any, line: string) => cb(line);
+    ipcRenderer.on('gw-log', handler);
+    return () => ipcRenderer.removeListener('gw-log', handler);
+  }
 };
 
 // Safe Context Bridge exposure

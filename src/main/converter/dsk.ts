@@ -12,11 +12,14 @@ export interface DskFileEntry {
   sectorsInLastGranule: number;
   totalSize: number;
   index: number; // Index in directory scan
+  dirOffset: number; // byte offset of this 32-byte directory entry in the image
 }
 
 export interface ParsedDsk {
   files: DskFileEntry[];
   fat: Buffer;
+  totalGranules: number;
+  freeGranules: number;
 }
 
 /**
@@ -24,11 +27,22 @@ export interface ParsedDsk {
  * Extracts the file directory and FAT chain maps.
  */
 export function parseDsk(dskBuffer: Buffer): ParsedDsk {
-  if (dskBuffer.length !== 161280) {
-    throw new Error(`Invalid DSK image size: ${dskBuffer.length} bytes (Expected 161,280 bytes).`);
+  // RS-DOS images are a whole number of tracks of 18 sectors x 256 bytes (4,608 bytes/track).
+  // Track 17 is always the directory track regardless of total track count, so 35-track
+  // (161,280) and 40-track (184,320) single-sided images are both supported.
+  const BYTES_PER_TRACK = 18 * 256; // 4,608
+  if (dskBuffer.length < 18 * BYTES_PER_TRACK || dskBuffer.length % BYTES_PER_TRACK !== 0) {
+    throw new Error(
+      `Invalid DSK image size: ${dskBuffer.length} bytes (expected a whole number of ` +
+      `4,608-byte tracks, e.g. 161,280 for 35 tracks or 184,320 for 40 tracks).`
+    );
   }
 
-  const track17Offset = 17 * 18 * 256; // 78,336
+  const tracksPerDisk = dskBuffer.length / BYTES_PER_TRACK;
+  // Two granules per track, excluding the reserved directory track 17.
+  const totalGranules = (tracksPerDisk - 1) * 2;
+
+  const track17Offset = 17 * BYTES_PER_TRACK; // 78,336
   const fatOffset = track17Offset + 256; // Track 17, Sector 2 (78,592)
   const fat = dskBuffer.slice(fatOffset, fatOffset + 256);
 
@@ -83,7 +97,7 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
     let loopProtect = 0;
     let validChain = true;
 
-    while (currentGranule >= 0 && currentGranule < 68 && loopProtect < 100) {
+    while (currentGranule >= 0 && currentGranule < totalGranules && loopProtect < 100) {
       granuleChain.push(currentGranule);
       const nextGranule = fat[currentGranule];
 
@@ -97,7 +111,7 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
       }
 
       // Check for self-loops or invalid granules
-      if (granuleChain.includes(nextGranule) || nextGranule < 0 || nextGranule >= 68) {
+      if (granuleChain.includes(nextGranule) || nextGranule < 0 || nextGranule >= totalGranules) {
         validChain = false;
         break;
       }
@@ -132,13 +146,21 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
       granuleChain,
       sectorsInLastGranule,
       totalSize,
-      index: entryIndex++
+      index: entryIndex++,
+      dirOffset: offset
     });
+  }
+
+  let freeGranules = 0;
+  for (let g = 0; g < totalGranules; g++) {
+    if (fat[g] === 0xFF) freeGranules++;
   }
 
   return {
     files,
-    fat
+    fat,
+    totalGranules,
+    freeGranules
   };
 }
 
@@ -169,4 +191,91 @@ export function extractDskFile(dskBuffer: Buffer, entry: DskFileEntry): Buffer {
   }
 
   return Buffer.concat(chunks);
+}
+
+const BYTES_PER_TRACK = 18 * 256; // 4608
+const GRANULE_BYTES = 2304; // 9 sectors
+
+function granuleToOffset(g: number): number {
+  const track = Math.floor(g / 2) + (g >= 34 ? 1 : 0); // skip directory track 17
+  return track * BYTES_PER_TRACK + (g % 2 ? GRANULE_BYTES : 0);
+}
+
+/**
+ * Adds a file's raw bytes to an existing RS-DOS .dsk image (e.g. a .BIN LOADM or a
+ * tokenized .BAS). Allocates free granules and the first free directory slot.
+ * Returns a NEW modified image buffer (the input is not mutated).
+ */
+export function addDskFile(
+  dskBuffer: Buffer,
+  name: string,
+  ext: string,
+  fileType: number,
+  asciiFlag: number,
+  data: Buffer
+): Buffer {
+  const img = Buffer.from(dskBuffer); // copy
+  const tracks = img.length / BYTES_PER_TRACK;
+  const totalGranules = (tracks - 1) * 2;
+  const fatOffset = 17 * BYTES_PER_TRACK + 256;
+
+  const need = Math.max(1, Math.ceil(data.length / GRANULE_BYTES));
+  const free: number[] = [];
+  for (let g = 0; g < totalGranules && free.length < need; g++) {
+    if (img[fatOffset + g] === 0xFF) free.push(g);
+  }
+  if (free.length < need) {
+    throw new Error(`Not enough free space: need ${need} granules, ${free.length} free.`);
+  }
+
+  const dirStart = 17 * BYTES_PER_TRACK + 2 * 256;
+  const dirEnd = 17 * BYTES_PER_TRACK + 18 * 256;
+  let dirOff = -1;
+  for (let o = dirStart; o < dirEnd; o += 32) {
+    if (img[o] === 0x00 || img[o] === 0xFF) { dirOff = o; break; }
+  }
+  if (dirOff < 0) throw new Error('Directory is full (no free entry).');
+
+  // Write data across the allocated granules and chain them in the FAT.
+  for (let i = 0; i < need; i++) {
+    const g = free[i];
+    const off = granuleToOffset(g);
+    img.fill(0x00, off, off + GRANULE_BYTES);
+    data.copy(img, off, i * GRANULE_BYTES, Math.min((i + 1) * GRANULE_BYTES, data.length));
+    img[fatOffset + g] = i < need - 1 ? free[i + 1] : 0;
+  }
+  const lastGranuleBytes = data.length - (need - 1) * GRANULE_BYTES;
+  const sectorsInLastGranule = Math.max(1, Math.ceil(lastGranuleBytes / 256));
+  img[fatOffset + free[need - 1]] = 0xC0 + sectorsInLastGranule;
+
+  // Directory entry
+  img.fill(0x00, dirOff, dirOff + 32);
+  const nm = Buffer.alloc(8, 0x20);
+  nm.write(name.toUpperCase().replace(/[^\x20-\x7E]/g, '').slice(0, 8), 'ascii');
+  nm.copy(img, dirOff);
+  const ex = Buffer.alloc(3, 0x20);
+  ex.write(ext.toUpperCase().replace(/[^\x20-\x7E]/g, '').slice(0, 3), 'ascii');
+  ex.copy(img, dirOff + 8);
+  img[dirOff + 11] = fileType & 0xFF;
+  img[dirOff + 12] = asciiFlag & 0xFF;
+  img[dirOff + 13] = free[0];
+  img.writeUInt16BE(data.length % 256, dirOff + 14); // bytes in last sector (0 -> 256)
+
+  return img;
+}
+
+/**
+ * Deletes a file from an RS-DOS .dsk image: frees its granule chain in the FAT and
+ * marks its directory entry as available. Returns a NEW modified image buffer.
+ */
+export function deleteDskFile(dskBuffer: Buffer, entry: DskFileEntry): Buffer {
+  const img = Buffer.from(dskBuffer);
+  const fatOffset = 17 * BYTES_PER_TRACK + 256;
+  for (const g of entry.granuleChain) {
+    if (g >= 0 && g < 256) img[fatOffset + g] = 0xFF; // free
+  }
+  if (typeof entry.dirOffset === 'number' && entry.dirOffset >= 0) {
+    img[entry.dirOffset] = 0x00; // mark entry as deleted/available
+  }
+  return img;
 }

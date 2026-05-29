@@ -39,6 +39,8 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (selectedOffset === null) return;
 
+    if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
     // Navigation
     if (e.key === 'ArrowRight') {
       e.preventDefault();
@@ -312,7 +314,6 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
             <option value={8}>8 {t('hexCols')}</option>
             <option value={16}>16 {t('hexCols')}</option>
             <option value={24}>24 {t('hexCols')}</option>
-            <option value={32}>32 {t('hexCols')}</option>
           </select>
 
           <span className="text-xs text-[var(--text-secondary)] font-semibold uppercase tracking-wider ml-4">{t('vdgMode')}</span>
@@ -322,7 +323,6 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
             onChange={(e) => setScreenMode(e.target.value as any)}
           >
             <option value="coco-green">{t('vdgGreenOption')}</option>
-            <option value="coco-orange">{t('vdgOrangeOption')}</option>
             <option value="standard">{t('vdgStandardOption')}</option>
           </select>
         </div>
@@ -358,8 +358,8 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
         <table className="w-full border-collapse">
           <thead>
             <tr className="border-b border-[var(--border)] text-[var(--text-muted)] text-[10px] font-bold tracking-wider text-left">
-              <th className="pb-2 w-20">{t('hexHeaderAddress')}</th>
-              <th className="pb-2 text-center" style={{ minWidth: columns * 28 }}>{t('hexHeaderValues')}</th>
+              <th className="pb-2 w-14">{t('hexHeaderAddress')}</th>
+              <th className="pb-2 text-left pl-2" style={{ minWidth: columns * 17 }}>{t('hexHeaderValues')}</th>
               <th className="pb-2 pl-4">{t('hexHeaderChars')}</th>
             </tr>
           </thead>
@@ -374,7 +374,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
                   </td>
 
                   {/* Hex bytes */}
-                  <td className="py-1 text-center select-none">
+                  <td className="py-1 text-left pl-2 select-none">
                     {line.map((offset) => {
                       const isSelected = selectedOffset === offset;
                       const isEditing = editingPart === 'hex' && isSelected;
@@ -394,7 +394,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
                       return (
                         <span
                           key={`hex-${offset}`}
-                          className={`hex-cell text-[13px] font-medium mx-1 cursor-pointer 
+                          className={`hex-cell text-[11px] font-medium cursor-pointer 
                             ${isSelected ? 'selected text-slate-900 font-bold bg-[var(--primary)]' : 'text-[var(--text-secondary)]'}
                             ${isEditing ? 'editing bg-[var(--secondary)] text-white' : ''}
                             ${isSearchHighlight && !isSelected ? 'border-b-2 border-cyan-400 bg-cyan-950/40 text-cyan-200' : ''}

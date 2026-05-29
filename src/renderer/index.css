@@ -7,20 +7,20 @@
   --bg-card: hsla(223, 47%, 10%, 0.65);
   --bg-card-hover: hsla(223, 47%, 14%, 0.85);
   
-  --primary: hsl(173, 90%, 41%); /* Electric Teal */
-  --primary-glow: hsla(173, 90%, 41%, 0.25);
-  --primary-hover: hsl(173, 95%, 48%);
-  
-  --secondary: hsl(263, 90%, 65%); /* Neon Violet */
-  --secondary-glow: hsla(263, 90%, 65%, 0.25);
-  
-  --text-primary: hsl(210, 40%, 98%);
-  --text-secondary: hsl(215, 20%, 68%);
-  --text-muted: hsl(217, 12%, 46%);
-  
-  --border: hsla(217, 28%, 20%, 0.7);
-  --border-hover: hsla(217, 30%, 30%, 0.9);
-  --border-active: hsla(173, 90%, 41%, 0.6);
+  --primary: hsl(120, 100%, 45%); /* CoCo VDG Green (#00E600) */
+  --primary-glow: hsla(120, 100%, 45%, 0.22);
+  --primary-hover: hsl(120, 100%, 56%);
+
+  --secondary: hsl(30, 100%, 55%); /* CoCo VDG Orange/Amber */
+  --secondary-glow: hsla(30, 100%, 55%, 0.25);
+
+  --text-primary: hsl(120, 18%, 92%);
+  --text-secondary: hsl(120, 12%, 66%);
+  --text-muted: hsl(120, 8%, 46%);
+
+  --border: hsla(140, 25%, 18%, 0.7);
+  --border-hover: hsla(130, 40%, 30%, 0.9);
+  --border-active: hsla(120, 100%, 45%, 0.55);
   
   --danger: hsl(342, 85%, 55%);
   --danger-glow: hsla(342, 85%, 55%, 0.2);
@@ -71,13 +71,13 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: hsla(173, 90%, 41%, 0.25);
+  background: hsla(120, 100%, 45%, 0.22);
   border-radius: 4px;
-  border: 1px solid hsla(173, 90%, 41%, 0.4);
+  border: 1px solid hsla(120, 100%, 45%, 0.4);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: hsla(173, 90%, 41%, 0.55);
+  background: hsla(120, 100%, 45%, 0.5);
   border-color: var(--primary);
 }
 
@@ -97,7 +97,7 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  background: radial-gradient(circle at 50% 0%, hsla(263, 40%, 12%, 0.3) 0%, hsla(225, 60%, 4%, 1) 100%);
+  background: radial-gradient(circle at 50% 0%, hsla(140, 60%, 10%, 0.35) 0%, hsla(150, 50%, 3%, 1) 100%);
 }
 
 .app-header {
@@ -123,9 +123,10 @@ body {
   font-size: 1.45rem;
   font-weight: 800;
   letter-spacing: 0.5px;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%);
+  background: linear-gradient(135deg, var(--primary) 0%, hsl(95, 90%, 60%) 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
+  text-shadow: 0 0 18px var(--primary-glow);
 }
 
 .glass-panel {
@@ -141,6 +142,126 @@ body {
 .glass-panel:hover {
   border-color: var(--border-hover);
   box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* Active DSK pane highlight (glow ring) */
+.dsk-pane-active {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 2px var(--primary), 0 0 24px 2px var(--primary-glow) !important;
+}
+
+/* Maximized system console overlay */
+.console-max {
+  position: fixed !important;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 68px;
+  height: auto !important;
+  z-index: 80;
+  background: var(--bg-app);
+}
+
+/* DSK toolbar buttons */
+.dsk-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-family: 'Inter', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dsk-tool:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--border-active);
+  background: var(--primary-glow);
+}
+
+.dsk-tool:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.dsk-tool-danger:hover:not(:disabled) {
+  color: hsl(0, 85%, 65%);
+  border-color: hsla(0, 85%, 65%, 0.5);
+  background: hsla(0, 85%, 30%, 0.15);
+}
+
+/* DSK pane status bar */
+.dsk-statusbar {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  font-family: 'Fira Code', monospace;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--primary);
+  background: rgba(2, 6, 23, 0.6);
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.03em;
+}
+
+/* Tab bar buttons */
+.tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-family: 'Outfit', sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.tab-btn-active {
+  color: hsl(150, 80%, 6%);
+  background: var(--primary);
+  box-shadow: 0 0 12px var(--primary-glow);
+}
+
+.tab-btn-active:hover {
+  color: hsl(150, 80%, 6%);
+  background: var(--primary-hover);
+}
+
+/* Numbered workflow step badge (guides the load -> configure -> export flow) */
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--primary-glow);
+  color: var(--primary);
+  border: 1px solid var(--border-active);
+  font-size: 11px;
+  font-weight: 800;
+  font-family: 'Outfit', sans-serif;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px var(--primary-glow);
 }
 
 /* Form controls & interactive elements */
@@ -161,15 +282,15 @@ body {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--primary) 0%, hsl(173, 90%, 30%) 100%);
-  color: hsl(225, 60%, 4%);
+  background: linear-gradient(135deg, var(--primary) 0%, hsl(120, 100%, 30%) 100%);
+  color: hsl(150, 80%, 4%);
   box-shadow: 0 4px 14px var(--primary-glow);
 }
 
 .btn-primary:hover {
   transform: translateY(-1.5px);
-  box-shadow: 0 6px 20px hsla(173, 90%, 41%, 0.45);
-  background: linear-gradient(135deg, var(--primary-hover) 0%, hsl(173, 95%, 33%) 100%);
+  box-shadow: 0 6px 20px hsla(120, 100%, 45%, 0.45);
+  background: linear-gradient(135deg, var(--primary-hover) 0%, hsl(120, 100%, 34%) 100%);
 }
 
 .btn-primary:active {
@@ -233,7 +354,7 @@ body {
 
 .hex-cell {
   display: inline-block;
-  width: 28px;
+  width: 17px;
   text-align: center;
   cursor: pointer;
   padding: 2px 0;
@@ -266,11 +387,11 @@ body {
   display: inline-flex;
   justify-content: center;
   align-items: center;
-  width: 13px;
+  width: 9px;
   height: 18px;
   text-align: center;
   font-family: 'Fira Code', monospace;
-  font-size: 0.82rem;
+  font-size: 11px;
   cursor: pointer;
   user-select: none;
   border-radius: 1px;
@@ -475,7 +596,7 @@ body {
 
 .bg-\[var\(--primary\)\] { background-color: var(--primary); }
 .bg-\[var\(--secondary\)\] { background-color: var(--secondary); }
-.bg-cyan-950\/40 { background-color: hsla(180, 100%, 15%, 0.4); }
+.bg-cyan-950\/40 { background-color: hsla(140, 100%, 14%, 0.45); }
 
 .shadow-\[0_0_15px_rgba\(20\,250\,200\,0\.15\)\] { box-shadow: 0 0 15px rgba(20, 250, 200, 0.15); }
 
@@ -511,15 +632,15 @@ body {
 .tracking-wider { letter-spacing: 0.075em; }
 .tracking-widest { letter-spacing: 0.12em; }
 
-.text-white { color: #ffffff; }
-.text-cyan-400 { color: hsl(180, 100%, 45%); }
-.text-cyan-300 { color: hsl(180, 100%, 65%); }
-.text-purple-400 { color: hsl(263, 100%, 75%); }
+.text-white { color: hsl(120, 25%, 96%); }
+.text-cyan-400 { color: hsl(120, 100%, 50%); }
+.text-cyan-300 { color: hsl(110, 90%, 72%); }
+.text-purple-400 { color: hsl(30, 100%, 62%); }
 .text-yellow-400 { color: hsl(45, 100%, 55%); }
-.text-emerald-400 { color: hsl(142, 75%, 55%); }
-.text-rose-400 { color: hsl(342, 90%, 60%); }
-.text-slate-500 { color: hsl(215, 15%, 50%); }
-.text-slate-900 { color: hsl(225, 60%, 6%); }
+.text-emerald-400 { color: hsl(135, 80%, 55%); }
+.text-rose-400 { color: hsl(0, 85%, 65%); }
+.text-slate-500 { color: hsl(120, 8%, 50%); }
+.text-slate-900 { color: hsl(150, 80%, 5%); }
 
 .bg-slate-800 { background-color: rgba(30, 41, 59, 0.75); }
 .bg-slate-900 { background-color: rgba(15, 23, 42, 0.85); }
@@ -534,7 +655,7 @@ body {
   transition: all 0.3s ease;
 }
 .upload-zone:hover {
-  background-color: rgba(173, 90%, 41%, 0.05);
+  background-color: hsla(120, 100%, 45%, 0.06);
 }
 
 .table-coco {
