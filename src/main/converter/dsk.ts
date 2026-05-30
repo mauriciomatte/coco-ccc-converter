@@ -48,11 +48,14 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
 
   const files: DskFileEntry[] = [];
   
-  // RS-DOS directory sectors can extend from Sector 3 to Sector 18.
+  // The RS-DOS directory occupies ONLY Track 17, Sectors 3-11 (9 sectors x 8 = 72 entry
+  // slots). Sector 2 holds the FAT; Sectors 12-18 are NOT part of the directory and may
+  // contain stale leftover bytes from a previous disk state. Reading past Sector 11 would
+  // surface those as phantom "files", so the scan stops at the end of Sector 11.
   // Sector 3 starts at track17Offset + 2 * 256 = 78,848.
-  // Sector 18 ends at track17Offset + 18 * 256 = 82,944.
+  // Sector 11 ends at track17Offset + 11 * 256 = 81,152.
   const dirStartOffset = track17Offset + 2 * 256;
-  const dirEndOffset = track17Offset + 18 * 256;
+  const dirEndOffset = track17Offset + 11 * 256;
 
   let entryIndex = 0;
 
@@ -229,7 +232,7 @@ export function addDskFile(
   }
 
   const dirStart = 17 * BYTES_PER_TRACK + 2 * 256;
-  const dirEnd = 17 * BYTES_PER_TRACK + 18 * 256;
+  const dirEnd = 17 * BYTES_PER_TRACK + 11 * 256; // Track 17, Sectors 3-11 (directory only)
   let dirOff = -1;
   for (let o = dirStart; o < dirEnd; o += 32) {
     if (img[o] === 0x00 || img[o] === 0xFF) { dirOff = o; break; }
@@ -260,6 +263,49 @@ export function addDskFile(
   img[dirOff + 12] = asciiFlag & 0xFF;
   img[dirOff + 13] = free[0];
   img.writeUInt16BE(data.length % 256, dirOff + 14); // bytes in last sector (0 -> 256)
+
+  return img;
+}
+
+/**
+ * Reorders the directory entries of an RS-DOS .dsk image alphabetically (A→Z, with
+ * digits before letters per ASCII order) by file name then extension. Only the 32-byte
+ * directory records in track 17 are rearranged — the file data and the FAT granule
+ * chains are left completely untouched, so every file still reads back identically.
+ * Returns a NEW modified image buffer (the input is not mutated).
+ */
+export function sortDskDirectory(dskBuffer: Buffer): Buffer {
+  const img = Buffer.from(dskBuffer);
+  const track17Offset = 17 * BYTES_PER_TRACK;
+  const dirStartOffset = track17Offset + 2 * 256;
+  const dirEndOffset = track17Offset + 11 * 256; // Track 17, Sectors 3-11 (directory only)
+
+  // Collect the raw 32-byte records of every active directory entry, with a sort key.
+  const active: { key: string; bytes: Buffer }[] = [];
+  for (let offset = dirStartOffset; offset < dirEndOffset; offset += 32) {
+    const first = img[offset];
+    if (first === 0x00 || first === 0xFF) continue; // empty / deleted slot
+
+    const name = img.slice(offset, offset + 8).toString('ascii').trim();
+    const ext = img.slice(offset + 8, offset + 11).toString('ascii').trim();
+    if (!/[\x20-\x7E]/.test(name) || name.length === 0) continue; // skip garbage
+
+    active.push({
+      key: `${name.toUpperCase()}.${ext.toUpperCase()}`,
+      bytes: Buffer.from(img.slice(offset, offset + 32))
+    });
+  }
+
+  // ASCII order puts digits (0-9) before letters (A-Z), exactly the requested 0→Z order.
+  active.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+  // Rewrite the directory region: sorted entries first, the rest cleared to 0x00.
+  img.fill(0x00, dirStartOffset, dirEndOffset);
+  let writeOffset = dirStartOffset;
+  for (const e of active) {
+    e.bytes.copy(img, writeOffset);
+    writeOffset += 32;
+  }
 
   return img;
 }

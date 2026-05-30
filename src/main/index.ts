@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, DskFileEntry } from './converter/dsk';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, DskFileEntry } from './converter/dsk';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -224,6 +224,16 @@ ipcMain.handle('dsk-add-file', async (_, dskUint8Array: Uint8Array) => {
 ipcMain.handle('dsk-delete-file', async (_, dskUint8Array: Uint8Array, entry: DskFileEntry) => {
   try {
     const img = deleteDskFile(Buffer.from(dskUint8Array), entry);
+    return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 3c2. Sort a .dsk image's directory entries alphabetically (A→Z)
+ipcMain.handle('dsk-sort-directory', async (_, dskUint8Array: Uint8Array) => {
+  try {
+    const img = sortDskDirectory(Buffer.from(dskUint8Array));
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };

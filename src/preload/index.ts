@@ -18,6 +18,9 @@ const api = {
   dskDeleteFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-delete-file', dskBuffer, fileEntry),
 
+  dskSortDirectory: (dskBuffer: Uint8Array) =>
+    ipcRenderer.invoke('dsk-sort-directory', dskBuffer),
+
   openDskPane: () =>
     ipcRenderer.invoke('open-dsk-pane'),
 

@@ -10,7 +10,7 @@ import { Buffer } from 'buffer';
 // Direct imports of conversion modules for the web compatibility layer
 import { decodeWav } from '../main/converter/wav';
 import { parseCas } from '../main/converter/cas';
-import { parseDsk, extractDskFile } from '../main/converter/dsk';
+import { parseDsk, extractDskFile, sortDskDirectory } from '../main/converter/dsk';
 import { parseBin } from '../main/converter/bin';
 import { compileBootstrap } from '../main/converter/bootstrap';
 
@@ -51,6 +51,15 @@ if (!(window as any).cocoApi) {
         const buffer = Buffer.from(dskUint8Array);
         const parsed = parseDsk(buffer);
         return { success: true, files: parsed.files };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    },
+
+    dskSortDirectory: async (dskUint8Array: Uint8Array) => {
+      try {
+        const img = sortDskDirectory(Buffer.from(dskUint8Array));
+        return { success: true, image: new Uint8Array(img) };
       } catch (error: any) {
         return { success: false, error: error.message };
       }

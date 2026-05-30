@@ -26,7 +26,10 @@ import {
   Redo2,
   Maximize2,
   Minimize2,
-  HardDrive
+  HardDrive,
+  ArrowDownAZ,
+  ArrowRight,
+  Layers
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 
@@ -80,6 +83,9 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolDelete: 'Excluir',
     dskToolUndo: 'Desfazer',
     dskToolRedo: 'Refazer',
+    dskToolSort: 'Ordenar A-Z (disco ativo)',
+    dskToolSortAll: 'Ordenar Todos os discos do contêiner',
+    dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
     dskToolSave: 'Salvar',
     dskActivePane: 'Painel ativo',
     collisionTitle: 'Arquivo já existe',
@@ -221,6 +227,9 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolDelete: 'Delete',
     dskToolUndo: 'Undo',
     dskToolRedo: 'Redo',
+    dskToolSort: 'Sort A-Z (active disk)',
+    dskToolSortAll: 'Sort All container disks',
+    dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
     dskToolSave: 'Save',
     dskActivePane: 'Active pane',
     collisionTitle: 'File already exists',
@@ -1233,6 +1242,92 @@ export default function App() {
       if (!res.success) { addLog(`Inject: ${res.error}`, `Inject: ${res.error}`, 'error'); return; }
       beginAddBatch(activePane, [{ name: res.name, ext: res.ext, fileType: res.fileType, asciiFlag: res.asciiFlag, data: res.data }]);
     } catch (err: any) { addLog(`Inject: ${err.message}`, `Inject: ${err.message}`, 'error'); }
+  };
+
+  // Ordena alfabeticamente (A→Z) o diretório da imagem no painel ativo
+  const handleDskSort = async () => {
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    if (!pane.files.length) { addLog('Não há arquivos para ordenar.', 'No files to sort.', 'warn'); return; }
+    pushDskUndo();
+    try {
+      const res = await window.cocoApi.dskSortDirectory(pane.buffer);
+      if (!res.success) { addLog(`DSK Ordenar: ${res.error}`, `DSK Sort: ${res.error}`, 'error'); return; }
+      if (selectedDsk?.pane === activePane) setSelectedDsk(null);
+      await refreshPane(activePane, res.image);
+      addLog(
+        `Diretório do painel ${activePane} ordenado de A a Z. Lembre-se de salvar a imagem.`,
+        `Pane ${activePane} directory sorted A to Z. Remember to save the image.`,
+        'success'
+      );
+    } catch (err: any) { addLog(`DSK Ordenar: ${err.message}`, `DSK Sort: ${err.message}`, 'error'); }
+  };
+
+  // Ordena alfabeticamente TODOS os discos de um contêiner multi-disco no painel ativo
+  const handleDskSortAll = async () => {
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    if (!pane.container) { addLog('Esta imagem não é um contêiner multi-disco.', 'This image is not a multi-disk container.', 'warn'); return; }
+    pushDskUndo();
+    try {
+      const full = new Uint8Array(pane.container.full);
+      let sorted = 0;
+      for (let i = 0; i < pane.container.count; i++) {
+        const slice = full.slice(i * STD_DISK, (i + 1) * STD_DISK);
+        const res = await window.cocoApi.dskSortDirectory(slice);
+        if (!res.success) { addLog(`DSK Ordenar (disco ${i}): ${res.error}`, `DSK Sort (disk ${i}): ${res.error}`, 'error'); continue; }
+        full.set(res.image, i * STD_DISK);
+        sorted++;
+      }
+      // Atualiza a visão do disco atualmente exibido a partir do contêiner já ordenado
+      const idx = pane.container.index;
+      const cur = full.slice(idx * STD_DISK, (idx + 1) * STD_DISK);
+      const dir = await window.cocoApi.readDskDirectory(cur);
+      if (selectedDsk?.pane === activePane) setSelectedDsk(null);
+      setPane(activePane, {
+        ...pane,
+        buffer: cur,
+        size: cur.length,
+        files: dir.success ? dir.files : pane.files,
+        freeGranules: dir.success ? dir.freeGranules : pane.freeGranules,
+        totalGranules: dir.success ? dir.totalGranules : pane.totalGranules,
+        container: { ...pane.container, full }
+      });
+      addLog(
+        `${sorted} disco(s) do contêiner ordenados de A a Z no painel ${activePane}. Lembre-se de salvar a imagem.`,
+        `${sorted} container disk(s) sorted A to Z in pane ${activePane}. Remember to save the image.`,
+        'success'
+      );
+    } catch (err: any) { addLog(`DSK Ordenar Todos: ${err.message}`, `DSK Sort All: ${err.message}`, 'error'); }
+  };
+
+  // Copia o conteúdo do Painel A para o Painel B. Em contêiner, copia apenas o disco
+  // ATIVO (a fatia atual), gerando no B uma imagem .dsk avulsa de um único disco.
+  const handleCopyPaneAToB = async () => {
+    const src = getPane('A');
+    if (!src) { addLog('Painel A está vazio.', 'Pane A is empty.', 'warn'); return; }
+    pushDskUndo();
+    try {
+      const bytes = new Uint8Array(src.buffer); // disco ativo (já fatiado p/ contêiner)
+      let name = src.fileName || 'PAINEL_A.DSK';
+      if (src.container) {
+        const base = name.replace(/\.dsk$/i, '');
+        name = `${base}_disco${src.container.index}.dsk`;
+      }
+      if (selectedDsk?.pane === 'B') setSelectedDsk(null);
+      const ok = await loadPaneFromBuffer('B', bytes, name);
+      if (!ok) return;
+      setActivePane('B');
+      addLog(
+        src.container
+          ? `Disco ${src.container.index} do contêiner (Painel A) copiado para o Painel B como imagem avulsa "${name}". Salve para gerar um .dsk de um único disco.`
+          : `Conteúdo do Painel A copiado para o Painel B. Lembre-se de salvar a imagem.`,
+        src.container
+          ? `Disk ${src.container.index} of the container (Pane A) copied to Pane B as a standalone image "${name}". Save to produce a single-disk .dsk.`
+          : `Pane A content copied to Pane B. Remember to save the image.`,
+        'success'
+      );
+    } catch (err: any) { addLog(`Painel A→B: ${err.message}`, `Pane A→B: ${err.message}`, 'error'); }
   };
 
   const handleDskNew = async () => {
@@ -2573,18 +2668,24 @@ export default function App() {
           <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
             {/* DSK toolbar */}
             <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-              <button onClick={handleDskNew} className="dsk-tool"><Plus size={13} /> {t('dskToolNew')}</button>
-              <button onClick={handleDskInject} className="dsk-tool"><FilePlus size={13} /> {t('dskToolInject')}</button>
+              <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
+              <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FilePlus size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={() => handleDskCopy(false)} disabled={!selectedDsk?.entries.length} className="dsk-tool"><Copy size={13} /> {t('dskToolCopy')}</button>
-              <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length} className="dsk-tool"><Scissors size={13} /> {t('dskToolCut')}</button>
-              <button onClick={handleDskPaste} disabled={!dskClipboard} className="dsk-tool"><Clipboard size={13} /> {t('dskToolPaste')}</button>
-              <button onClick={handleDskDelete} disabled={!selectedDsk?.entries.length} className="dsk-tool dsk-tool-danger"><Trash2 size={13} /> {t('dskToolDelete')}</button>
+              <button onClick={() => handleDskCopy(false)} disabled={!selectedDsk?.entries.length} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
+              <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length} title={t('dskToolCut')} aria-label={t('dskToolCut')} className="dsk-tool"><Scissors size={15} /></button>
+              <button onClick={handleDskPaste} disabled={!dskClipboard} title={t('dskToolPaste')} aria-label={t('dskToolPaste')} className="dsk-tool"><Clipboard size={15} /></button>
+              <button onClick={handleDskDelete} disabled={!selectedDsk?.entries.length} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleDskUndo} disabled={dskUndo.length === 0} className="dsk-tool"><Undo2 size={13} /> {t('dskToolUndo')}</button>
-              <button onClick={handleDskRedo} disabled={dskRedo.length === 0} className="dsk-tool"><Redo2 size={13} /> {t('dskToolRedo')}</button>
+              <button onClick={handleCopyPaneAToB} disabled={!paneA} title={t('dskToolCopyAtoB')} aria-label={t('dskToolCopyAtoB')} className="dsk-tool"><ArrowRight size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleDskSavePane} className="dsk-tool"><Save size={13} /> {t('dskToolSave')}</button>
+              <button onClick={handleDskUndo} disabled={dskUndo.length === 0} title={t('dskToolUndo')} aria-label={t('dskToolUndo')} className="dsk-tool"><Undo2 size={15} /></button>
+              <button onClick={handleDskRedo} disabled={dskRedo.length === 0} title={t('dskToolRedo')} aria-label={t('dskToolRedo')} className="dsk-tool"><Redo2 size={15} /></button>
+              <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+              <button onClick={handleDskSort} disabled={!getPane(activePane)?.files.length} title={t('dskToolSort')} aria-label={t('dskToolSort')} className="dsk-tool"><ArrowDownAZ size={15} /></button>
+              {getPane(activePane)?.container && (
+                <button onClick={handleDskSortAll} disabled={!getPane(activePane)?.files.length} title={t('dskToolSortAll')} aria-label={t('dskToolSortAll')} className="dsk-tool"><Layers size={15} /></button>
+              )}
+              <button onClick={handleDskSavePane} title={t('dskToolSave')} aria-label={t('dskToolSave')} className="dsk-tool"><Save size={15} /></button>
               <span className="ml-auto text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
                 {t('dskActivePane')}: <span className="text-[var(--primary)] font-bold">{activePane}</span>
                 {dskClipboard && <span className="ml-2 text-[var(--text-secondary)]">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
