@@ -34,7 +34,7 @@ const JOY_OPTIONS = [
   { v: 5, pt: 'Teclado: QAOP + Espaço', en: 'Keyboard: QAOP + Space' },
 ];
 
-interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; }
+interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; }
 
 interface Props {
   lang: 'pt-br' | 'en-us';
@@ -134,6 +134,15 @@ export default function XRoarPanel({ lang, active, pendingLoad, onLog }: Props) 
     if (!pendingLoad || pendingLoad.key === lastLoadKey.current || !ready) return;
     lastLoadKey.current = pendingLoad.key;
     loadToDrive(pendingLoad.drive ?? 0, pendingLoad.name, pendingLoad.ext, pendingLoad.data);
+    // Auto-roda (duplo-clique): monta o disco, dá HARD RESET (limpa qualquer programa que já
+    // esteja rodando → volta ao prompt do BASIC, onde a digitação funciona; o disco montado
+    // permanece na drive) e só então digita RUN/LOADM. Sem o reset, o texto iria para o
+    // programa em execução e nada carregaria.
+    if (pendingLoad.runCmd) {
+      const cmd = pendingLoad.runCmd;
+      setTimeout(() => sendCmd('hard_reset'), 900);                                  // disco montou → reseta
+      setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: 60 }); focusEmu(); }, 3400); // boot pronto → digita
+    }
   }, [pendingLoad, ready]);
 
   // Trocar máquina ou saída de vídeo reinicia o emulador → limpa as drives.

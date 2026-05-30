@@ -95,7 +95,10 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolRedo: 'Refazer',
     dskToolSort: 'Ordenar A-Z (disco ativo)',
     dskToolSortAll: 'Ordenar Todos os discos do contêiner',
-    dskToolXroar: 'Testar no XRoar',
+    dskToolXroar: 'Testar painel/DSK no XRoar (drive 0)',
+    dskToolXroarShort: 'Testar',
+    dskUnsaved: 'alterações não salvas',
+    dskRunHint: 'Duplo-clique: rodar no XRoar',
     dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
     dskToolSave: 'Salvar',
     dskActivePane: 'Painel ativo',
@@ -250,7 +253,10 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolRedo: 'Redo',
     dskToolSort: 'Sort A-Z (active disk)',
     dskToolSortAll: 'Sort All container disks',
-    dskToolXroar: 'Test in XRoar',
+    dskToolXroar: 'Test pane/DSK in XRoar (drive 0)',
+    dskToolXroarShort: 'Test',
+    dskUnsaved: 'unsaved changes',
+    dskRunHint: 'Double-click: run in XRoar',
     dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
     dskToolSave: 'Save',
     dskActivePane: 'Active pane',
@@ -401,7 +407,8 @@ export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
   const [activeTab, setActiveTab] = useState<'dsk' | 'xroar' | 'gw' | 'eprom'>('dsk');
-  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number } | null>(null);
+  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string } | null>(null);
+  const [dskDirty, setDskDirty] = useState<{ A: boolean; B: boolean }>({ A: false, B: false }); // alterações não salvas por painel
   const [consoleMax, setConsoleMax] = useState<boolean>(false);
 
   // Greaseweazle (aba GW)
@@ -1094,6 +1101,8 @@ export default function App() {
 
   const getPane = (which: 'A' | 'B') => (which === 'A' ? paneA : paneB);
   const setPane = (which: 'A' | 'B', pane: any) => (which === 'A' ? setPaneA(pane) : setPaneB(pane));
+  const markDirty = (which: 'A' | 'B') => setDskDirty(d => ({ ...d, [which]: true }));
+  const clearDirty = (which: 'A' | 'B') => setDskDirty(d => ({ ...d, [which]: false }));
 
   const STD_DISK = 161280; // disco RS-DOS padrão (35 trilhas)
 
@@ -1118,6 +1127,7 @@ export default function App() {
         entries: Array.from({ length: count }, (_, k) => ({ id: k, label: `Disco ${k}`, info: '', locator: { index: k } })),
       } : null
     });
+    clearDirty(which); // imagem recém-aberta = sem alterações
     if (count > 1) {
       addLog(`Contêiner multi-disco detectado: ${count} discos de 160 KB. Mostrando o disco ${index} no painel ${which} — use o seletor de disco.`,
         `Multi-disk container detected: ${count} 160 KB disks. Showing disk ${index} in pane ${which} — use the disk selector.`, 'info');
@@ -1155,6 +1165,7 @@ export default function App() {
       files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
       container: { ...c, index }
     });
+    clearDirty(which); // trocou para outro disco (limpo)
   };
 
   // Re-parse uma imagem modificada (mutação in-place); mantém e atualiza o contêiner, se houver
@@ -1180,6 +1191,7 @@ export default function App() {
       totalGranules: res.totalGranules,
       container
     });
+    markDirty(which); // refreshPane só é chamado após edições → alteração não salva
   };
 
   const uniqueNameFromFiles = (files: any[], base: string, ext: string) => {
@@ -1381,6 +1393,7 @@ export default function App() {
       if (selectedDsk?.pane === 'B') setSelectedDsk(null);
       const ok = await loadPaneFromBuffer('B', bytes, name);
       if (!ok) return;
+      markDirty('B'); // imagem avulsa nova no painel B (ainda não salva)
       setActivePane('B');
       addLog(
         src.container
@@ -1424,6 +1437,7 @@ export default function App() {
         files: dir.files, freeGranules: dir.freeGranules, totalGranules: dir.totalGranules,
         container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0 },
       });
+      clearDirty(which);
       setActivePane(which);
       const noun = res.kind === 'cocosdc' ? (currentLang === 'pt-br' ? '.dsk' : '.dsk') : (currentLang === 'pt-br' ? 'discos' : 'disks');
       addLog(`${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'} "${res.fileName}": ${res.entries.length} ${noun}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
@@ -1436,9 +1450,21 @@ export default function App() {
   const handleTestInXroar = () => {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
-    setXroarLoad({ name: pane.fileName || 'disk.dsk', ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now() });
+    setXroarLoad({ name: pane.fileName || 'disk.dsk', ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0 });
     setActiveTab('xroar');
     addLog(`Enviando "${pane.fileName}" para o XRoar (drive 0).`, `Sending "${pane.fileName}" to XRoar (drive 0).`, 'info');
+  };
+
+  // Duplo-clique num arquivo: monta o disco do painel no XRoar (drive 0) e AUTO-RODA o arquivo
+  // (RUN para BASIC tipo 0; LOADM:EXEC para código de máquina). Usa o buffer atual (inclui edições).
+  const handleRunFileInXroar = (which: 'A' | 'B', f: any) => {
+    const pane = getPane(which);
+    if (!pane) return;
+    const cmd = f.fileType === 0 ? `RUN"${f.name}"\r` : `LOADM"${f.name}":EXEC\r`;
+    setActivePane(which);
+    setXroarLoad({ name: pane.fileName || 'disk.dsk', ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
+    setActiveTab('xroar');
+    addLog(`Rodando "${f.fullName}" no XRoar (drive 0)…`, `Running "${f.fullName}" in XRoar (drive 0)…`, 'info');
   };
 
   const handleDskNew = async () => {
@@ -1447,6 +1473,7 @@ export default function App() {
       const res = await window.cocoApi.dskNewBlank();
       if (!res.success) { addLog(`New disk: ${res.error}`, `New disk: ${res.error}`, 'error'); return; }
       await loadPaneFromBuffer(activePane, new Uint8Array(res.image), activePane === 'A' ? 'NOVO_A.DSK' : 'NOVO_B.DSK');
+      markDirty(activePane); // disco novo ainda não salvo
       addLog(`Novo disco vazio criado no painel ${activePane}.`, `New blank disk created in pane ${activePane}.`, 'success');
     } catch (err: any) { addLog(`New disk: ${err.message}`, `New disk: ${err.message}`, 'error'); }
   };
@@ -1462,7 +1489,7 @@ export default function App() {
         currentLang === 'pt-br' ? `Salvar imagem .DSK (painel ${activePane})` : `Save .DSK image (pane ${activePane})`,
         [{ name: 'RS-DOS Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]
       );
-      if (r.success) addLog(`Imagem do painel ${activePane} salva em: ${r.filePath}${pane.container ? ` (contêiner com ${pane.container.count} discos)` : ''}`, `Pane ${activePane} image saved at: ${r.filePath}${pane.container ? ` (${pane.container.count}-disk container)` : ''}`, 'success');
+      if (r.success) { clearDirty(activePane); addLog(`Imagem do painel ${activePane} salva em: ${r.filePath}${pane.container ? ` (contêiner com ${pane.container.count} discos)` : ''}`, `Pane ${activePane} image saved at: ${r.filePath}${pane.container ? ` (${pane.container.count}-disk container)` : ''}`, 'success'); }
       else if (r.error) addLog(`Save: ${r.error}`, `Save: ${r.error}`, 'error');
     } catch (err: any) { addLog(`Save: ${err.message}`, `Save: ${err.message}`, 'error'); }
   };
@@ -2128,6 +2155,8 @@ export default function App() {
                         e.dataTransfer.effectAllowed = 'copy';
                       }}
                       onClick={(e) => handleSelectDskFile(which, f, e)}
+                      onDoubleClick={() => handleRunFileInXroar(which, f)}
+                      title={t('dskRunHint')}
                       className={`cursor-pointer border-b border-[var(--border)]/40 hover:bg-slate-800 ${selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName) ? 'bg-cyan-950/40 text-cyan-300 font-semibold' : 'text-[var(--text-secondary)]'}`}
                     >
                       <td className="p-2 font-mono">{f.name}</td>
@@ -2161,7 +2190,12 @@ export default function App() {
         <div className="app-logo">
           <Cpu className="text-[var(--primary)] glow-text-primary" size={28} />
           <div>
-            <h1 className="app-title-text">{t('title')}</h1>
+            <div className="flex items-end gap-2 flex-nowrap">
+              <h1 className="app-title-text" style={{ fontSize: 'calc(1.45rem - 1px)', lineHeight: 1 }}>{t('title')}</h1>
+              <span style={{ fontFamily: "'Outfit', sans-serif", fontSize: '0.6rem', fontWeight: 600, lineHeight: 1, letterSpacing: '0.3px', color: 'var(--text-muted)', whiteSpace: 'nowrap', alignSelf: 'flex-end' }}>
+                {currentLang === 'pt-br' ? 'por' : 'by'} Mauricio Matte (c) 2026
+              </span>
+            </div>
             <p className="text-[10px] text-[var(--text-secondary)] font-medium tracking-wide">{t('subtitle')}</p>
           </div>
         </div>
@@ -2809,12 +2843,26 @@ export default function App() {
               {getPane(activePane)?.container && (
                 <button onClick={handleDskSortAll} disabled={!getPane(activePane)?.files.length} title={t('dskToolSortAll')} aria-label={t('dskToolSortAll')} className="dsk-tool"><Layers size={15} /></button>
               )}
-              <button onClick={handleDskSavePane} title={t('dskToolSave')} aria-label={t('dskToolSave')} className="dsk-tool"><Save size={15} /></button>
+              <button
+                onClick={handleDskSavePane}
+                title={dskDirty[activePane] ? `${t('dskToolSave')} • ${t('dskUnsaved')}` : t('dskToolSave')}
+                aria-label={t('dskToolSave')}
+                className="dsk-tool"
+                style={dskDirty[activePane] ? { color: 'hsl(45,95%,62%)', borderColor: 'hsl(45,90%,55%)', boxShadow: '0 0 9px hsla(45,90%,55%,0.65)' } : undefined}
+              >
+                <Save size={15} />
+                {dskDirty[activePane] && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'hsl(45,95%,60%)', display: 'inline-block', marginLeft: 4, boxShadow: '0 0 5px hsl(45,95%,60%)' }} />}
+              </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /></button>
-              <span className="ml-auto text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
-                {t('dskActivePane')}: <span className="text-[var(--primary)] font-bold">{activePane}</span>
-                {dskClipboard && <span className="ml-2 text-[var(--text-secondary)]">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
+              <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /> {t('dskToolXroarShort')}</button>
+              <span className="ml-auto flex items-center gap-2">
+                {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)]">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
+                <span
+                  className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md text-[var(--primary)]"
+                  style={{ border: '1px solid var(--primary)', boxShadow: '0 0 8px var(--primary-glow)', background: 'var(--primary-glow)' }}
+                >
+                  {t('dskActivePane')}: {activePane}
+                </span>
               </span>
             </div>
             {/* Pane A (top) */}
