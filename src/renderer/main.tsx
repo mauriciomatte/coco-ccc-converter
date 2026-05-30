@@ -65,6 +65,7 @@ if (!(window as any).cocoApi) {
       }
     },
 
+    xroarPickFile: async () => ({ cancelled: true }),
     imageAnalyze: async () => ({ success: false, error: 'Importação de imagem disponível apenas no app desktop.' }),
     imageExtract: async () => ({ success: false, error: 'Extração disponível apenas no app desktop.' }),
 

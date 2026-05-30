@@ -32,9 +32,11 @@ import {
   Layers,
   Database,
   Search,
-  X
+  X,
+  MonitorPlay
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
+import XRoarPanel from './components/XRoarPanel';
 
 interface LogMessage {
   time: string;
@@ -48,6 +50,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     title: 'CoCo DSK & CCC Utility',
     subtitle: 'MANIPULADOR DE IMAGENS .DSK E CONVERSOR DE ARQUIVOS PARA .CCC',
     tabDsk: 'DSK',
+    tabXroar: 'XRoar',
     tabEprom: 'EPROM',
     hexEditorBtn: 'Editor Hexadecimal',
     tabGw: 'GW',
@@ -92,6 +95,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolRedo: 'Refazer',
     dskToolSort: 'Ordenar A-Z (disco ativo)',
     dskToolSortAll: 'Ordenar Todos os discos do contêiner',
+    dskToolXroar: 'Testar no XRoar',
     dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
     dskToolSave: 'Salvar',
     dskActivePane: 'Painel ativo',
@@ -201,6 +205,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     title: 'CoCo DSK & CCC Utility',
     subtitle: '.DSK IMAGE MANAGER & FILE-TO-.CCC CONVERTER',
     tabDsk: 'DSK',
+    tabXroar: 'XRoar',
     tabEprom: 'EPROM',
     hexEditorBtn: 'Hex Editor',
     tabGw: 'GW',
@@ -245,6 +250,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolRedo: 'Redo',
     dskToolSort: 'Sort A-Z (active disk)',
     dskToolSortAll: 'Sort All container disks',
+    dskToolXroar: 'Test in XRoar',
     dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
     dskToolSave: 'Save',
     dskActivePane: 'Active pane',
@@ -394,7 +400,8 @@ function fileTracks(entry: any): string {
 export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
-  const [activeTab, setActiveTab] = useState<'dsk' | 'gw' | 'eprom'>('dsk');
+  const [activeTab, setActiveTab] = useState<'dsk' | 'xroar' | 'gw' | 'eprom'>('dsk');
+  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number } | null>(null);
   const [consoleMax, setConsoleMax] = useState<boolean>(false);
 
   // Greaseweazle (aba GW)
@@ -1425,6 +1432,15 @@ export default function App() {
     finally { setImageBusy(false); setImageProgress(null); }
   };
 
+  // Envia o disco do painel ativo para o emulador XRoar (drive 0) e abre a aba
+  const handleTestInXroar = () => {
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    setXroarLoad({ name: pane.fileName || 'disk.dsk', ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now() });
+    setActiveTab('xroar');
+    addLog(`Enviando "${pane.fileName}" para o XRoar (drive 0).`, `Sending "${pane.fileName}" to XRoar (drive 0).`, 'info');
+  };
+
   const handleDskNew = async () => {
     pushDskUndo();
     try {
@@ -2159,6 +2175,12 @@ export default function App() {
             <Disc size={14} /> {t('tabDsk')}
           </button>
           <button
+            onClick={() => setActiveTab('xroar')}
+            className={`tab-btn ${activeTab === 'xroar' ? 'tab-btn-active' : ''}`}
+          >
+            <MonitorPlay size={14} /> {t('tabXroar')}
+          </button>
+          <button
             onClick={() => setActiveTab('gw')}
             className={`tab-btn ${activeTab === 'gw' ? 'tab-btn-active' : ''}`}
           >
@@ -2766,7 +2788,7 @@ export default function App() {
         </div>
         ) : activeTab === 'gw' ? (
           renderGwTab()
-        ) : (
+        ) : activeTab === 'xroar' ? null : (
           <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
             {/* DSK toolbar */}
             <div className="flex items-center gap-1.5 mb-2 flex-wrap">
@@ -2788,6 +2810,8 @@ export default function App() {
                 <button onClick={handleDskSortAll} disabled={!getPane(activePane)?.files.length} title={t('dskToolSortAll')} aria-label={t('dskToolSortAll')} className="dsk-tool"><Layers size={15} /></button>
               )}
               <button onClick={handleDskSavePane} title={t('dskToolSave')} aria-label={t('dskToolSave')} className="dsk-tool"><Save size={15} /></button>
+              <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+              <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /></button>
               <span className="ml-auto text-[10px] text-[var(--text-muted)] uppercase tracking-wider">
                 {t('dskActivePane')}: <span className="text-[var(--primary)] font-bold">{activePane}</span>
                 {dskClipboard && <span className="ml-2 text-[var(--text-secondary)]">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
@@ -2805,6 +2829,11 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* XRoar emulator — always mounted (hidden unless active) so it never reboots on tab switch */}
+        <div style={{ display: activeTab === 'xroar' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
+          <XRoarPanel lang={currentLang} pendingLoad={xroarLoad} onLog={addLog} />
+        </div>
 
         {/* SPLITTER 3 (Horizontal) */}
         <div className="splitter-h" onMouseDown={startResizingConsole} />

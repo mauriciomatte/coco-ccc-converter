@@ -41,7 +41,10 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Permite que o iframe do XRoar (file:// em produção) faça fetch() das ROMs e
+      // carregue xroar.wasm. App desktop local — sem conteúdo remoto.
+      webSecurity: false
     }
   });
 
@@ -263,6 +266,27 @@ ipcMain.handle('dsk-detect-container', async (_, dskUint8Array: Uint8Array, stdD
     return { count: slice0Valid && slice1Valid ? n : 1, slice0Valid, slice1Valid };
   } catch (error: any) {
     return { count: 1, error: error.message };
+  }
+});
+
+// 3c0z. Pick any CoCo/Dragon media file to load into the embedded XRoar emulator.
+ipcMain.handle('xroar-pick-file', async () => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Abrir no XRoar',
+    properties: ['openFile'],
+    filters: [
+      { name: 'CoCo/Dragon', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'cas', 'wav', 'bin', 'rom', 'ccc', 'sna', 'asc', 'bas'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || !result.filePaths.length) return { cancelled: true };
+  const fp = result.filePaths[0];
+  try {
+    const data = fs.readFileSync(fp);
+    return { success: true, name: path.basename(fp), ext: path.extname(fp).slice(1).toLowerCase(), data: new Uint8Array(data) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 });
 

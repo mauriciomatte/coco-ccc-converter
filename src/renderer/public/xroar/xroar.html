@@ -1,0 +1,1412 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <title>XRoar Local</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #000;
+        }
+
+        canvas#canvas {
+            border: 0;
+            background-color: #000;
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+    <script>
+        // ─── Helper: send log to parent window ───────────────────────────────────────
+        function _log(type, text) {
+            console.log('[XRoar] ' + text);
+            try { if (window.parent !== window) window.parent.postMessage({ type: type, text: text }, '*'); } catch (e) { }
+        }
+
+        // ─── Parse URL params ─────────────────────────────────────────────────────────
+        var urlParams = new URLSearchParams(window.location.search);
+        var selectedMachine = urlParams.get('machine') || 'coco2bus';
+        var initBrightness = parseFloat(urlParams.get('brightness') || '50');
+        var initContrast = parseFloat(urlParams.get('contrast') || '50');
+        var initColour = parseFloat(urlParams.get('colour') || '50');
+        var initHue = parseFloat(urlParams.get('hue') || '0');
+        var initAoGain = parseFloat(urlParams.get('aoGain') || '-3');
+        var initHz60 = urlParams.get('hz60') === '1';
+        var initColourKiller = urlParams.get('colourKiller') === '1';
+        var initInvertText = urlParams.get('invertText') === '1';
+        var initTvInput = urlParams.get('tvInput') || 'rgb';
+        var initTvType = urlParams.get('tvType') || 'ntsc';
+        var initRightJoy = urlParams.get('rightJoy') || '';
+        var initLeftJoy = urlParams.get('leftJoy') || '';
+        var initCcr = parseInt(urlParams.get('ccr') || '0', 10); // 0=none,1=simple,2=5bit,3=simulated
+        var initGlFilter = urlParams.get('glFilter') || 'nearest'; // nearest=pixel-perfect, linear=smooth
+
+        _log('xroar-boot', 'XRoar WASM boot — machine: ' + selectedMachine);
+        _log('xroar-boot', 'Init: brightness=' + initBrightness + ' contrast=' + initContrast +
+            ' colour=' + initColour + ' hue=' + initHue + ' gain=' + initAoGain +
+            ' hz60=' + initHz60 + ' killer=' + initColourKiller + ' invert=' + initInvertText +
+            ' tvInput=' + initTvInput + ' tvType=' + initTvType);
+
+        // ─── ROM files that exist on disk ────────────────────────────────────────────
+        var romFiles = ['bas13.rom', 'coco3.rom', 'd32.rom', 'd64rom1V31.rom', 'd64rom2V31.rom', 'ddos10.rom', 'disk11.rom', 'extbas11.rom'];
+
+        // ─── Phase 1: Pre-fetch all ROMs via async fetch() ──────────────────────────
+        var preloadedRoms = {};
+
+        async function fetchAllRoms() {
+            _log('xroar-boot', 'Fetching ' + romFiles.length + ' ROMs...');
+            var loaded = 0, failed = 0;
+
+            await Promise.all(romFiles.map(function (name) {
+                return fetch('roms/' + name)
+                    .then(function (resp) {
+                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                        return resp.arrayBuffer();
+                    })
+                    .then(function (buf) {
+                        var data = new Uint8Array(buf);
+                        if (data.length < 4096) throw new Error('Too small (' + data.length + 'b) — HTML fallback?');
+                        preloadedRoms[name] = data;
+                        loaded++;
+                        _log('xroar-rom', 'OK: ' + name + ' (' + data.length + ' bytes)');
+                    })
+                    .catch(function (err) {
+                        failed++;
+                        _log('xroar-error', 'ROM ' + name + ': ' + err.message);
+                    });
+            }));
+
+            _log('xroar-boot', 'ROM fetch: ' + loaded + ' ok, ' + failed + ' failed');
+            return loaded;
+        }
+
+        // ─── Build CLI args from URL params ──────────────────────────────────────────
+        function buildArgs() {
+            var args = [
+                '-rompath', '.',
+                '-no-disk-auto-os9',
+                '-ao-fragments', '3',
+                '-default-machine', selectedMachine,
+                // Video settings baked in at startup
+                '-vo-brightness', String(initBrightness),
+                '-vo-contrast', String(initContrast),
+                '-vo-colour', String(initColour),
+                '-vo-hue', String(initHue),
+                // Audio
+                '-ao-gain', String(initAoGain),
+                // TV input/type
+                '-tv-input', initTvInput,
+                '-tv-type', initTvType,
+                // CCR (cross-colour renderer): 0=none,1=simple,2=5bit,3=simulated
+                '-ccr', ['none', 'simple', '5bit', 'simulated'][initCcr] || 'none',
+                // GL filter: nearest=pixel-perfect (no interpolation), linear=smooth
+                '-gl-filter', initGlFilter,
+            ];
+
+            // 60Hz scaling
+            if (initHz60) {
+                args.push('-vo-scale-60hz');
+            } else {
+                args.push('-no-vo-scale-60hz');
+            }
+
+            // Colour killer
+            if (initColourKiller) {
+                args.push('-vo-colour-killer');
+            } else {
+                args.push('-no-vo-colour-killer');
+            }
+
+            // Inverse text
+            if (initInvertText) {
+                args.push('-invert-text');
+            }
+
+            // Joysticks
+            if (initRightJoy && initRightJoy !== 'none' && initRightJoy !== '0') {
+                args.push('-joy-right', initRightJoy);
+            }
+            if (initLeftJoy && initLeftJoy !== 'none' && initLeftJoy !== '0') {
+                args.push('-joy-left', initLeftJoy);
+            }
+
+            return args;
+        }
+
+        // ─── Pre-wrapped WASM disk functions (populated in onRuntimeInitialized) ─────
+        // These are set once the Emscripten runtime is ready and cwrap is available.
+        // Using pre-wrapped functions avoids the "func is not a function" error that
+        // occurs when ccall tries to look up a symbol that was not exported in the build.
+        var _wasm_load_file_fn = null;          // cwrap: wasm_load_file(string, number, number)
+        var _cwrap_xroar_insert_disk = null;    // cwrap: xroar_insert_disk(number, string)
+        var _cwrap_wasm_insert_disk = null;     // cwrap: wasm_insert_disk(number, string)
+
+        // ─── Phase 2: Configure Module and load xroar.js ────────────────────────────
+        async function startEmulator() {
+            var loadedCount = await fetchAllRoms();
+            var args = buildArgs();
+            _log('xroar-boot', 'Configuring Emscripten Module with ' + loadedCount + ' ROMs...');
+            _log('xroar-boot', 'Args: ' + args.join(' '));
+
+            window.Module = {
+                canvas: document.getElementById('canvas'),
+                initial_resize: 0,
+                is_fullscreen: 0,
+                arguments: args,
+                print: function (t) { _log('xroar-print', t); },
+                printErr: function (t) { _log('xroar-error', t); },
+                setStatus: function (t) { _log('xroar-status', t || 'Ready'); },
+                monitorRunDependencies: function (left) { _log('xroar-boot', 'Deps: ' + left); },
+
+                // Phase 3: preRun — inject ROMs into Emscripten VFS
+                preRun: [function () {
+                    _log('xroar-boot', 'preRun: injecting ROMs into VFS...');
+                    if (typeof FS === 'undefined') { _log('xroar-error', 'FS unavailable!'); return; }
+
+                    var dirs = ['/', '/home/web_user'];
+                    var written = 0;
+                    var romNames = Object.keys(preloadedRoms);
+                    for (var i = 0; i < romNames.length; i++) {
+                        var romName = romNames[i];
+                        var romData = new Uint8Array(preloadedRoms[romName]);
+                        for (var j = 0; j < dirs.length; j++) {
+                            try { FS.writeFile(dirs[j] + '/' + romName, romData); } catch (e) { }
+                        }
+                        written++;
+                    }
+                    _log('xroar-boot', written + ' ROMs written to VFS');
+                }],
+
+                onRuntimeInitialized: function () {
+                    _log('xroar-boot', 'Emscripten runtime initialized (waiting for ui_done_initialising)...');
+
+                    // ── Wrap wasm_load_file ───────────────────────────────────────────
+                    // Signature: wasm_load_file(filename: string, flags: number, drive: number)
+                    // flags=0 means auto-detect file type; drive is 0-based (0=D0, 1=D1, ...)
+                    try {
+                        _wasm_load_file_fn = Module.cwrap('wasm_load_file', null, ['string', 'number', 'number']);
+                        _log('xroar-boot', 'cwrap OK: wasm_load_file(string, number, number)');
+                    } catch (e) {
+                        _log('xroar-error', 'cwrap FAIL: wasm_load_file — ' + e.message);
+                    }
+
+                    // ── Try to pre-wrap disk insertion functions ───────────────────────
+                    // xroar_insert_disk(drive: number, filename: string)
+                    try {
+                        _cwrap_xroar_insert_disk = Module.cwrap('xroar_insert_disk', null, ['number', 'string']);
+                        _log('xroar-boot', 'cwrap OK: xroar_insert_disk(number, string)');
+                    } catch (e) {
+                        _log('xroar-boot', 'cwrap N/A: xroar_insert_disk — ' + e.message);
+                    }
+
+                    // wasm_insert_disk(drive: number, filename: string)
+                    try {
+                        _cwrap_wasm_insert_disk = Module.cwrap('wasm_insert_disk', null, ['number', 'string']);
+                        _log('xroar-boot', 'cwrap OK: wasm_insert_disk(number, string)');
+                    } catch (e) {
+                        _log('xroar-boot', 'cwrap N/A: wasm_insert_disk — ' + e.message);
+                    }
+
+                    // ── Diagnostic: enumerate all disk/insert/load-related exports ────
+                    try {
+                        var allKeys = Object.keys(Module);
+                        var diskKeys = allKeys.filter(function (k) {
+                            var kl = k.toLowerCase();
+                            return kl.includes('disk') || kl.includes('insert') || kl.includes('load_file');
+                        });
+                        _log('xroar-boot', 'WASM disk-related exports (' + diskKeys.length + '): ' + (diskKeys.join(', ') || 'none found'));
+
+                        // Also log direct underscore-prefixed symbols
+                        var underscoreKeys = allKeys.filter(function (k) {
+                            return k.startsWith('_') && (k.toLowerCase().includes('disk') || k.toLowerCase().includes('insert'));
+                        });
+                        _log('xroar-boot', 'WASM _symbol exports: ' + (underscoreKeys.join(', ') || 'none found'));
+                    } catch (ex) {
+                        _log('xroar-error', 'Export enumeration failed: ' + ex.message);
+                    }
+                }
+            };
+
+            // Load xroar.js dynamically
+            _log('xroar-boot', 'Loading xroar.js...');
+            var s = document.createElement('script');
+            s.src = 'xroar.js';
+            s.onerror = function () { _log('xroar-error', 'Failed to load xroar.js!'); };
+            document.body.appendChild(s);
+        }
+
+        // ─── Audio resume (Chromium autoplay policy) ─────────────────────────────────
+        function resumeAudio() {
+            if (typeof Module === 'undefined' || !Module.SDL2 || !Module.SDL2.audioContext) return;
+            if (Module.SDL2.audioContext.state === 'suspended') Module.SDL2.audioContext.resume();
+            if (Module.SDL2.audioContext.state === 'running') {
+                document.getElementById('canvas').removeEventListener('click', resumeAudio);
+                document.removeEventListener('keydown', resumeAudio);
+            }
+        }
+        document.getElementById('canvas').addEventListener('click', resumeAudio);
+        document.addEventListener('keydown', resumeAudio);
+
+        // ─── CGS Master GainNode — controle de volume/mute ───────────────────────────
+        //
+        // ESTRATÉGIA ROBUSTA (3 camadas):
+        //
+        // CAMADA 1 — Interceptação do construtor AudioContext:
+        //   Substituímos window.AudioContext para que quando o SDL2 criar o AudioContext,
+        //   instalamos imediatamente um GainNode mestre entre o scriptProcessorNode e o
+        //   destination real. Isso funciona se o SDL2 usar `new AudioContext()`.
+        //
+        // CAMADA 2 — Interceptação de AudioNode.prototype.connect:
+        //   Quando qualquer nó tentar conectar ao destination real, redirecionamos para
+        //   o GainNode mestre. Isso captura a conexão do scriptProcessorNode mesmo que
+        //   a interceptação do construtor não tenha funcionado.
+        //
+        // CAMADA 3 — Polling tardio (fallback):
+        //   Se as camadas 1 e 2 falharem (ex: Electron com CSP restritivo), fazemos
+        //   polling a cada 200ms para detectar quando Module.SDL2.audioContext existe
+        //   e então instalamos o GainNode reconectando o scriptProcessorNode.
+        //
+        // Fluxo ideal: new AudioContext() → _setupMasterGain() → GainNode instalado
+        //              scriptProcessorNode.connect(dest) → interceptado → connect(masterGain)
+        //
+        // Fluxo fallback: polling detecta SDL2.audioContext → reconecta scriptProcessorNode
+
+        (function () {
+            // Salva o connect original ANTES de qualquer interceptação
+            var _origConnect = AudioNode.prototype.connect;
+            // Expõe globalmente para uso no fallback tardio
+            window._cgs_origConnect = _origConnect;
+
+            // ── Função central: instala o GainNode mestre em um AudioContext ──────────
+            function _setupMasterGain(ctx) {
+                if (window._cgs_masterGain) return; // já instalado
+                try {
+                    // Obtém o destination REAL via getter do BaseAudioContext.prototype
+                    // (evita referência circular com window.AudioContext que pode ser o wrapper)
+                    var realDest;
+                    var destDesc = (typeof BaseAudioContext !== 'undefined' &&
+                        Object.getOwnPropertyDescriptor(BaseAudioContext.prototype, 'destination'));
+                    if (destDesc) {
+                        realDest = destDesc.get.call(ctx);
+                    } else {
+                        // Fallback: acesso direto (pode ser o wrapper, mas geralmente funciona)
+                        realDest = ctx.destination;
+                    }
+
+                    var masterGain = ctx.createGain();
+                    masterGain.gain.value = 1.0;
+                    // Conecta o GainNode mestre ao destination real usando o connect ORIGINAL
+                    // (não o interceptado, para evitar loop infinito)
+                    _origConnect.call(masterGain, realDest);
+
+                    // Armazena globalmente
+                    window._cgs_realDestination = realDest;
+                    window._cgs_masterGain = masterGain;
+                    window._cgs_audioCtx = ctx;
+                    console.log('[CGS] GainNode mestre instalado — ctx.state=' + ctx.state);
+
+                    // Aplica o ganho pendente se houver
+                    if (window._cgs_pendingGain !== undefined) {
+                        var pg = window._cgs_pendingGain;
+                        delete window._cgs_pendingGain;
+                        var linearGain = (pg <= -99) ? 0 : Math.pow(10, pg / 20);
+                        masterGain.gain.value = linearGain;
+                        console.log('[CGS] Ganho pendente aplicado: ' + pg + ' dB → ' + linearGain);
+                    }
+                } catch (e) {
+                    console.warn('[CGS] Falha ao instalar GainNode mestre:', e.message);
+                }
+            }
+            window._cgs_setupMasterGain = _setupMasterGain;
+
+            // ── CAMADA 2: Intercepta AudioNode.prototype.connect ──────────────────────
+            // Quando o scriptProcessorNode conectar ao destination real, redirecionamos
+            // para o GainNode mestre. Isso funciona mesmo se a camada 1 falhar.
+            AudioNode.prototype.connect = function (destination, outputIndex, inputIndex) {
+                // Se o GainNode mestre está instalado e o destino é o destination real,
+                // redireciona para o GainNode mestre
+                if (destination &&
+                    window._cgs_masterGain &&
+                    window._cgs_realDestination &&
+                    destination === window._cgs_realDestination) {
+                    return _origConnect.call(this, window._cgs_masterGain, outputIndex, inputIndex);
+                }
+
+                // Se o GainNode ainda não está instalado mas o destino é um AudioDestinationNode,
+                // tenta instalar o GainNode agora usando o contexto do nó de destino
+                if (destination &&
+                    !window._cgs_masterGain &&
+                    destination.constructor &&
+                    destination.constructor.name === 'AudioDestinationNode') {
+                    try {
+                        var ctx = destination.context || (this && this.context);
+                        if (ctx) {
+                            _setupMasterGain(ctx);
+                            // Após instalar, redireciona para o GainNode mestre
+                            if (window._cgs_masterGain) {
+                                return _origConnect.call(this, window._cgs_masterGain, outputIndex, inputIndex);
+                            }
+                        }
+                    } catch (e) { /* ignora — continua com connect normal */ }
+                }
+
+                return _origConnect.apply(this, arguments);
+            };
+
+            // ── CAMADA 1: Intercepta criação do AudioContext ───────────────────────────
+            var _OrigAudioContext = typeof AudioContext !== 'undefined' ? AudioContext : null;
+            var _OrigWebkitAudioContext = typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : null;
+
+            if (_OrigAudioContext) {
+                window.AudioContext = function AudioContext(options) {
+                    var ctx = new _OrigAudioContext(options);
+                    _setupMasterGain(ctx);
+                    return ctx;
+                };
+                // Copia prototype e propriedades estáticas
+                window.AudioContext.prototype = _OrigAudioContext.prototype;
+                Object.setPrototypeOf(window.AudioContext, _OrigAudioContext);
+            }
+            if (_OrigWebkitAudioContext) {
+                window.webkitAudioContext = function webkitAudioContext(options) {
+                    var ctx = new _OrigWebkitAudioContext(options);
+                    _setupMasterGain(ctx);
+                    return ctx;
+                };
+                window.webkitAudioContext.prototype = _OrigWebkitAudioContext.prototype;
+            }
+
+            // ── CAMADA 3: Polling tardio ───────────────────────────────────────────────
+            // Verifica a cada 200ms se o SDL2 criou o audioContext e o scriptProcessorNode.
+            // Se sim, instala o GainNode reconectando o scriptProcessorNode.
+            // Para após 30 segundos (150 tentativas × 200ms) ou quando instalado.
+            var _pollCount = 0;
+            var _pollMax = 150;
+            var _pollInterval = setInterval(function () {
+                _pollCount++;
+                if (_pollCount > _pollMax) {
+                    clearInterval(_pollInterval);
+                    console.warn('[CGS] Polling encerrado — GainNode não instalado após 30s');
+                    return;
+                }
+
+                // Se já instalado, para o polling
+                if (window._cgs_masterGain) {
+                    clearInterval(_pollInterval);
+                    console.log('[CGS] Polling encerrado — GainNode já instalado');
+                    return;
+                }
+
+                // Verifica se o SDL2 criou o audioContext
+                try {
+                    var sdlCtx = typeof Module !== 'undefined' && Module.SDL2 && Module.SDL2.audioContext;
+                    if (!sdlCtx) return;
+
+                    // AudioContext existe — instala o GainNode
+                    _setupMasterGain(sdlCtx);
+
+                    // Se o scriptProcessorNode já existe, reconecta
+                    var spn = Module.SDL2.audio && Module.SDL2.audio.scriptProcessorNode;
+                    if (spn && window._cgs_masterGain && window._cgs_realDestination) {
+                        // Desconecta do destination real e reconecta via GainNode
+                        try { spn.disconnect(window._cgs_realDestination); } catch (e) {
+                            try { spn.disconnect(); } catch (e2) { }
+                        }
+                        _origConnect.call(spn, window._cgs_masterGain);
+                        console.log('[CGS] scriptProcessorNode reconectado via polling (tentativa ' + _pollCount + ')');
+                    }
+
+                    if (window._cgs_masterGain) {
+                        clearInterval(_pollInterval);
+                        console.log('[CGS] Polling bem-sucedido — GainNode instalado na tentativa ' + _pollCount);
+                    }
+                } catch (e) { /* ignora erros de polling */ }
+            }, 200);
+        })();
+
+        // ─── Aplica ganho via GainNode mestre ────────────────────────────────────────
+        // Converte dB para linear: gain = 10^(dB/20), mute (dB <= -99) = gain 0
+        // Retorna true se o GainNode estava disponível, false caso contrário.
+        function _cgs_applyAoGain(dB) {
+            var gainNode = window._cgs_masterGain;
+
+            if (!gainNode) {
+                // Salva como ganho pendente — será aplicado quando o GainNode for instalado
+                window._cgs_pendingGain = dB;
+                _log('xroar-print', 'ao-gain: GainNode não disponível — ganho ' + dB + ' dB salvo como pendente');
+                return false;
+            }
+
+            var linearGain = (dB <= -99) ? 0 : Math.pow(10, dB / 20);
+            try {
+                var ctx = gainNode.context;
+                if (ctx && ctx.currentTime !== undefined) {
+                    gainNode.gain.setTargetAtTime(linearGain, ctx.currentTime, 0.015);
+                } else {
+                    gainNode.gain.value = linearGain;
+                }
+                _log('xroar-print', 'ao-gain: GainNode → ' + linearGain.toFixed(4) + ' (linear) = ' + dB + ' dB');
+                return true;
+            } catch (e) {
+                try {
+                    gainNode.gain.value = linearGain;
+                    _log('xroar-print', 'ao-gain: GainNode (direto) → ' + linearGain.toFixed(4) + ' = ' + dB + ' dB');
+                    return true;
+                } catch (e2) {
+                    _log('xroar-print', 'ao-gain: GainNode FAIL — ' + e2.message);
+                    return false;
+                }
+            }
+        }
+
+        // ─── Resize ──────────────────────────────────────────────────────────────────
+        function wasm_resize() {
+            if (Module.is_fullscreen) {
+                Module.canvas.width = window.innerWidth; Module.canvas.height = window.innerHeight;
+                Module.canvas.style.width = '100%'; Module.canvas.style.height = '100%';
+            } else {
+                Module.canvas.width = 640; Module.canvas.height = 480;
+                Module.canvas.style.width = '100%'; Module.canvas.style.height = '100%';
+            }
+            Module.ccall('wasm_resize', null, ['number', 'number'], [Module.canvas.width, Module.canvas.height]);
+        }
+
+        // ─── Module ready guard ───────────────────────────────────────────────────────
+        var _moduleReady = false;
+        function isModuleReady() {
+            return _moduleReady && typeof Module !== 'undefined' && Module.ccall;
+        }
+        function isTypeReady() {
+            return _moduleReady && typeof Module !== 'undefined';
+        }
+
+        // ─── XRoar control functions ─────────────────────────────────────────────────
+        function wasm_hard_reset() {
+            if (!isModuleReady()) { _log('xroar-error', 'hard_reset: Module not ready'); return; }
+            resumeAudio(); Module.ccall('xroar_hard_reset', null, [], []);
+        }
+        function wasm_soft_reset() {
+            if (!isModuleReady()) { _log('xroar-error', 'soft_reset: Module not ready'); return; }
+            resumeAudio(); Module.ccall('xroar_soft_reset', null, [], []);
+        }
+        function wasm_set_int(c, v, r) {
+            if (!isModuleReady()) { _log('xroar-error', 'set_int(' + c + ',' + v + '): Module not ready'); return; }
+            try {
+                resumeAudio();
+                _log('xroar-print', 'set_int: ' + c + ' = ' + v);
+
+                // ── invert-text: controle dinâmico do MC6847 ─────────────────────────
+                // O XRoar WASM exporta _wasm_set_int = wasmExports["Td"] (confirmado em xroar.js).
+                // Estratégia em 2 camadas:
+                //
+                // CAMADA 1 — símbolo direto Module._wasm_set_int (mais confiável):
+                //   Aloca string na memória WASM via _malloc + stringToUTF8,
+                //   chama Module._wasm_set_int(strPtr, v) diretamente.
+                //   Este é o método preferido pois bypassa o overhead do ccall e
+                //   funciona mesmo quando ccall tem problemas com o tipo 'string'.
+                //
+                // CAMADA 2 — ccall oficial (fallback):
+                //   Module.ccall('wasm_set_int', null, ['string', 'number'], [c, v])
+                //   Usa a API de alto nível do Emscripten. Pode falhar se o símbolo
+                //   não estiver na lista EXPORTED_FUNCTIONS do build.
+                //
+                // NOTA: A abordagem anterior de escrever diretamente em Module.HEAPU8[0xFF22]
+                // estava INCORRETA. O endereço $FF22 é o endereço no espaço de memória do CoCo
+                // (memória emulada), NÃO um offset no heap WASM. O heap WASM é uma área de
+                // memória separada onde o XRoar armazena suas próprias estruturas de dados C.
+                // Escrever em HEAPU8[0xFF22] modifica dados internos do XRoar, não o PIA1-B.
+                if (c === 'invert-text') {
+                    var itOk = false;
+
+                    // Camada 1: símbolo direto _wasm_set_int (confirmado exportado como wasmExports["Td"])
+                    if (typeof Module._wasm_set_int === 'function') {
+                        try {
+                            var strLen = Module.lengthBytesUTF8(c) + 1;
+                            var strPtr = Module._malloc(strLen);
+                            Module.stringToUTF8(c, strPtr, strLen);
+                            Module._wasm_set_int(strPtr, v);
+                            Module._free(strPtr);
+                            itOk = true;
+                            _log('xroar-print', 'invert-text: _wasm_set_int OK → ' + v);
+                        } catch (e1) {
+                            _log('xroar-print', 'invert-text: _wasm_set_int FAIL (' + e1.message + ') — tentando ccall');
+                        }
+                    }
+
+                    // Camada 2: ccall oficial (fallback)
+                    if (!itOk) {
+                        try {
+                            Module.ccall('wasm_set_int', null, ['string', 'number'], [c, v]);
+                            itOk = true;
+                            _log('xroar-print', 'invert-text: ccall OK → ' + v);
+                        } catch (e2) {
+                            _log('xroar-print', 'invert-text: ccall FAIL (' + e2.message + ')');
+                        }
+                    }
+
+                    if (!itOk) {
+                        _log('xroar-error', 'invert-text: todas as camadas falharam — wasm_set_int não suporta invert-text dinamicamente');
+                    }
+                    if (r && Module.canvas) Module.canvas.focus();
+                    return;
+                }
+
+                // ── Outros controles int ──────────────────────────────────────────────
+                // Tenta símbolo direto primeiro (mais confiável), depois ccall
+                if (typeof Module._wasm_set_int === 'function') {
+                    try {
+                        var strLen2 = Module.lengthBytesUTF8(c) + 1;
+                        var strPtr2 = Module._malloc(strLen2);
+                        Module.stringToUTF8(c, strPtr2, strLen2);
+                        Module._wasm_set_int(strPtr2, v);
+                        Module._free(strPtr2);
+                        if (r && Module.canvas) Module.canvas.focus();
+                        return;
+                    } catch (ef) { /* fallback to ccall */ }
+                }
+                Module.ccall('wasm_set_int', null, ['string', 'number'], [c, v]);
+                if (r && Module.canvas) Module.canvas.focus();
+            } catch (e) { _log('xroar-error', 'set_int(' + c + ',' + v + ') error: ' + e.message); }
+        }
+        function wasm_set_float(c, v, r) {
+            if (!isModuleReady()) { _log('xroar-error', 'set_float(' + c + ',' + v + '): Module not ready'); return; }
+            try {
+                resumeAudio();
+                _log('xroar-print', 'set_float: ' + c + ' = ' + v);
+
+                // ── ao-gain: controla o volume de áudio do emulador ───────────────────
+                // ESTRATÉGIA PRINCIPAL: GainNode mestre via Web Audio API
+                // O XRoar WASM usa SDL2 que cria um scriptProcessorNode conectado ao
+                // AudioContext.destination. Interceptamos essa conexão no boot e inserimos
+                // um GainNode mestre entre o scriptProcessorNode e o destination real.
+                // Isso garante controle de volume/mute independente do WASM.
+                //
+                // ESTRATÉGIA SECUNDÁRIA: wasm_set_float via símbolo direto _wasm_set_float
+                // O XRoar WASM exporta _wasm_set_float que ajusta o ganho interno do SDL2.
+                // Isso funciona mas pode não afetar o áudio já em buffer.
+                if (c === 'ao-gain') {
+                    // Camada 1: GainNode mestre (mais confiável — controla o áudio na saída)
+                    var gainApplied = _cgs_applyAoGain(v);
+
+                    // Camada 2: símbolo direto _wasm_set_float (ajusta ganho interno do WASM)
+                    // Tenta SEMPRE (não só como fallback) para manter consistência interna
+                    if (typeof Module._wasm_set_float === 'function') {
+                        try {
+                            var strLen = Module.lengthBytesUTF8(c) + 1;
+                            var strPtr = Module._malloc(strLen);
+                            Module.stringToUTF8(c, strPtr, strLen);
+                            Module._wasm_set_float(strPtr, v);
+                            Module._free(strPtr);
+                            _log('xroar-print', 'ao-gain: _wasm_set_float OK → ' + v + ' dB');
+                        } catch (e2) {
+                            _log('xroar-print', 'ao-gain: _wasm_set_float FAIL (' + e2.message + ')');
+                        }
+                    } else {
+                        // Camada 3: ccall (último recurso)
+                        try {
+                            Module.ccall('wasm_set_float', null, ['string', 'number'], [c, v]);
+                            _log('xroar-print', 'ao-gain: ccall OK → ' + v + ' dB');
+                        } catch (e3) {
+                            _log('xroar-print', 'ao-gain: ccall FAIL (' + e3.message + ')');
+                        }
+                    }
+
+                    if (!gainApplied) {
+                        _log('xroar-print', 'ao-gain: GainNode não disponível ainda — apenas WASM interno ajustado');
+                    }
+
+                    if (r && Module.canvas) Module.canvas.focus();
+                    return;
+                }
+
+                // ── Outros controles float (vo-brightness, vo-contrast, etc.) ─────────
+                // Tenta símbolo direto primeiro (mais confiável), depois ccall
+                if (typeof Module._wasm_set_float === 'function') {
+                    try {
+                        var strLen2 = Module.lengthBytesUTF8(c) + 1;
+                        var strPtr2 = Module._malloc(strLen2);
+                        Module.stringToUTF8(c, strPtr2, strLen2);
+                        Module._wasm_set_float(strPtr2, v);
+                        Module._free(strPtr2);
+                        if (r && Module.canvas) Module.canvas.focus();
+                        return;
+                    } catch (ef) { /* fallback to ccall */ }
+                }
+                Module.ccall('wasm_set_float', null, ['string', 'number'], [c, v]);
+                if (r && Module.canvas) Module.canvas.focus();
+            } catch (e) { _log('xroar-error', 'set_float(' + c + ',' + v + ') error: ' + e.message); }
+        }
+        function wasm_set_joystick(j, v) {
+            if (!isModuleReady()) return;
+            resumeAudio(); Module.ccall('wasm_set_joystick_port', null, ['number', 'number'], [j, v]); Module.canvas.focus();
+        }
+        function wasm_set_joystick_by_name(j, name) {
+            if (!isModuleReady()) return;
+            resumeAudio(); Module.ccall('wasm_set_joystick_by_name', null, ['number', 'string'], [j, name]); Module.canvas.focus();
+        }
+        function wasm_new_disk(d) {
+            if (!isModuleReady()) return;
+            Module.ccall('wasm_new_disk', null, ['number'], [d]);
+        }
+        function wasm_eject_disk(d) {
+            if (!isModuleReady()) return;
+            resumeAudio(); Module.ccall('xroar_eject_disk', null, ['number'], [d]);
+        }
+        function wasm_eject_tape() {
+            if (!isModuleReady()) return;
+            resumeAudio(); Module.ccall('xroar_eject_input_tape', null, [], []);
+        }
+
+        // ─── REQUIRED ui_* callbacks (called from WASM C code) ──────────────────────
+        //
+        // O XRoar WASM chama estas funções para atualizar a UI.
+        // ui_set_checkbox($0, $1): $0 é um ponteiro de string (ID do elemento HTML),
+        // $1 é o valor (0 ou 1). O WASM usa UTF8ToString($0) para obter o ID.
+        //
+        // IMPORTANTE: O XRoar WASM chama ui_set_checkbox APÓS processar wasm_set_int.
+        // Isso confirma que wasm_set_int('invert-text', v) FUNCIONA internamente —
+        // o estado do emulador é alterado. O problema é que ui_set_checkbox tenta
+        // fazer document.getElementById(id).checked = v, mas o elemento não existe.
+        // Isso não impede o funcionamento interno, mas pode causar erros silenciosos
+        // que interrompem a execução antes de o estado ser aplicado.
+        //
+        // SOLUÇÃO: Criar elementos HTML ocultos com os IDs que o XRoar espera,
+        // para que ui_set_checkbox não falhe. Isso garante que wasm_set_int
+        // complete sua execução sem erros.
+        function ui_menu_clear(m) { }
+        function ui_menu_add(m, l, v) { }
+        function ui_menu_add_str(m, l, v) { }
+        function ui_menu_select(m, v) { }
+        function ui_menu_select_str(m, v) { }
+        function ui_set_html(e, v) { }
+        function ui_set_checkbox(i, v) {
+            // i pode ser um ponteiro de string WASM (número) ou uma string direta
+            var id = (typeof i === 'number') ? (typeof Module !== 'undefined' && Module.UTF8ToString ? Module.UTF8ToString(i) : String(i)) : String(i);
+            var el = document.getElementById(id);
+            if (el) {
+                el.checked = !!v;
+                // Dispara evento change para que qualquer listener seja notificado
+                try { el.dispatchEvent(new Event('change')); } catch (e) { }
+            }
+            // Log para diagnóstico
+            _log('xroar-print', 'ui_set_checkbox: id="' + id + '" v=' + v + (el ? ' (found)' : ' (not found — OK)'));
+        }
+        function ui_set_value(i, v) { }
+        function ui_update_tape_input_filename(f) { }
+
+        // ─── Tape motor + position polling ───────────────────────────────────────────
+        var _tapeMotorInterval = null;
+        function ui_update_tape_playing(v) {
+            if (v > 0) {
+                if (!_tapeMotorInterval) {
+                    _tapeMotorInterval = setInterval(function () {
+                        if (!_moduleReady) return;
+                        var pos = 0;
+                        try {
+                            if (typeof Module._wasm_get_tape_position === 'function') {
+                                pos = Module._wasm_get_tape_position();
+                            } else {
+                                try { pos = Module.ccall('wasm_get_tape_position', 'number', [], []); } catch (e) { pos = 0; }
+                            }
+                        } catch (e) { pos = 0; }
+                        try { if (window.parent !== window) window.parent.postMessage({ type: 'xroar-tape-counter', position: pos, playing: true }, '*'); } catch (e) { }
+                    }, 500);
+                }
+            } else {
+                if (_tapeMotorInterval) { clearInterval(_tapeMotorInterval); _tapeMotorInterval = null; }
+                try { if (window.parent !== window) window.parent.postMessage({ type: 'xroar-tape-counter', position: 0, playing: false }, '*'); } catch (e) { }
+            }
+        }
+
+        // ─── Disk activity: track/head/sector polling + callback bridge ───────────────
+        //
+        // STRATEGY: Two complementary approaches to capture disk activity:
+        //
+        // 1. CALLBACK (passive): ui_update_disk_info() is called by XRoar C code
+        //    whenever the WD179x controller changes track/head. We intercept it.
+        //    Problem: some WASM builds don't call this reliably or at all.
+        //
+        // 2. POLLING (active): Every 50ms, we query the WASM module directly for
+        //    the current WD179x register values (track, sector, head, busy flag).
+        //    This is the recommended approach for WASM emulators where the C core
+        //    doesn't expose reactive callbacks.
+        //
+        // Both approaches feed into _sendDiskActivity() which posts to React.
+        // The auto-clear timer resets the indicator to IDLE after 500ms of no activity.
+
+        var _diskActivityTimers = [null, null, null, null];
+        var _DISK_ACTIVITY_TIMEOUT_MS = 500; // 500ms: fast enough to show activity, slow enough to be readable
+
+        // Last known state per drive — used to detect changes and avoid redundant postMessages
+        var _lastDiskState = [
+            { track: -1, sector: -1, head: -1, busy: false },
+            { track: -1, sector: -1, head: -1, busy: false },
+            { track: -1, sector: -1, head: -1, busy: false },
+            { track: -1, sector: -1, head: -1, busy: false }
+        ];
+
+        // ─── Disk activity sender ─────────────────────────────────────────────────────
+        function _sendDiskActivity(drive, track, sector, head) {
+            try {
+                if (window.parent !== window) {
+                    window.parent.postMessage({
+                        type: 'xroar-disk-activity',
+                        drive: drive,
+                        track: track,
+                        sector: sector !== undefined ? sector : 0,
+                        head: head !== undefined ? head : 0
+                    }, '*');
+                }
+            } catch (e) { }
+            // Auto-clear: reset to idle after timeout (disk stopped spinning)
+            if (_diskActivityTimers[drive]) clearTimeout(_diskActivityTimers[drive]);
+            _diskActivityTimers[drive] = setTimeout(function () {
+                _diskActivityTimers[drive] = null;
+                _lastDiskState[drive] = { track: -1, sector: -1, head: -1, busy: false };
+                try {
+                    if (window.parent !== window) {
+                        window.parent.postMessage({ type: 'xroar-disk-idle', drive: drive }, '*');
+                    }
+                } catch (e) { }
+            }, _DISK_ACTIVITY_TIMEOUT_MS);
+        }
+
+        // ─── APPROACH 1: Passive callback from XRoar C code ──────────────────────────
+        // XRoar WASM calls ui_update_disk_info with different signatures depending on build:
+        //   Old builds: ui_update_disk_info(drive, flags, write, part, cylinder, head)
+        //   New builds: ui_update_disk_info(drive, cylinder, head)  ← 3 args
+        //   Some builds: ui_update_disk_info(drive, track, side)    ← track=cylinder, side=head
+        function ui_update_disk_info(d, f, w, p, c, h) {
+            var argc = arguments.length;
+            var drive, track, sector, head;
+
+            if (argc >= 6) {
+                // Old 6-arg: (drive, flags, write, part, cylinder, head)
+                drive = parseInt(d, 10);
+                track = (typeof c === 'number') ? c : parseInt(c, 10) || 0;
+                head = (typeof h === 'number') ? h : parseInt(h, 10) || 0;
+                sector = 0; // not provided in this signature
+            } else if (argc === 4) {
+                // 4-arg: (drive, track, sector, head)
+                drive = parseInt(d, 10);
+                track = (typeof f === 'number') ? f : parseInt(f, 10) || 0;
+                sector = (typeof w === 'number') ? w : parseInt(w, 10) || 0;
+                head = (typeof p === 'number') ? p : parseInt(p, 10) || 0;
+            } else if (argc === 3) {
+                // 3-arg: (drive, cylinder, head)
+                drive = parseInt(d, 10);
+                track = (typeof f === 'number') ? f : parseInt(f, 10) || 0;
+                head = (typeof w === 'number') ? w : parseInt(w, 10) || 0;
+                sector = 0;
+            } else if (argc === 2) {
+                // 2-arg: (drive, cylinder)
+                drive = parseInt(d, 10);
+                track = (typeof f === 'number') ? f : parseInt(f, 10) || 0;
+                head = 0; sector = 0;
+            } else {
+                drive = parseInt(d, 10);
+                track = 0; sector = 0; head = 0;
+            }
+
+            if (isNaN(drive) || drive < 0 || drive > 3) return;
+            _log('xroar-print', 'ui_update_disk_info: D' + drive + ' T=' + track + ' S=' + sector + ' H=' + head + ' (argc=' + argc + ')');
+            _sendDiskActivity(drive, track, sector, head);
+        }
+
+        // ─── Also intercept ui_update_disk_write_protect ─────────────────────────────
+        function ui_update_disk_write_protect(d, wp) {
+            _log('xroar-print', 'Disk ' + d + ': write-protect=' + wp);
+        }
+
+        // ─── APPROACH 2: Active polling of WD179x registers via WASM ─────────────────
+        // Poll every 50ms using requestAnimationFrame-aligned timer.
+        // Tries multiple known WASM export names for track/sector/head/busy.
+        // Falls back gracefully if none are available.
+        var _diskPollInterval = null;
+        var _diskPollFns = null; // cached function references
+
+        function _initDiskPollFns() {
+            if (_diskPollFns !== null) return; // already initialized
+            _diskPollFns = {};
+
+            // Try to find exported functions for each drive register
+            // XRoar WASM may export these under various names
+            var trackNames = ['wasm_get_floppy_track', 'get_floppy_track', '_get_floppy_track', 'xroar_get_floppy_track'];
+            var sectorNames = ['wasm_get_floppy_sector', 'get_floppy_sector', '_get_floppy_sector', 'xroar_get_floppy_sector'];
+            var headNames = ['wasm_get_floppy_head', 'get_floppy_head', '_get_floppy_head', 'xroar_get_floppy_head'];
+            var busyNames = ['wasm_is_drive_busy', 'is_drive_busy', '_is_drive_busy', 'xroar_is_drive_busy',
+                'wasm_get_floppy_busy', 'get_floppy_busy', '_get_floppy_busy'];
+
+            function findFn(names) {
+                for (var i = 0; i < names.length; i++) {
+                    var n = names[i];
+                    // Check Module[name] (cwrap-style) and Module._name (direct symbol)
+                    if (typeof Module[n] === 'function') return Module[n];
+                    if (n.startsWith('_') && typeof Module[n] === 'function') return Module[n];
+                    // Also try without underscore prefix
+                    var withUnderscore = '_' + n.replace(/^_/, '');
+                    if (typeof Module[withUnderscore] === 'function') return Module[withUnderscore];
+                }
+                return null;
+            }
+
+            _diskPollFns.track = findFn(trackNames);
+            _diskPollFns.sector = findFn(sectorNames);
+            _diskPollFns.head = findFn(headNames);
+            _diskPollFns.busy = findFn(busyNames);
+
+            _log('xroar-boot', 'Disk poll fns: track=' + (!!_diskPollFns.track) +
+                ' sector=' + (!!_diskPollFns.sector) +
+                ' head=' + (!!_diskPollFns.head) +
+                ' busy=' + (!!_diskPollFns.busy));
+
+            // If none found, try to enumerate all exports containing 'floppy', 'disk', 'wd179'
+            if (!_diskPollFns.track && !_diskPollFns.busy) {
+                try {
+                    var allKeys = Object.keys(Module);
+                    var floppyKeys = allKeys.filter(function (k) {
+                        var kl = k.toLowerCase();
+                        return kl.includes('floppy') || kl.includes('wd179') || kl.includes('track') || kl.includes('sector');
+                    });
+                    _log('xroar-boot', 'Floppy-related exports: ' + (floppyKeys.join(', ') || 'NONE'));
+                } catch (e) { }
+            }
+        }
+
+        function _startDiskPolling() {
+            if (_diskPollInterval) return; // already running
+            _initDiskPollFns();
+
+            // If no polling functions available, fall back to callback-only mode
+            if (!_diskPollFns.track && !_diskPollFns.busy) {
+                _log('xroar-boot', 'Disk polling: no WASM exports found — using callback-only mode');
+                return;
+            }
+
+            _log('xroar-boot', 'Disk polling: starting 50ms poll loop');
+            _diskPollInterval = setInterval(function () {
+                if (!_moduleReady) return;
+                for (var drive = 0; drive < 4; drive++) {
+                    try {
+                        var busy = false;
+                        var track = 0, sector = 0, head = 0;
+
+                        if (_diskPollFns.busy) {
+                            busy = !!_diskPollFns.busy(drive);
+                        }
+                        if (_diskPollFns.track) {
+                            track = _diskPollFns.track(drive) | 0;
+                        }
+                        if (_diskPollFns.sector) {
+                            sector = _diskPollFns.sector(drive) | 0;
+                        }
+                        if (_diskPollFns.head) {
+                            head = _diskPollFns.head(drive) | 0;
+                        }
+
+                        var last = _lastDiskState[drive];
+                        // Only send if busy OR if track/sector/head changed
+                        if (busy || track !== last.track || sector !== last.sector || head !== last.head) {
+                            _lastDiskState[drive] = { track: track, sector: sector, head: head, busy: busy };
+                            if (busy || track !== 0 || sector !== 0) {
+                                _sendDiskActivity(drive, track, sector, head);
+                            }
+                        }
+                    } catch (e) { /* ignore per-drive errors */ }
+                }
+            }, 50);
+        }
+
+        function _stopDiskPolling() {
+            if (_diskPollInterval) {
+                clearInterval(_diskPollInterval);
+                _diskPollInterval = null;
+            }
+        }
+        function ui_update_hd_filename(d, f) { }
+        function ui_update_ccr(v) { }
+
+        function ui_set_fullscreen(fs) {
+            Module.is_fullscreen = fs;
+            if (fs) { document.body.style.overflow = 'hidden'; window.addEventListener('resize', wasm_resize); }
+            else { document.body.style.overflow = ''; window.removeEventListener('resize', wasm_resize); }
+            wasm_resize();
+        }
+
+        function ui_done_initialising() {
+            _log('xroar-boot', 'ui_done_initialising — XRoar fully ready!');
+            // Mark module as ready BEFORE sending xroar-ready to parent
+            _moduleReady = true;
+            if (!Module.initial_resize) {
+                Module.initial_resize = 1;
+                try { Module.ccall('wasm_set_int', null, ['string', 'number'], ['fullscreen', 0]); } catch (e) { }
+                if (Module.canvas) Module.canvas.focus();
+            }
+            _log('xroar-boot', 'Machine: ' + selectedMachine);
+
+            // ── Diagnostic: log all disk-related exports now that WASM is fully up ──
+            try {
+                var allKeys = Object.keys(Module);
+                var diskKeys = allKeys.filter(function (k) {
+                    var kl = k.toLowerCase();
+                    return kl.includes('disk') || (k.startsWith('_') && kl.includes('insert'));
+                });
+                _log('xroar-boot', 'ui_done_initialising — disk exports: ' + (diskKeys.join(', ') || 'none'));
+
+                // Re-attempt cwrap for any functions not yet wrapped
+                if (!_cwrap_xroar_insert_disk) {
+                    try { _cwrap_xroar_insert_disk = Module.cwrap('xroar_insert_disk', null, ['number', 'string']); _log('xroar-boot', 'Late cwrap OK: xroar_insert_disk'); } catch (e) { }
+                }
+                if (!_cwrap_wasm_insert_disk) {
+                    try { _cwrap_wasm_insert_disk = Module.cwrap('wasm_insert_disk', null, ['number', 'string']); _log('xroar-boot', 'Late cwrap OK: wasm_insert_disk'); } catch (e) { }
+                }
+                if (!_wasm_load_file_fn) {
+                    try { _wasm_load_file_fn = Module.cwrap('wasm_load_file', null, ['string', 'number', 'number']); _log('xroar-boot', 'Late cwrap OK: wasm_load_file'); } catch (e) { }
+                }
+            } catch (ex) { }
+
+            // Start active disk polling (WD179x register polling via WASM)
+            // Delayed slightly to ensure all WASM symbols are fully initialized
+            setTimeout(_startDiskPolling, 600);
+
+            // Flush any disk insertions that arrived before the module was ready
+            // Use a slightly longer delay + retry to ensure WASM disk subsystem is up
+            setTimeout(_flushPendingDisks, 400);
+
+            // Notify parent — settings are already applied via CLI args, no need to re-send
+            try { if (window.parent !== window) window.parent.postMessage({ type: 'xroar-ready', text: 'XRoar fully initialized' }, '*'); } catch (e) { }
+            window.addEventListener('gamepadconnected', function (e) { Module.ccall('wasm_gamepad_connected', null, ['number'], [e.gamepad.index]); });
+            window.addEventListener('gamepaddisconnected', function (e) { Module.ccall('wasm_gamepad_disconnected', null, ['number'], [e.gamepad.index]); });
+        }
+
+        // ─── Type string into emulator (simulates keyboard input) ────────────────────
+        //
+        // Estratégia: envia caractere por caractere com delay fixo entre cada um.
+        // Usa wasm_queue_basic(str) para cada caractere individualmente.
+        // Isso garante que o CoCo processe cada tecla antes da próxima chegar.
+        //
+        // Para \r (Enter do CoCo): envia '\r' como caractere separado.
+        // Após cada \r, aplica um delay extra (ENTER_EXTRA_MS) para o CoCo
+        // processar e executar a linha antes de receber a próxima.
+
+        var _typeQueue = [];
+        var _typeTimer = null;
+        var _TYPE_DELAY_MS = 80;
+        var _ENTER_EXTRA_MS = 300;
+
+        function _typeNextChar() {
+            if (_typeQueue.length === 0) {
+                _typeTimer = null;
+                _log('xroar-print', 'type_string: done');
+                if (Module && Module.canvas) Module.canvas.focus();
+                return;
+            }
+            if (!isTypeReady()) {
+                _typeTimer = setTimeout(_typeNextChar, 200);
+                return;
+            }
+            var ch = _typeQueue.shift();
+            var isEnter = (ch === '\r');
+            try {
+                // Try passing as string pointer first, as modern wasm_queue_basic often takes const char*
+                try {
+                    Module.ccall('wasm_queue_basic', null, ['string'], [ch]);
+                } catch (errInner) {
+                    // Fallback to integer (ASCII code) if string fails
+                    var charCode = ch.charCodeAt(0);
+                    if (typeof Module._wasm_queue_basic === 'function') {
+                        Module._wasm_queue_basic(charCode);
+                    } else {
+                        Module.ccall('wasm_queue_basic', null, ['number'], [charCode]);
+                    }
+                }
+            } catch (e) {
+                _log('xroar-error', 'type_string char error: ' + e.message + ' (char=' + ch + ')');
+            }
+            var delay = isEnter ? (_TYPE_DELAY_MS + _ENTER_EXTRA_MS) : _TYPE_DELAY_MS;
+            _typeTimer = setTimeout(_typeNextChar, delay);
+        }
+
+        function wasm_type_string(str, delayMs) {
+            if (!str) return;
+            if (!isTypeReady()) { _log('xroar-error', 'type_string: Module not ready'); return; }
+            try {
+                resumeAudio();
+
+                if (typeof delayMs === 'number' && delayMs >= 10 && delayMs <= 500) {
+                    _TYPE_DELAY_MS = delayMs;
+                    _ENTER_EXTRA_MS = Math.max(200, delayMs * 3);
+                }
+
+                var converted = str
+                    .replace(/\\r\\n/g, '\r')
+                    .replace(/\\n/g, '\r')
+                    .replace(/\\r/g, '\r')
+                    .replace(/\r\n/g, '\r')
+                    .replace(/\n/g, '\r');
+
+                _log('xroar-print', 'type_string: ' + converted.length + ' chars @ ' + _TYPE_DELAY_MS + 'ms/char');
+
+                if (_typeTimer !== null) {
+                    clearTimeout(_typeTimer);
+                    _typeTimer = null;
+                }
+                _typeQueue = [];
+
+                for (var i = 0; i < converted.length; i++) {
+                    _typeQueue.push(converted[i]);
+                }
+
+                if (_typeQueue.length === 0) return;
+
+                _log('xroar-print', 'type_string: ' + _typeQueue.length + ' chars queued');
+
+                // Try to pass the entire string at once if XRoar supports it!
+                try {
+                    Module.ccall('wasm_queue_basic', null, ['string'], [converted]);
+                    _log('xroar-print', 'type_string: sent entire string to emulator directly.');
+                    _typeQueue = []; // Clear queue since we submitted it all
+                    return;
+                } catch (eStr) {
+                    // If it fails or if the user wants character-by-character JS delay fallback
+                    if (Module.canvas) Module.canvas.focus();
+                    _typeNextChar();
+                }
+            } catch (e) {
+                _log('xroar-error', 'type_string error: ' + e.message);
+            }
+        }
+
+        // ─── Save snapshot to VFS then send bytes back to parent ─────────────────────
+        function wasm_save_snapshot(fileName) {
+            try {
+                var snapName = fileName || 'snapshot.sna';
+                Module.ccall('xroar_save_snapshot', null, ['string'], [snapName]);
+                var data = Module.FS.readFile(snapName);
+                try {
+                    if (window.parent !== window) {
+                        window.parent.postMessage({ type: 'xroar-snapshot', fileName: snapName, data: Array.from(data) }, '*');
+                    }
+                } catch (e) { }
+            } catch (e) {
+                _log('xroar-error', 'save_snapshot error: ' + e.message);
+            }
+        }
+
+        // ─── Pending disk queue (for commands arriving before module is ready) ────────
+        var _pendingDisks = [];
+        var _flushRetryCount = 0;
+        var _FLUSH_MAX_RETRIES = 5;
+        var _FLUSH_RETRY_MS = 500;
+
+        function _flushPendingDisks() {
+            if (_pendingDisks.length === 0) return;
+
+            // Safety: if module is somehow not ready yet, retry
+            if (!_moduleReady) {
+                _flushRetryCount++;
+                if (_flushRetryCount <= _FLUSH_MAX_RETRIES) {
+                    _log('xroar-print', 'insert_disk: module not ready at flush — retry ' + _flushRetryCount + '/' + _FLUSH_MAX_RETRIES);
+                    setTimeout(_flushPendingDisks, _FLUSH_RETRY_MS);
+                } else {
+                    _log('xroar-error', 'insert_disk: flush gave up after ' + _FLUSH_MAX_RETRIES + ' retries');
+                    _pendingDisks = [];
+                    _flushRetryCount = 0;
+                }
+                return;
+            }
+
+            _flushRetryCount = 0;
+            _log('xroar-print', 'insert_disk: flushing ' + _pendingDisks.length + ' pending disk(s) — SEQUENTIAL with 700ms delay...');
+            var pending = _pendingDisks.slice();
+            _pendingDisks = [];
+
+            // Process drives SEQUENTIALLY with delay to prevent XRoar from
+            // mixing up drive assignments when multiple disks are inserted rapidly.
+            function _flushNext(idx) {
+                if (idx >= pending.length) {
+                    _log('xroar-print', 'insert_disk: flush complete — all ' + pending.length + ' disk(s) inserted');
+                    return;
+                }
+                var item = pending[idx];
+                _log('xroar-print', 'insert_disk: flush [' + (idx + 1) + '/' + pending.length + '] drive=' + item.drive + ' file="' + item.fileName + '"');
+                _doInsertDisk(item.drive, item.fileName, item.fileData);
+                // Wait 700ms before next drive to ensure XRoar completes the insertion
+                setTimeout(function () { _flushNext(idx + 1); }, 700);
+            }
+            _flushNext(0);
+        }
+
+        // ─── Track the VFS filename currently mounted per drive ──────────────────────
+        // Used to delete the old file from VFS before writing the new one,
+        // preventing the "cached file" bug where XRoar keeps serving the old image.
+        var _driveVfsName = ['', '', '', ''];
+
+        // ─── Core disk insertion logic ────────────────────────────────────────────────
+        // drive: 0-based index — D0=0, D1=1, D2=2, D3=3 (matches XRoar C API)
+        //
+        // CONFIRMED API (from XRoar source wasm.c):
+        //   wasm_load_file(const char *filename, int type, int drive)
+        //   type=3 → wasm_load_file_type_disk → calls xroar_insert_disk_file(drive, filename)
+        //
+        // IMPORTANT: wasm_load_file calls wasm_wget(filename) which does an HTTP fetch.
+        // For VFS-resident files (written via FS.writeFile), we must use the direct
+        // _wasm_load_file symbol which bypasses the wget and reads from VFS directly.
+        // The slot alias (_driveN.dsk) ensures each drive has a unique VFS filename.
+        function _doInsertDisk(drive, fileName, fileData) {
+            var fd = new Uint8Array(fileData);
+
+            _log('xroar-print', '=== insert_disk START: drive=' + drive + ' file="' + fileName + '" size=' + fd.length + ' ===');
+
+            // ── Step 1: Eject any existing disk in this drive ─────────────────────────
+            try {
+                _log('xroar-print', 'insert_disk[' + drive + ']: ejecting before insert...');
+                Module.ccall('xroar_eject_disk', null, ['number'], [drive]);
+            } catch (eEject) {
+                _log('xroar-print', 'insert_disk[' + drive + ']: eject (non-fatal): ' + eEject.message);
+            }
+
+            // ── Step 2: Remove old VFS slot file ─────────────────────────────────────
+            var oldName = _driveVfsName[drive];
+            if (oldName) {
+                var oldPaths = [oldName, '/' + oldName, '/home/web_user/' + oldName];
+                for (var d = 0; d < oldPaths.length; d++) {
+                    try { Module.FS.unlink(oldPaths[d]); } catch (e) { }
+                }
+            }
+
+            // ── Step 3: Write file to VFS using unique slot alias ─────────────────────
+            // Slot alias = _driveN.ext (e.g. _drive0.dsk, _drive3.dsk)
+            // This guarantees each drive has a unique VFS filename — no cross-drive collisions.
+            var ext = fileName.split('.').pop().toLowerCase() || 'dsk';
+            var slotName = '_drive' + drive + '.' + ext;
+            _driveVfsName[drive] = slotName;
+
+            var slotPaths = [slotName, '/' + slotName, '/home/web_user/' + slotName];
+            for (var p = 0; p < slotPaths.length; p++) {
+                try { Module.FS.writeFile(slotPaths[p], fd); } catch (e) { }
+            }
+            _log('xroar-print', 'insert_disk[' + drive + ']: VFS write OK — "' + slotName + '" (' + fd.length + ' bytes) for drive ' + drive);
+
+            var inserted = false;
+
+            // ── PRIMARY: _wasm_load_file(slotName, type=3, drive) ────────────────────
+            // type=3 = wasm_load_file_type_disk → calls xroar_insert_disk_file(drive, filename)
+            // Using the direct _wasm_load_file symbol (Module._wasm_load_file) bypasses
+            // the wasm_wget() HTTP fetch and reads directly from VFS.
+            // This is the ONLY correct method — all others (xroar_insert_disk, wasm_insert_disk)
+            // are NOT exported in this WASM build.
+            if (!inserted && typeof Module._wasm_load_file === 'function') {
+                try {
+                    _log('xroar-print', 'insert_disk: [PRIMARY] Module._wasm_load_file("' + slotName + '", 3, ' + drive + ')');
+                    // Allocate string in WASM memory and call directly
+                    var strLen = Module.lengthBytesUTF8(slotName) + 1;
+                    var strPtr = Module._malloc(strLen);
+                    Module.stringToUTF8(slotName, strPtr, strLen);
+                    Module._wasm_load_file(strPtr, 3, drive);
+                    Module._free(strPtr);
+                    inserted = true;
+                    _log('xroar-print', 'insert_disk: [PRIMARY] SUCCESS — drive=' + drive + ' file="' + slotName + '"');
+                } catch (ep) {
+                    _log('xroar-print', 'insert_disk: [PRIMARY] FAIL — ' + ep.message);
+                }
+            }
+
+            // ── FALLBACK A: cwrap wasm_load_file(string, number, number) ─────────────
+            // type=3 = disk insertion. This goes through ccall string marshalling.
+            if (!inserted && _wasm_load_file_fn) {
+                try {
+                    _log('xroar-print', 'insert_disk: [FA] cwrap wasm_load_file("' + slotName + '", 3, ' + drive + ')');
+                    _wasm_load_file_fn(slotName, 3, drive);
+                    inserted = true;
+                    _log('xroar-print', 'insert_disk: [FA] SUCCESS');
+                } catch (efa) {
+                    _log('xroar-print', 'insert_disk: [FA] FAIL — ' + efa.message);
+                }
+            }
+
+            // ── FALLBACK B: ccall wasm_load_file ─────────────────────────────────────
+            if (!inserted) {
+                try {
+                    _log('xroar-print', 'insert_disk: [FB] ccall wasm_load_file("' + slotName + '", 3, ' + drive + ')');
+                    Module.ccall('wasm_load_file', null, ['string', 'number', 'number'], [slotName, 3, drive]);
+                    inserted = true;
+                    _log('xroar-print', 'insert_disk: [FB] SUCCESS');
+                } catch (efb) {
+                    _log('xroar-print', 'insert_disk: [FB] FAIL — ' + efb.message);
+                }
+            }
+
+            if (inserted) {
+                _log('xroar-print', 'insert_disk: Drive ' + drive + ' — INSERTED OK ("' + fileName + '" as "' + slotName + '")');
+                try { if (Module.canvas) Module.canvas.focus(); } catch (ef) { }
+            } else {
+                _log('xroar-error', 'insert_disk: ALL methods failed for drive ' + drive + ' ("' + fileName + '")');
+            }
+        }
+
+        // ─── Insert disk image into drive ────────────────────────────────────────────
+        // drive: 0-based index (D0=0, D1=1, D2=2, D3=3)
+        // The UI shows "D0", "D1", "D2", "D3" which map directly to drive indices 0,1,2,3.
+        function wasm_insert_disk(drive, fileName, fileData) {
+            try {
+                // Ensure drive index is a valid integer 0-3
+                var driveIdx = parseInt(drive, 10);
+                if (isNaN(driveIdx) || driveIdx < 0 || driveIdx > 3) {
+                    _log('xroar-error', 'insert_disk: invalid drive index ' + drive + ' — must be 0-3');
+                    driveIdx = 0;
+                }
+
+                _log('xroar-print', '>>> wasm_insert_disk called: drive=' + driveIdx + ' (raw=' + drive + ') file="' + fileName + '" ready=' + _moduleReady);
+
+                if (!_moduleReady) {
+                    // Queue for later execution when module becomes ready
+                    _log('xroar-print', 'insert_disk: module not ready — queuing drive ' + driveIdx + ' (' + fileName + ')');
+                    _pendingDisks.push({ drive: driveIdx, fileName: fileName, fileData: fileData });
+                    return;
+                }
+                _doInsertDisk(driveIdx, fileName, fileData);
+            } catch (e) {
+                _log('xroar-error', 'insert_disk error: ' + e.message);
+            }
+        }
+
+        // ─── Track last inserted tape filename (for rewind fallback) ──────────────────
+        var _lastTapeFileName = '';
+
+        // ─── Insert tape ──────────────────────────────────────────────────────────────
+        function wasm_insert_tape(fileName, fileData) {
+            try {
+                var fd = new Uint8Array(fileData);
+                Module.FS.writeFile(fileName, fd);
+                Module.ccall('xroar_insert_input_tape', null, ['string'], [fileName]);
+                _lastTapeFileName = fileName; // track for rewind fallback
+                _log('xroar-print', 'Tape: inserted ' + fileName);
+            } catch (e) {
+                _log('xroar-error', 'insert_tape error: ' + e.message);
+            }
+        }
+
+        // ─── Emulator pause / resume ─────────────────────────────────────────────────
+        // Usa Module.pauseMainLoop() / Module.resumeMainLoop() do Emscripten.
+        // Esses métodos são exportados pelo XRoar WASM (confirmado em xroar.js):
+        //   Module["pauseMainLoop"]  = MainLoop.pause
+        //   Module["resumeMainLoop"] = MainLoop.resume
+        var _emulatorPaused = false;
+        function wasm_pause() {
+            if (_emulatorPaused) return; // já pausado
+            try {
+                if (typeof Module !== 'undefined' && typeof Module.pauseMainLoop === 'function') {
+                    Module.pauseMainLoop();
+                    _emulatorPaused = true;
+                    _log('xroar-print', 'Emulator: PAUSED via Module.pauseMainLoop()');
+                } else {
+                    _log('xroar-error', 'pause: Module.pauseMainLoop não disponível');
+                }
+            } catch (e) { _log('xroar-error', 'pause error: ' + e.message); }
+        }
+        function wasm_resume() {
+            if (!_emulatorPaused) return; // já rodando
+            try {
+                if (typeof Module !== 'undefined' && typeof Module.resumeMainLoop === 'function') {
+                    Module.resumeMainLoop();
+                    _emulatorPaused = false;
+                    resumeAudio();
+                    _log('xroar-print', 'Emulator: RESUMED via Module.resumeMainLoop()');
+                    if (Module.canvas) Module.canvas.focus();
+                } else {
+                    _log('xroar-error', 'resume: Module.resumeMainLoop não disponível');
+                }
+            } catch (e) { _log('xroar-error', 'resume error: ' + e.message); }
+        }
+
+        // ─── Tape play/pause/rewind ───────────────────────────────────────────────────
+        function wasm_tape_play() {
+            try { Module.ccall('tape_play', null, [], []); } catch (e) { _log('xroar-error', 'tape_play: ' + e.message); }
+        }
+        function wasm_tape_pause() {
+            try { Module.ccall('tape_pause', null, [], []); } catch (e) { _log('xroar-error', 'tape_pause: ' + e.message); }
+        }
+        function wasm_tape_rewind() {
+            // XRoar does not expose a direct rewind C function in WASM builds.
+            // Best approach: re-insert the same tape file from VFS (resets position to 0).
+            // We eject and re-insert the current tape using the last known filename.
+            try {
+                // Try direct rewind via ccall first (may exist in newer builds)
+                try {
+                    Module.ccall('xroar_rewind_input_tape', null, [], []);
+                    _log('xroar-print', 'Tape: rewound via xroar_rewind_input_tape');
+                    return;
+                } catch (e1) { /* not available */ }
+                // Fallback: eject + re-insert from VFS using last known tape filename
+                if (_lastTapeFileName) {
+                    _log('xroar-print', 'Tape: rewinding via eject+reinsert — ' + _lastTapeFileName);
+                    Module.ccall('xroar_eject_input_tape', null, [], []);
+                    Module.ccall('xroar_insert_input_tape', null, ['string'], [_lastTapeFileName]);
+                    _log('xroar-print', 'Tape: rewound (eject+reinsert) — ' + _lastTapeFileName);
+                } else {
+                    _log('xroar-error', 'Tape: rewind failed — no tape currently inserted');
+                }
+            } catch (e) { _log('xroar-error', 'tape_rewind: ' + e.message); }
+        }
+
+        // ─── Listen for commands from parent ─────────────────────────────────────────
+        window.addEventListener('message', function (event) {
+            var d = event.data;
+            if (!d || !d.type) return;
+            if (d.type === 'xroar-cmd') {
+                try {
+                    if (d.fn === 'hard_reset') wasm_hard_reset();
+                    else if (d.fn === 'soft_reset') wasm_soft_reset();
+                    else if (d.fn === 'set_int') wasm_set_int(d.control, d.value, 1);
+                    else if (d.fn === 'set_float') wasm_set_float(d.control, d.value, 1);
+                    else if (d.fn === 'set_joystick') wasm_set_joystick(d.joy, d.value);
+                    else if (d.fn === 'set_joystick_by_name') wasm_set_joystick_by_name(d.joy, d.name);
+                    else if (d.fn === 'new_disk') wasm_new_disk(d.drive);
+                    else if (d.fn === 'eject_disk') wasm_eject_disk(d.drive);
+                    else if (d.fn === 'eject_tape') wasm_eject_tape();
+                    else if (d.fn === 'insert_disk') wasm_insert_disk(d.drive, d.fileName, d.fileData);
+                    else if (d.fn === 'insert_tape') wasm_insert_tape(d.fileName, d.fileData);
+                    else if (d.fn === 'pause') wasm_pause();
+                    else if (d.fn === 'resume') wasm_resume();
+                    else if (d.fn === 'tape_play') wasm_tape_play();
+                    else if (d.fn === 'tape_pause') wasm_tape_pause();
+                    else if (d.fn === 'tape_rewind') wasm_tape_rewind();
+                    else if (d.fn === 'type_string') wasm_type_string(d.text, d.delayMs);
+                    else if (d.fn === 'save_snapshot') wasm_save_snapshot(d.fileName);
+                    else if (d.fn === 'load_file') {
+                        var fd = new Uint8Array(d.fileData);
+                        Module.FS.writeFile(d.fileName, fd);
+                        if (_wasm_load_file_fn) {
+                            _wasm_load_file_fn(d.fileName, d.loadType || 0, d.drive || 0);
+                        } else {
+                            Module.ccall('wasm_load_file', null, ['string', 'number', 'number'], [d.fileName, d.loadType || 0, d.drive || 0]);
+                        }
+                    }
+                } catch (e) { _log('xroar-error', 'Cmd error: ' + e.message); }
+            }
+        });
+
+        document.addEventListener('click', function () { document.getElementById('canvas').focus(); });
+
+        // ─── BOOT ────────────────────────────────────────────────────────────────────
+        startEmulator().catch(function (e) { _log('xroar-error', 'Fatal: ' + e.message); });
+    </script>
+</body>
+
+</html>
