@@ -65,6 +65,9 @@ if (!(window as any).cocoApi) {
       }
     },
 
+    imageAnalyze: async () => ({ success: false, error: 'Importação de imagem disponível apenas no app desktop.' }),
+    imageExtract: async () => ({ success: false, error: 'Extração disponível apenas no app desktop.' }),
+
     dskDetectContainer: async (dskUint8Array: Uint8Array, stdDisk: number) => {
       try {
         const buf = Buffer.from(dskUint8Array);

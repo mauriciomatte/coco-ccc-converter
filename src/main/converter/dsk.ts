@@ -192,6 +192,110 @@ export function isRsDosDisk(buf: Buffer): boolean {
 }
 
 /**
+ * "De-doubles" a sector-doubled RS-DOS disk. MiniIDE/HDBDOS images store each 256-byte
+ * logical sector TWICE in a row (S0 S0 S1 S1 …), so a 161,280-byte disk occupies 322,560
+ * physical bytes. Taking one sector of each consecutive pair recovers the standard image
+ * our engine reads. (Verified lossless on real MiniIDE disks: every sector pair is identical.)
+ */
+export function deDoubleDisk(buf: Buffer): Buffer {
+  const half = Math.floor(buf.length / 2);
+  const sectors = Math.floor(half / 256);
+  const out = Buffer.alloc(half);
+  for (let i = 0; i < sectors; i++) {
+    buf.copy(out, i * 256, i * 2 * 256, i * 2 * 256 + 256);
+  }
+  return out;
+}
+
+// Doubled-disk on-disk offsets (35-track, sector-doubled): de-doubled Track-17 Sector-2
+// (FAT) lives at physical 614*256, Sector-3 (first directory page) at 616*256.
+const DBL_FAT_OFF = 614 * 256;   // 157,184
+const DBL_DIR_OFF = 616 * 256;   // 157,696
+const DBL_SLOT = 2 * 35 * 18 * 256; // 322,560 (a doubled 35-track single-sided disk)
+
+/**
+ * Cheap probe: is there a sector-doubled 35-track RS-DOS disk starting at `off` in `buf`?
+ * Validates the de-doubled FAT (68 granules) and requires at least one printable directory
+ * entry — without allocating a de-doubled copy, so it is fast enough to slide across a
+ * whole multi-hundred-MB image one sector at a time.
+ */
+export function isDoubledRsDosDiskAt(buf: Buffer, off: number): boolean {
+  if (off < 0 || off + DBL_SLOT > buf.length) return false;
+  for (let g = 0; g < 68; g++) {
+    const v = buf[off + DBL_FAT_OFF + g];
+    if (v === 0xFF) continue;
+    if (v < 68) continue;
+    if (v >= 0xC0 && v <= 0xC9) continue;
+    return false;
+  }
+  for (let e = 0; e < 8; e++) {
+    const o = off + DBL_DIR_OFF + e * 32;
+    const b0 = buf[o];
+    if (b0 === 0x00 || b0 === 0xFF) continue;
+    let printable = true;
+    for (let i = 0; i < 8; i++) {
+      const c = buf[o + i];
+      if (!(c === 0x20 || (c >= 0x21 && c <= 0x7e))) { printable = false; break; }
+    }
+    if (printable && buf[o + 11] <= 3) return true;
+  }
+  return false;
+}
+
+export interface MiniIdeDisk {
+  index: number;
+  offset: number;     // byte offset of the doubled slot in the source image
+  label: string;      // first few file names, for display
+  fileCount: number;
+  freeGranules: number;
+}
+
+/**
+ * Scans an HDBDOS/MiniIDE image for sector-doubled RS-DOS disks and returns their locations.
+ * Each hit advances by a full doubled slot (322,560) so a disk is reported once.
+ */
+export function scanMiniIdeImage(buf: Buffer): MiniIdeDisk[] {
+  // Pass 1: collect every offset that passes the cheap doubled-disk probe (sector-stepped).
+  // The FAT sector is itself doubled, so each real disk yields a tight "smear" of hits
+  // (e.g. base and base+256) that we collapse next.
+  const hits: number[] = [];
+  for (let off = 0; off + DBL_SLOT <= buf.length; off += 256) {
+    if (isDoubledRsDosDiskAt(buf, off)) hits.push(off);
+  }
+  // Collapse: any hits within ~one slot (300 KB, below the real ≈315 KB stride) belong to the
+  // same disk — the doubled FAT smear plus the occasional intra-disk false hit. Keeping the
+  // first (lowest, 256-aligned) offset of each cluster gives the true, sector-aligned base.
+  const bases: number[] = [];
+  for (const h of hits) {
+    if (!bases.length || h - bases[bases.length - 1] > 300000) bases.push(h);
+  }
+  // Neighbour-stride filter: real HDBDOS disks form a dense run spaced ≈315–322 KB apart,
+  // while OS-9/garbage false positives are isolated. Keep only disks that have another base
+  // within that slot window on either side.
+  const LO = 290000, HI = 340000;
+  const inRun = bases.filter((b, i) =>
+    (i > 0 && b - bases[i - 1] >= LO && b - bases[i - 1] <= HI) ||
+    (i < bases.length - 1 && bases[i + 1] - b >= LO && bases[i + 1] - b <= HI));
+
+  // Pass 2: validate each surviving base with a full parse (≥1 real file) and build the list.
+  const disks: MiniIdeDisk[] = [];
+  let idx = 0;
+  for (const off of inRun) {
+    try {
+      const p = parseDsk(deDoubleDisk(buf.subarray(off, off + DBL_SLOT)));
+      if (p.files.length >= 1) {
+        disks.push({
+          index: idx++, offset: off,
+          label: p.files.slice(0, 4).map(f => f.fullName).join(', '),
+          fileCount: p.files.length, freeGranules: p.freeGranules,
+        });
+      }
+    } catch { /* not a clean disk here */ }
+  }
+  return disks;
+}
+
+/**
  * Extracts a file payload from a .DSK image by following its directory entry.
  */
 export function extractDskFile(dskBuffer: Buffer, entry: DskFileEntry): Buffer {

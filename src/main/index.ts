@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, isRsDosDisk, DskFileEntry } from './converter/dsk';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
+import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -244,6 +245,89 @@ ipcMain.handle('dsk-detect-container', async (_, dskUint8Array: Uint8Array, stdD
     return { count: slice0Valid && slice1Valid ? n : 1, slice0Valid, slice1Valid };
   } catch (error: any) {
     return { count: 1, error: error.message };
+  }
+});
+
+// 3c1b. Unified storage-image browser: pick an image, detect its kind, list its disks/files.
+ipcMain.handle('image-analyze', async () => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Abrir imagem (MiniIDE / CoCoSDC / .dsk)',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'ima', 'bin', 'raw', 'vhd'] },
+      { name: 'All Files', extensions: ['*'] },
+    ],
+  });
+  if (result.canceled || !result.filePaths.length) return { cancelled: true };
+  const filePath = result.filePaths[0];
+  const fileName = path.basename(filePath);
+  try {
+    const stat = fs.statSync(filePath);
+
+    // 1) FAT (CoCoSDC) — random-access reads, works even on multi-GB images.
+    const fd = fs.openSync(filePath, 'r');
+    const reader: Reader = (off, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, off); return b; };
+    try {
+      const vol = readFatVolume(reader);
+      if (vol) {
+        const files = listFatFiles(reader, vol, ['dsk'])
+          .filter(f => !f.name.startsWith('._') && f.size >= 4608); // skip macOS AppleDouble junk
+        const entries = files.map((f, i) => ({
+          id: i, label: f.name, info: `${(f.size / 1024).toFixed(0)} KB`, sub: f.path,
+          locator: { kind: 'fat', cluster: f.firstCluster, size: f.size },
+        }));
+        return { success: true, kind: 'cocosdc', filePath, fileName, fatType: vol.type, entries };
+      }
+    } finally { fs.closeSync(fd); }
+
+    // 2) MiniIDE / HDBDOS — needs a full scan; cap the size so we never slurp a multi-GB image.
+    if (stat.size <= 800 * 1024 * 1024) {
+      const buf = fs.readFileSync(filePath);
+      const disks = scanMiniIdeImage(buf);
+      if (disks.length >= 2) {
+        const entries = disks.map(d => ({
+          id: d.index, label: `Disco ${d.index}`,
+          info: `${d.fileCount} arq · ${d.freeGranules} livres`, sub: d.label,
+          locator: { kind: 'miniide', offset: d.offset },
+        }));
+        return { success: true, kind: 'miniide', filePath, fileName, entries };
+      }
+    }
+
+    // 3) plain .dsk or DriveWire container — open directly.
+    return { success: true, kind: 'dsk', filePath, fileName, entries: [] };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 3c1c. Extract one disk/file from an analyzed image into a standard .dsk buffer.
+ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
+  try {
+    if (locator?.kind === 'fat') {
+      const fd = fs.openSync(filePath, 'r');
+      const reader: Reader = (off, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, off); return b; };
+      try {
+        const vol = readFatVolume(reader);
+        if (!vol) return { success: false, error: 'Volume FAT não reconhecido.' };
+        const data = readFatFile(reader, vol, { name: '', path: '', firstCluster: locator.cluster, size: locator.size });
+        return { success: true, image: new Uint8Array(data) };
+      } finally { fs.closeSync(fd); }
+    }
+    if (locator?.kind === 'miniide') {
+      const fd = fs.openSync(filePath, 'r');
+      try {
+        const slot = Buffer.alloc(322560);
+        fs.readSync(fd, slot, 0, 322560, locator.offset);
+        return { success: true, image: new Uint8Array(deDoubleDisk(slot)) };
+      } finally { fs.closeSync(fd); }
+    }
+    // plain dsk / container
+    const buf = fs.readFileSync(filePath);
+    return { success: true, image: new Uint8Array(buf) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
   }
 });
 

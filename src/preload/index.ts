@@ -24,6 +24,12 @@ const api = {
   dskDetectContainer: (dskBuffer: Uint8Array, stdDisk: number) =>
     ipcRenderer.invoke('dsk-detect-container', dskBuffer, stdDisk),
 
+  imageAnalyze: () =>
+    ipcRenderer.invoke('image-analyze'),
+
+  imageExtract: (filePath: string, locator: any) =>
+    ipcRenderer.invoke('image-extract', filePath, locator),
+
   openDskPane: () =>
     ipcRenderer.invoke('open-dsk-pane'),
 
