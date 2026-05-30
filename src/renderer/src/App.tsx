@@ -78,6 +78,9 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskTabTitle: 'Gerenciador de Imagens DSK',
     dskTabSoon: 'O gerenciador de arquivos DSK (dois painéis, copiar/colar/mover entre imagens, injetar .BIN/.BAS) será construído nas próximas fases.',
     openDskBtn: 'Abrir .DSK',
+    openImageBtn: 'Abrir imagem',
+    imgFormatsLegend: '.dsk · contêiner DriveWire · MiniIDE · CoCoSDC',
+    dskSearchDisk: 'Buscar disco',
     dskToolNew: 'Novo',
     dskToolImport: 'Importar imagem (MiniIDE / CoCoSDC / .dsk)',
     dskToolInject: 'Injetar',
@@ -228,6 +231,9 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskTabTitle: 'DSK Image Manager',
     dskTabSoon: 'The DSK file manager (dual pane, copy/paste/move between images, inject .BIN/.BAS) will be built in the next phases.',
     openDskBtn: 'Open .DSK',
+    openImageBtn: 'Open image',
+    imgFormatsLegend: '.dsk · DriveWire container · MiniIDE · CoCoSDC',
+    dskSearchDisk: 'Find disk',
     dskToolNew: 'New',
     dskToolImport: 'Import image (MiniIDE / CoCoSDC / .dsk)',
     dskToolInject: 'Inject',
@@ -412,9 +418,10 @@ export default function App() {
   const [dskUndo, setDskUndo] = useState<any[]>([]); // pilha de snapshots {A,B}
   const [dskRedo, setDskRedo] = useState<any[]>([]);
   const [dskTopHeight, setDskTopHeight] = useState<number>(280);
-  const [imageBrowser, setImageBrowser] = useState<any>(null); // { kind, fileName, filePath, fatType?, entries }
+  const [diskPicker, setDiskPicker] = useState<{ which: 'A' | 'B' } | null>(null); // modal de busca/salto de disco do contêiner
   const [imageBusy, setImageBusy] = useState<boolean>(false);
   const [imageFilter, setImageFilter] = useState<string>('');
+  const [imageProgress, setImageProgress] = useState<any>(null); // { phase, loaded, total }
   const dskDragItem = useRef<{ pane: 'A' | 'B'; entries: any[] } | null>(null);
   const dskAnchor = useRef<{ pane: 'A' | 'B'; index: number } | null>(null);
   const dskKbdRef = useRef<any>({});
@@ -475,6 +482,13 @@ export default function App() {
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
+
+  // Progresso de leitura/varredura de imagens grandes (MiniIDE/CoCoSDC/contêiner)
+  useEffect(() => {
+    if (!window.cocoApi || typeof window.cocoApi.onImageProgress !== 'function') return;
+    const off = window.cocoApi.onImageProgress((p: any) => setImageProgress(p));
+    return () => { if (typeof off === 'function') off(); };
+  }, []);
 
   // Atalhos de teclado da aba DSK (lê os handlers atuais via ref)
   useEffect(() => {
@@ -1092,7 +1106,10 @@ export default function App() {
     setPane(which, {
       buffer: slice, fileName, size: slice.length,
       files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
-      container: count > 1 ? { full, count, index } : null
+      container: count > 1 ? {
+        source: 'memory', kind: 'driveWire', full, count, index,
+        entries: Array.from({ length: count }, (_, k) => ({ id: k, label: `Disco ${k}`, info: '', locator: { index: k } })),
+      } : null
     });
     if (count > 1) {
       addLog(`Contêiner multi-disco detectado: ${count} discos de 160 KB. Mostrando o disco ${index} no painel ${which} — use o seletor de disco.`,
@@ -1104,18 +1121,30 @@ export default function App() {
     return true;
   };
 
-  // Troca o disco ativo de um contêiner multi-disco
+  // Troca o disco ativo de um contêiner — em memória (DriveWire) fatia o buffer; em arquivo
+  // (MiniIDE/CoCoSDC) lê só aquele disco do .img sob demanda (sem recarregar a imagem inteira).
   const handleSelectContainerDisk = async (which: 'A' | 'B', index: number) => {
     const pane = getPane(which);
     if (!pane || !pane.container) return;
     const c = pane.container;
     if (index < 0 || index >= c.count) return;
-    const slice = c.full.slice(index * STD_DISK, (index + 1) * STD_DISK);
+    let slice: Uint8Array;
+    let label = pane.fileName;
+    try {
+      if (c.source === 'file') {
+        const ex = await window.cocoApi.imageExtract(c.filePath, c.entries[index].locator);
+        if (!ex.success) { addLog(`Trocar disco: ${ex.error}`, `Switch disk: ${ex.error}`, 'error'); return; }
+        slice = new Uint8Array(ex.image);
+        label = c.entries[index].label;
+      } else {
+        slice = c.full.slice(index * STD_DISK, (index + 1) * STD_DISK);
+      }
+    } catch (err: any) { addLog(`Trocar disco: ${err.message}`, `Switch disk: ${err.message}`, 'error'); return; }
     const res = await window.cocoApi.readDskDirectory(slice);
     if (!res.success) { addLog(`DSK: ${res.error}`, `DSK: ${res.error}`, 'error'); return; }
     if (selectedDsk?.pane === which) setSelectedDsk(null);
     setPane(which, {
-      ...pane, buffer: slice, size: slice.length,
+      ...pane, buffer: slice, size: slice.length, fileName: label,
       files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
       container: { ...c, index }
     });
@@ -1127,11 +1156,14 @@ export default function App() {
     if (!res.success) { addLog(`DSK: ${res.error}`, `DSK: ${res.error}`, 'error'); return; }
     const prev = getPane(which) || {};
     let container = prev.container || null;
-    if (container) {
+    if (container && container.source === 'memory' && container.full) {
+      // contêiner em memória (DriveWire): grava o disco editado de volta no buffer completo
       const full = new Uint8Array(container.full);
       full.set(image, container.index * STD_DISK);
       container = { ...container, full };
     }
+    // contêiner de arquivo (MiniIDE/CoCoSDC): edição fica só no painel; salvar gera .dsk avulso
+    // (não regrava no .img); trocar de disco relê do arquivo.
     setPane(which, {
       buffer: image,
       fileName: fileName ?? prev.fileName ?? (which === 'A' ? 'NOVO_A.DSK' : 'NOVO_B.DSK'),
@@ -1355,48 +1387,42 @@ export default function App() {
     } catch (err: any) { addLog(`Painel A→B: ${err.message}`, `Pane A→B: ${err.message}`, 'error'); }
   };
 
-  // Abre o navegador de imagem unificado (MiniIDE / CoCoSDC / .dsk)
-  const handleImageImport = async () => {
+  // Abre QUALQUER imagem no painel: .dsk simples, contêiner DriveWire, MiniIDE ou CoCoSDC.
+  // MiniIDE/CoCoSDC viram um contêiner de ARQUIVO (lê cada disco sob demanda, sem recarregar).
+  const handleImageImport = async (which: 'A' | 'B') => {
     setImageBusy(true);
     try {
       const res = await window.cocoApi.imageAnalyze();
       if (res?.cancelled) return;
       if (!res?.success) { addLog(`Imagem: ${res?.error}`, `Image: ${res?.error}`, 'error'); return; }
+
       if (res.kind === 'dsk') {
-        // .dsk simples ou contêiner: abre direto no painel ativo (passa pelo guard de contêiner)
+        // .dsk simples ou contêiner DriveWire (em memória; passa pelo guard de contêiner)
         const ex = await window.cocoApi.imageExtract(res.filePath, { kind: 'dsk' });
-        if (ex.success) await loadPaneFromBuffer(activePane, new Uint8Array(ex.image), res.fileName);
+        if (ex.success) { if (selectedDsk?.pane === which) setSelectedDsk(null); await loadPaneFromBuffer(which, new Uint8Array(ex.image), res.fileName); setActivePane(which); }
         else addLog(`Imagem: ${ex.error}`, `Image: ${ex.error}`, 'error');
         return;
       }
-      setImageFilter('');
-      setImageBrowser(res);
-      const noun = res.kind === 'cocosdc' ? (currentLang === 'pt-br' ? 'arquivo(s) .dsk' : '.dsk file(s)') : (currentLang === 'pt-br' ? 'disco(s)' : 'disk(s)');
-      addLog(`${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'}: ${res.entries.length} ${noun} em "${res.fileName}".`,
-             `${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'}: ${res.entries.length} ${noun} in "${res.fileName}".`, 'success');
-    } catch (err: any) { addLog(`Imagem: ${err.message}`, `Image: ${err.message}`, 'error'); }
-    finally { setImageBusy(false); }
-  };
 
-  // Extrai a entrada escolhida no navegador e abre como .dsk padrão no painel ativo
-  const handlePickImageEntry = async (entry: any) => {
-    if (!imageBrowser) return;
-    setImageBusy(true);
-    try {
-      const ex = await window.cocoApi.imageExtract(imageBrowser.filePath, entry.locator);
-      if (!ex.success) { addLog(`Extrair: ${ex.error}`, `Extract: ${ex.error}`, 'error'); return; }
-      const stem = imageBrowser.fileName.replace(/\.[^.]*$/, '');
-      const name = entry.locator.kind === 'miniide'
-        ? `${stem}_disco${entry.id}.dsk`
-        : entry.label;
-      const ok = await loadPaneFromBuffer(activePane, new Uint8Array(ex.image), name);
-      if (ok) {
-        addLog(`"${entry.label}" aberto no painel ${activePane}. Lembre-se de salvar como .dsk se editar.`,
-               `"${entry.label}" opened in pane ${activePane}. Save as .dsk if you edit it.`, 'success');
-        setImageBrowser(null);
-      }
-    } catch (err: any) { addLog(`Extrair: ${err.message}`, `Extract: ${err.message}`, 'error'); }
-    finally { setImageBusy(false); }
+      // MiniIDE / CoCoSDC: contêiner de arquivo navegável
+      if (!res.entries.length) { addLog('Nenhum disco encontrado na imagem.', 'No disk found in the image.', 'warn'); return; }
+      const ex = await window.cocoApi.imageExtract(res.filePath, res.entries[0].locator);
+      if (!ex.success) { addLog(`Imagem: ${ex.error}`, `Image: ${ex.error}`, 'error'); return; }
+      const buf = new Uint8Array(ex.image);
+      const dir = await window.cocoApi.readDskDirectory(buf);
+      if (!dir.success) { addLog(`Imagem: ${dir.error}`, `Image: ${dir.error}`, 'error'); return; }
+      if (selectedDsk?.pane === which) setSelectedDsk(null);
+      setPane(which, {
+        buffer: buf, fileName: res.entries[0].label, size: buf.length,
+        files: dir.files, freeGranules: dir.freeGranules, totalGranules: dir.totalGranules,
+        container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0 },
+      });
+      setActivePane(which);
+      const noun = res.kind === 'cocosdc' ? (currentLang === 'pt-br' ? '.dsk' : '.dsk') : (currentLang === 'pt-br' ? 'discos' : 'disks');
+      addLog(`${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'} "${res.fileName}": ${res.entries.length} ${noun}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
+             `${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'} "${res.fileName}": ${res.entries.length} ${noun}. Navigate with the pane ${which} selector (◀ ▶ or 🔍 Search).`, 'success');
+    } catch (err: any) { addLog(`Imagem: ${err.message}`, `Image: ${err.message}`, 'error'); }
+    finally { setImageBusy(false); setImageProgress(null); }
   };
 
   const handleDskNew = async () => {
@@ -2028,28 +2054,33 @@ export default function App() {
               <span className="text-xs font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Imagem' : 'Image'} {which}</span>
             </div>
             <button
-              onClick={() => handleOpenDskPane(which)}
-              className="btn btn-secondary py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-[var(--primary)]/40 text-[var(--primary)] hover:bg-[var(--primary-glow)]"
+              onClick={() => handleImageImport(which)}
+              disabled={imageBusy}
+              className="btn btn-secondary py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-[var(--primary)]/40 text-[var(--primary)] hover:bg-[var(--primary-glow)] disabled:opacity-50"
             >
-              <FolderOpen size={12} /> {t('openDskBtn')}
+              <FolderOpen size={12} /> {t('openImageBtn')}
             </button>
+            <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>
             {pane ? (
               <div className="flex flex-col gap-1 text-[11px] mt-1">
                 <div className="text-white font-mono break-all">{pane.fileName}</div>
                 <div className="text-[var(--text-secondary)]">{(pane.size / 1024).toFixed(0)} KB</div>
                 {pane.container && (
                   <div className="flex flex-col gap-1 mt-1 bg-slate-950/40 rounded p-1.5 border border-[var(--primary)]/30" onClick={(e) => e.stopPropagation()}>
-                    <span className="text-[9px] uppercase tracking-wider text-[var(--text-muted)]">{currentLang === 'pt-br' ? `Contêiner · ${pane.container.count} discos` : `Container · ${pane.container.count} disks`}</span>
+                    <span className="text-[9px] uppercase tracking-wider text-[var(--text-muted)]">
+                      {pane.container.kind === 'cocosdc' ? 'CoCoSDC' : pane.container.kind === 'miniide' ? 'MiniIDE' : (currentLang === 'pt-br' ? 'Contêiner' : 'Container')} · {pane.container.count} {currentLang === 'pt-br' ? 'discos' : 'disks'}
+                    </span>
                     <div className="flex items-center gap-1">
-                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 7px' }}>◀</button>
-                      <span className="text-[11px] font-mono text-[var(--primary)] font-bold flex-1 text-center">{currentLang === 'pt-br' ? 'Disco' : 'Disk'} {pane.container.index}/{pane.container.count - 1}</span>
-                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 7px' }}>▶</button>
+                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={imageBusy || pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 7px' }}>◀</button>
+                      <span className="text-[11px] font-mono text-[var(--primary)] font-bold flex-1 text-center">{pane.container.index}/{pane.container.count - 1}</span>
+                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={imageBusy || pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 7px' }}>▶</button>
                     </div>
                     <input
                       type="number" min={0} max={pane.container.count - 1} value={pane.container.index}
                       onChange={(e) => handleSelectContainerDisk(which, Math.max(0, Math.min(pane.container.count - 1, parseInt(e.target.value) || 0)))}
                       className="input-text py-0.5 text-[11px] text-center font-mono"
                     />
+                    <button onClick={() => { setActivePane(which); setImageFilter(''); setDiskPicker({ which }); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '3px 7px' }}><Search size={12} /> {t('dskSearchDisk')}</button>
                   </div>
                 )}
               </div>
@@ -2740,7 +2771,6 @@ export default function App() {
             {/* DSK toolbar */}
             <div className="flex items-center gap-1.5 mb-2 flex-wrap">
               <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
-              <button onClick={handleImageImport} disabled={imageBusy} title={t('dskToolImport')} aria-label={t('dskToolImport')} className="dsk-tool"><Database size={15} /></button>
               <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FilePlus size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={() => handleDskCopy(false)} disabled={!selectedDsk?.entries.length} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
@@ -2937,56 +2967,82 @@ export default function App() {
         </div>
       )}
 
-      {/* Unified image browser (MiniIDE / CoCoSDC) */}
-      {imageBrowser && (
-        <div className="glass-modal-overlay" onClick={() => !imageBusy && setImageBrowser(null)}>
-          <div className="glass-panel flex flex-col" style={{ width: 620, maxWidth: '94%', maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
-            {/* header */}
-            <div className="flex items-center gap-3 p-4 border-b border-[var(--border)]">
-              <div className="p-2 rounded-full bg-[var(--primary-glow)] text-[var(--primary)] flex-shrink-0"><Database size={18} /></div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wide">{t('imgBrowserTitle')}</h3>
-                  <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-[var(--primary)] border border-[var(--primary)]/30">
-                    {imageBrowser.kind === 'cocosdc' ? `CoCoSDC · ${imageBrowser.fatType || 'FAT'}` : 'MiniIDE / HDBDOS'}
-                  </span>
+      {/* Disk picker — search/jump within a navigable container (DriveWire / MiniIDE / CoCoSDC) */}
+      {diskPicker && (() => {
+        const dp = getPane(diskPicker.which);
+        const c = dp?.container;
+        if (!c) return null;
+        const entries = c.entries || [];
+        const q = imageFilter.trim().toLowerCase();
+        const list = q ? entries.filter((e: any) => `${e.label} ${e.sub || ''}`.toLowerCase().includes(q)) : entries;
+        const kindLabel = c.kind === 'cocosdc' ? 'CoCoSDC' : c.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
+        return (
+          <div className="glass-modal-overlay" onClick={() => !imageBusy && setDiskPicker(null)}>
+            <div className="glass-panel flex flex-col" style={{ width: 620, maxWidth: '94%', maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 p-4 border-b border-[var(--border)]">
+                <div className="p-2 rounded-full bg-[var(--primary-glow)] text-[var(--primary)] flex-shrink-0"><Database size={18} /></div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wide">{t('imgBrowserTitle')}</h3>
+                    <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-800 text-[var(--primary)] border border-[var(--primary)]/30">{kindLabel} · {c.count}</span>
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)] font-mono truncate">{c.fileName || ''} → {currentLang === 'pt-br' ? 'Painel' : 'Pane'} {diskPicker.which}</div>
                 </div>
-                <div className="text-[11px] text-[var(--text-secondary)] font-mono truncate">{imageBrowser.fileName} · {imageBrowser.entries.length} {imageBrowser.kind === 'cocosdc' ? '.dsk' : (currentLang === 'pt-br' ? 'discos' : 'disks')}</div>
+                <button onClick={() => !imageBusy && setDiskPicker(null)} className="dsk-tool" style={{ padding: 6 }}><X size={15} /></button>
               </div>
-              <button onClick={() => !imageBusy && setImageBrowser(null)} className="dsk-tool" style={{ padding: 6 }}><X size={15} /></button>
-            </div>
-            {/* filter */}
-            <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-              <div className="flex items-center gap-2 flex-1 bg-slate-950/50 border border-[var(--border)] rounded-lg px-2.5 py-1.5">
-                <Search size={13} className="text-[var(--text-muted)]" />
-                <input value={imageFilter} onChange={(e) => setImageFilter(e.target.value)} placeholder={t('imgFilterPlaceholder')}
-                  className="bg-transparent outline-none text-xs text-white flex-1 placeholder:text-[var(--text-muted)]" />
+              <div className="px-4 pt-3 pb-2 flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-1 bg-slate-950/50 border border-[var(--border)] rounded-lg px-2.5 py-1.5">
+                  <Search size={13} className="text-[var(--text-muted)]" />
+                  <input autoFocus value={imageFilter} onChange={(e) => setImageFilter(e.target.value)} placeholder={t('imgFilterPlaceholder')}
+                    className="bg-transparent outline-none text-xs text-white flex-1 placeholder:text-[var(--text-muted)]" />
+                </div>
+                <span className="text-[10px] text-[var(--text-muted)] font-mono">{list.length}/{entries.length}</span>
               </div>
-              <span className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">→ {currentLang === 'pt-br' ? 'Painel' : 'Pane'} <span className="text-[var(--primary)] font-bold">{activePane}</span></span>
+              <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 120 }}>
+                {!list.length ? <div className="text-center text-[11px] text-[var(--text-muted)] p-6">{t('imgEmpty')}</div> :
+                  list.slice(0, 500).map((e: any) => {
+                    const active = e.id === c.index;
+                    return (
+                      <button key={e.id} onClick={async () => { await handleSelectContainerDisk(diskPicker.which, e.id); setDiskPicker(null); }} disabled={imageBusy}
+                        className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg transition-colors disabled:opacity-50 border ${active ? 'bg-cyan-950/40 border-[var(--primary)]/40' : 'border-transparent hover:bg-slate-800/70 hover:border-[var(--primary)]/30'}`}>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)] w-9 flex-shrink-0">#{e.id}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-bold text-white font-mono truncate">{e.label}</div>
+                          {e.sub && <div className="text-[10px] text-[var(--text-secondary)] truncate">{e.sub}</div>}
+                        </div>
+                        <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{e.info}</span>
+                        <ArrowRight size={13} className="text-[var(--primary)] flex-shrink-0" />
+                      </button>
+                    );
+                  })}
+                {list.length > 500 && <div className="text-center text-[10px] text-[var(--text-muted)] p-2">{currentLang === 'pt-br' ? `Mostrando 500 de ${list.length} — refine a busca` : `Showing 500 of ${list.length} — refine the search`}</div>}
+              </div>
+              <div className="flex items-center justify-between p-3 border-t border-[var(--border)]">
+                <span className="text-[10px] text-[var(--text-muted)]">{imageBusy ? t('imgBusy') : t('imgOpenHint')}</span>
+                <button onClick={() => !imageBusy && setDiskPicker(null)} className="btn btn-secondary py-1.5 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              </div>
             </div>
-            {/* list */}
-            <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 120 }}>
-              {(() => {
-                const q = imageFilter.trim().toLowerCase();
-                const list = q ? imageBrowser.entries.filter((e: any) => `${e.label} ${e.sub || ''}`.toLowerCase().includes(q)) : imageBrowser.entries;
-                if (!list.length) return <div className="text-center text-[11px] text-[var(--text-muted)] p-6">{t('imgEmpty')}</div>;
-                return list.map((e: any) => (
-                  <button key={e.id} onClick={() => handlePickImageEntry(e)} disabled={imageBusy}
-                    className="w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-slate-800/70 transition-colors disabled:opacity-50 border border-transparent hover:border-[var(--primary)]/30">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-bold text-white font-mono truncate">{e.label}</div>
-                      {e.sub && <div className="text-[10px] text-[var(--text-secondary)] truncate">{e.sub}</div>}
-                    </div>
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{e.info}</span>
-                    <ArrowRight size={13} className="text-[var(--primary)] flex-shrink-0" />
-                  </button>
-                ));
-              })()}
+          </div>
+        );
+      })()}
+
+      {/* Image load progress overlay */}
+      {imageProgress && imageBusy && (
+        <div className="glass-modal-overlay">
+          <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 380, maxWidth: '90%' }}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-[var(--primary-glow)] text-[var(--primary)]"><Database size={18} /></div>
+              <div className="text-sm font-bold text-white">
+                {imageProgress.phase === 'scan' ? (currentLang === 'pt-br' ? 'Analisando discos…' : 'Scanning disks…')
+                  : imageProgress.phase === 'fat' ? (currentLang === 'pt-br' ? 'Lendo diretório FAT…' : 'Reading FAT directory…')
+                    : (currentLang === 'pt-br' ? 'Lendo imagem…' : 'Reading image…')}
+              </div>
             </div>
-            {/* footer */}
-            <div className="flex items-center justify-between p-3 border-t border-[var(--border)]">
-              <span className="text-[10px] text-[var(--text-muted)]">{imageBusy ? t('imgBusy') : t('imgOpenHint')}</span>
-              <button onClick={() => !imageBusy && setImageBrowser(null)} className="btn btn-secondary py-1.5 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+            <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+              <div className="h-full bg-[var(--primary)] transition-all" style={{ width: imageProgress.total > 0 ? `${Math.min(100, Math.round(imageProgress.loaded / imageProgress.total * 100))}%` : '40%' }} />
+            </div>
+            <div className="text-[10px] text-[var(--text-secondary)] font-mono text-right">
+              {imageProgress.total > 0 ? `${(imageProgress.loaded / 1048576).toFixed(0)} / ${(imageProgress.total / 1048576).toFixed(0)} MB` : (currentLang === 'pt-br' ? 'aguarde…' : 'please wait…')}
             </div>
           </div>
         </div>

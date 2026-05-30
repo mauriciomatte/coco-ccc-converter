@@ -30,6 +30,12 @@ const api = {
   imageExtract: (filePath: string, locator: any) =>
     ipcRenderer.invoke('image-extract', filePath, locator),
 
+  onImageProgress: (cb: (p: any) => void) => {
+    const listener = (_e: any, p: any) => cb(p);
+    ipcRenderer.on('image-progress', listener);
+    return () => ipcRenderer.removeListener('image-progress', listener);
+  },
+
   openDskPane: () =>
     ipcRenderer.invoke('open-dsk-pane'),
 

@@ -12,6 +12,24 @@ import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } f
 
 let mainWindow: BrowserWindow | null = null;
 
+// Reads a whole file into memory in chunks, emitting an `image-progress` event per chunk so
+// the renderer can show a real progress bar for large container images.
+function readFileWithProgress(filePath: string, total: number, phase: string): Buffer {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const buf = Buffer.alloc(total);
+    const CHUNK = 16 * 1024 * 1024;
+    let pos = 0;
+    while (pos < total) {
+      const n = fs.readSync(fd, buf, pos, Math.min(CHUNK, total - pos), pos);
+      if (n <= 0) break;
+      pos += n;
+      mainWindow?.webContents.send('image-progress', { phase, loaded: pos, total });
+    }
+    return buf;
+  } finally { fs.closeSync(fd); }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -271,6 +289,7 @@ ipcMain.handle('image-analyze', async () => {
     try {
       const vol = readFatVolume(reader);
       if (vol) {
+        mainWindow?.webContents.send('image-progress', { phase: 'fat', loaded: 0, total: 0 });
         const files = listFatFiles(reader, vol, ['dsk'])
           .filter(f => !f.name.startsWith('._') && f.size >= 4608); // skip macOS AppleDouble junk
         const entries = files.map((f, i) => ({
@@ -283,8 +302,9 @@ ipcMain.handle('image-analyze', async () => {
 
     // 2) MiniIDE / HDBDOS — needs a full scan; cap the size so we never slurp a multi-GB image.
     if (stat.size <= 800 * 1024 * 1024) {
-      const buf = fs.readFileSync(filePath);
-      const disks = scanMiniIdeImage(buf);
+      const buf = readFileWithProgress(filePath, stat.size, 'read');
+      const disks = scanMiniIdeImage(buf, (loaded, total) =>
+        mainWindow?.webContents.send('image-progress', { phase: 'scan', loaded, total }));
       if (disks.length >= 2) {
         const entries = disks.map(d => ({
           id: d.index, label: `Disco ${d.index}`,
@@ -324,7 +344,8 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
       } finally { fs.closeSync(fd); }
     }
     // plain dsk / container
-    const buf = fs.readFileSync(filePath);
+    const total = fs.statSync(filePath).size;
+    const buf = readFileWithProgress(filePath, total, 'read');
     return { success: true, image: new Uint8Array(buf) };
   } catch (error: any) {
     return { success: false, error: error.message };

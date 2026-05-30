@@ -254,35 +254,37 @@ export interface MiniIdeDisk {
  * Scans an HDBDOS/MiniIDE image for sector-doubled RS-DOS disks and returns their locations.
  * Each hit advances by a full doubled slot (322,560) so a disk is reported once.
  */
-export function scanMiniIdeImage(buf: Buffer): MiniIdeDisk[] {
-  // Pass 1: collect every offset that passes the cheap doubled-disk probe (sector-stepped).
-  // The FAT sector is itself doubled, so each real disk yields a tight "smear" of hits
-  // (e.g. base and base+256) that we collapse next.
-  const hits: number[] = [];
-  for (let off = 0; off + DBL_SLOT <= buf.length; off += 256) {
-    if (isDoubledRsDosDiskAt(buf, off)) hits.push(off);
-  }
-  // Collapse: any hits within ~one slot (300 KB, below the real ≈315 KB stride) belong to the
-  // same disk — the doubled FAT smear plus the occasional intra-disk false hit. Keeping the
-  // first (lowest, 256-aligned) offset of each cluster gives the true, sector-aligned base.
-  const bases: number[] = [];
-  for (const h of hits) {
-    if (!bases.length || h - bases[bases.length - 1] > 300000) bases.push(h);
-  }
-  // Neighbour-stride filter: real HDBDOS disks form a dense run spaced ≈315–322 KB apart,
-  // while OS-9/garbage false positives are isolated. Keep only disks that have another base
-  // within that slot window on either side.
-  const LO = 290000, HI = 340000;
-  const inRun = bases.filter((b, i) =>
-    (i > 0 && b - bases[i - 1] >= LO && b - bases[i - 1] <= HI) ||
-    (i < bases.length - 1 && bases[i + 1] - b >= LO && bases[i + 1] - b <= HI));
+export function scanMiniIdeImage(buf: Buffer, onProgress?: (loaded: number, total: number) => void): MiniIdeDisk[] {
+  const S = DBL_SLOT; // 322,560 — uniform HDBDOS slot for a doubled 35-track disk
+  const step = 8 * 1024 * 1024;
 
-  // Pass 2: validate each surviving base with a full parse (≥1 real file) and build the list.
+  // 1) Find an anchor: the first offset that starts a run of 3 consecutive doubled disks one
+  //    slot apart. HDBDOS packs the disks on a uniform 322,560-byte grid, so any run member
+  //    fixes the grid phase. A lone OS-9/garbage false positive almost never has two more
+  //    valid doubled disks at exactly +S and +2S, so this reliably skips the OS-9 partition.
+  let anchor = -1;
+  let nextReport = step;
+  for (let off = 0; off + 3 * S <= buf.length; off += 256) {
+    if (isDoubledRsDosDiskAt(buf, off) && isDoubledRsDosDiskAt(buf, off + S) && isDoubledRsDosDiskAt(buf, off + 2 * S)) {
+      anchor = off;
+      break;
+    }
+    if (onProgress && off >= nextReport) { onProgress(off, buf.length); nextReport += step; }
+  }
+  if (anchor < 0) return [];
+
+  // 2) Walk the whole image on the grid (phase = anchor mod S) and validate each slot with a
+  //    full parse. Grid points inside the OS-9 partition or past the HDBDOS region don't parse
+  //    as RS-DOS, so they drop out; this catches the boot/system disk and every game disk,
+  //    tolerating empty slots in between.
+  const phase = anchor % S;
   const disks: MiniIdeDisk[] = [];
   let idx = 0;
-  for (const off of inRun) {
+  for (let off = phase; off + S <= buf.length; off += S) {
+    if (onProgress && off >= nextReport) { onProgress(off, buf.length); nextReport += step; }
+    if (!isDoubledRsDosDiskAt(buf, off)) continue;
     try {
-      const p = parseDsk(deDoubleDisk(buf.subarray(off, off + DBL_SLOT)));
+      const p = parseDsk(deDoubleDisk(buf.subarray(off, off + S)));
       if (p.files.length >= 1) {
         disks.push({
           index: idx++, offset: off,
