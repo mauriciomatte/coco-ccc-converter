@@ -63,7 +63,9 @@
             ' tvInput=' + initTvInput + ' tvType=' + initTvType);
 
         // ─── ROM files that exist on disk ────────────────────────────────────────────
-        var romFiles = ['bas13.rom', 'coco3.rom', 'd32.rom', 'd64rom1V31.rom', 'd64rom2V31.rom', 'ddos10.rom', 'disk11.rom', 'extbas11.rom'];
+        // Carrega TODAS as ROMs disponíveis na VFS para que qualquer máquina do XRoar ache
+        // a sua (CoCo 1/2/3, Dragon 32/64/Tano, MC-10, controladores de disco/Dragon Plus).
+        var romFiles = ['bas10.rom', 'bas11.rom', 'bas12.rom', 'bas13.rom', 'bas14.rom', 'coco3.rom', 'd32.rom', 'd32V31.rom', 'd64_1.rom', 'd64rom1V31.rom', 'd64rom2V31.rom', 'd64tano.rom', 'd64tano2.rom', 'ddos10.rom', 'disk10.rom', 'disk11.rom', 'disk12a.rom', 'dplus49b.rom', 'dplus50.rom', 'extbas10.rom', 'extbas11.rom', 'fd502.rom', 'fd502ds.rom', 'mc10.rom', 'newrom.rom'];
 
         // ─── Phase 1: Pre-fetch all ROMs via async fetch() ──────────────────────────
         var preloadedRoms = {};
@@ -1388,6 +1390,7 @@
                     else if (d.fn === 'tape_pause') wasm_tape_pause();
                     else if (d.fn === 'tape_rewind') wasm_tape_rewind();
                     else if (d.fn === 'type_string') wasm_type_string(d.text, d.delayMs);
+                    else if (d.fn === 'focus') { try { var _fc = (typeof Module !== 'undefined' && Module.canvas) ? Module.canvas : document.getElementById('canvas'); if (_fc) _fc.focus(); } catch (e) { } }
                     else if (d.fn === 'save_snapshot') wasm_save_snapshot(d.fileName);
                     else if (d.fn === 'load_file') {
                         var fd = new Uint8Array(d.fileData);

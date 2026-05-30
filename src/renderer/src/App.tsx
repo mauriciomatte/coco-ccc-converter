@@ -2832,7 +2832,7 @@ export default function App() {
 
         {/* XRoar emulator — always mounted (hidden unless active) so it never reboots on tab switch */}
         <div style={{ display: activeTab === 'xroar' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <XRoarPanel lang={currentLang} pendingLoad={xroarLoad} onLog={addLog} />
+          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} onLog={addLog} />
         </div>
 
         {/* SPLITTER 3 (Horizontal) */}

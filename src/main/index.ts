@@ -674,7 +674,10 @@ ipcMain.handle('load-config', async () => {
 ipcMain.handle('save-config', async (_, config: any) => {
   try {
     const configPath = path.join(app.getPath('userData'), 'settings.json');
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+    // Merge com o existente para não apagar chaves de outras telas (ex.: xroar vs app).
+    let existing: any = {};
+    try { existing = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch { /* sem arquivo ainda */ }
+    fs.writeFileSync(configPath, JSON.stringify({ ...existing, ...config }, null, 2), 'utf-8');
     return { success: true };
   } catch (err: any) {
     console.error('Error saving config file:', err);
