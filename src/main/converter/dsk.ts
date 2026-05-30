@@ -168,6 +168,30 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
 }
 
 /**
+ * Heuristically decides whether a buffer is a single, well-formed RS-DOS disk by
+ * validating its FAT (granule allocation table). Every granule entry must be a free
+ * marker (0xFF), a forward chain link (< totalGranules) or an end-of-file marker
+ * (0xC0-0xC9). Random/non-RS-DOS data (e.g. OS-9 sectors or the unused second half of
+ * a double-sized HDBDOS slot) almost never satisfies all entries, so this reliably tells
+ * a genuine multi-disk container apart from a single disk stored in an oversized slot.
+ */
+export function isRsDosDisk(buf: Buffer): boolean {
+  const TRACK = 18 * 256; // 4,608
+  if (buf.length < 18 * TRACK || buf.length % TRACK !== 0) return false;
+  const tracks = buf.length / TRACK;
+  const totalGranules = (tracks - 1) * 2;
+  const fatOffset = 17 * TRACK + 256; // Track 17, Sector 2
+  for (let g = 0; g < totalGranules; g++) {
+    const v = buf[fatOffset + g];
+    if (v === 0xFF) continue;           // free granule
+    if (v < totalGranules) continue;    // forward chain link
+    if (v >= 0xC0 && v <= 0xC9) continue; // end-of-file (1-9 sectors in last granule)
+    return false;                       // anything else: not a valid RS-DOS FAT
+  }
+  return true;
+}
+
+/**
  * Extracts a file payload from a .DSK image by following its directory entry.
  */
 export function extractDskFile(dskBuffer: Buffer, entry: DskFileEntry): Buffer {

@@ -1060,7 +1060,14 @@ export default function App() {
 
   // Carrega uma imagem nova num painel; detecta contêiner multi-disco (N x 161280) e mostra o disco 0
   const loadPaneFromBuffer = async (which: 'A' | 'B', full: Uint8Array, fileName: string, index = 0): Promise<boolean> => {
-    const count = (full.length > 0 && full.length % STD_DISK === 0) ? full.length / STD_DISK : 1;
+    let count = (full.length > 0 && full.length % STD_DISK === 0) ? full.length / STD_DISK : 1;
+    if (count > 1) {
+      // Um arquivo múltiplo de 161.280 pode ser um contêiner multi-disco OU um disco único
+      // num slot maior (ex.: slot HDBDOS de tamanho dobrado, ou imagem OS-9). Só é contêiner
+      // se as fatias forem discos RS-DOS válidos; senão, abre como imagem única.
+      const det = await window.cocoApi.dskDetectContainer(full, STD_DISK);
+      count = det?.count ?? count;
+    }
     const slice = count > 1 ? full.slice(index * STD_DISK, (index + 1) * STD_DISK) : full;
     const res = await window.cocoApi.readDskDirectory(slice);
     if (!res.success) { addLog(`DSK: ${res.error}`, `DSK: ${res.error}`, 'error'); return false; }
@@ -1360,7 +1367,9 @@ export default function App() {
   // Extrai TODOS os arquivos de um buffer .dsk (ciente de contêiner multi-disco)
   const extractAllFromDsk = async (bytes: Uint8Array): Promise<any[]> => {
     const DISK = 161280;
-    const isContainer = bytes.length % DISK === 0 && bytes.length / DISK > 1;
+    const det = (bytes.length % DISK === 0 && bytes.length / DISK > 1)
+      ? await window.cocoApi.dskDetectContainer(bytes, DISK) : { count: 1 };
+    const isContainer = (det?.count ?? 1) > 1;
     const chunks: Uint8Array[] = isContainer
       ? Array.from({ length: bytes.length / DISK }, (_, i) => bytes.subarray(i * DISK, (i + 1) * DISK))
       : [bytes];

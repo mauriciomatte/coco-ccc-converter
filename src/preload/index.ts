@@ -21,6 +21,9 @@ const api = {
   dskSortDirectory: (dskBuffer: Uint8Array) =>
     ipcRenderer.invoke('dsk-sort-directory', dskBuffer),
 
+  dskDetectContainer: (dskBuffer: Uint8Array, stdDisk: number) =>
+    ipcRenderer.invoke('dsk-detect-container', dskBuffer, stdDisk),
+
   openDskPane: () =>
     ipcRenderer.invoke('open-dsk-pane'),
 

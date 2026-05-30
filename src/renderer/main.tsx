@@ -10,7 +10,7 @@ import { Buffer } from 'buffer';
 // Direct imports of conversion modules for the web compatibility layer
 import { decodeWav } from '../main/converter/wav';
 import { parseCas } from '../main/converter/cas';
-import { parseDsk, extractDskFile, sortDskDirectory } from '../main/converter/dsk';
+import { parseDsk, extractDskFile, sortDskDirectory, isRsDosDisk } from '../main/converter/dsk';
 import { parseBin } from '../main/converter/bin';
 import { compileBootstrap } from '../main/converter/bootstrap';
 
@@ -62,6 +62,20 @@ if (!(window as any).cocoApi) {
         return { success: true, image: new Uint8Array(img) };
       } catch (error: any) {
         return { success: false, error: error.message };
+      }
+    },
+
+    dskDetectContainer: async (dskUint8Array: Uint8Array, stdDisk: number) => {
+      try {
+        const buf = Buffer.from(dskUint8Array);
+        if (buf.length === 0 || !stdDisk || buf.length % stdDisk !== 0) return { count: 1 };
+        const n = buf.length / stdDisk;
+        if (n < 2) return { count: 1 };
+        const slice0Valid = isRsDosDisk(buf.subarray(0, stdDisk));
+        const slice1Valid = isRsDosDisk(buf.subarray(stdDisk, 2 * stdDisk));
+        return { count: slice0Valid && slice1Valid ? n : 1, slice0Valid, slice1Valid };
+      } catch (error: any) {
+        return { count: 1, error: error.message };
       }
     },
 

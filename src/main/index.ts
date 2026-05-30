@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, DskFileEntry } from './converter/dsk';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, isRsDosDisk, DskFileEntry } from './converter/dsk';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -227,6 +227,23 @@ ipcMain.handle('dsk-delete-file', async (_, dskUint8Array: Uint8Array, entry: Ds
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };
+  }
+});
+
+// 3c1. Decide if a buffer is a real multi-disk container vs a single disk in an oversized
+// slot. A multiple of stdDisk is only a container if BOTH the first two slices are valid
+// RS-DOS disks; otherwise it is a single image (e.g. a 2x double-sized HDBDOS/OS-9 slot).
+ipcMain.handle('dsk-detect-container', async (_, dskUint8Array: Uint8Array, stdDisk: number) => {
+  try {
+    const buf = Buffer.from(dskUint8Array);
+    if (buf.length === 0 || !stdDisk || buf.length % stdDisk !== 0) return { count: 1 };
+    const n = buf.length / stdDisk;
+    if (n < 2) return { count: 1 };
+    const slice0Valid = isRsDosDisk(buf.subarray(0, stdDisk));
+    const slice1Valid = isRsDosDisk(buf.subarray(stdDisk, 2 * stdDisk));
+    return { count: slice0Valid && slice1Valid ? n : 1, slice0Valid, slice1Valid };
+  } catch (error: any) {
+    return { count: 1, error: error.message };
   }
 });
 
