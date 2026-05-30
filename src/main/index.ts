@@ -11,6 +11,7 @@ import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
 
 let mainWindow: BrowserWindow | null = null;
+let allowClose = false; // só true depois que o usuário confirma no modal de "Sair"
 
 // Reads a whole file into memory in chunks, emitting an `image-progress` event per chunk so
 // the renderer can show a real progress bar for large container images.
@@ -57,10 +58,17 @@ function createWindow() {
   }
 
   mainWindow.once('ready-to-show', () => {
+    mainWindow?.maximize(); // abre maximizado, preenchendo a tela
     mainWindow?.show();
-    if (isDev) {
-      mainWindow?.webContents.openDevTools();
-    }
+    // DevTools NÃO abre automaticamente; abra manualmente com F12 / Ctrl+Shift+I.
+  });
+
+  // Botão X da janela: usa o MESMO modal de "Sair" do app (confirma + avisa sobre salvar).
+  // Cancela o fechamento nativo e pede ao renderer para abrir o modal; só fecha após confirmação.
+  mainWindow.on('close', (e) => {
+    if (allowClose) return;
+    e.preventDefault();
+    mainWindow?.webContents.send('app-close-request');
   });
 
   mainWindow.on('closed', () => {
@@ -82,6 +90,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Confirmação vinda do modal de "Sair": libera o fechamento e fecha a janela de verdade.
+ipcMain.handle('app-close-confirmed', () => {
+  allowClose = true;
+  mainWindow?.close();
 });
 
 // --- IPC Channel Handlers ---
@@ -163,9 +177,9 @@ ipcMain.handle('dsk-new-blank', async () => {
 ipcMain.handle('pick-coco-file', async () => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select .BIN / .BAS file',
+    title: 'Select .BIN / .BAS / .CAS file',
     properties: ['openFile'],
-    filters: [{ name: 'CoCo Files', extensions: ['bin', 'bas'] }, { name: 'All Files', extensions: ['*'] }]
+    filters: [{ name: 'CoCo Files', extensions: ['bin', 'bas', 'cas'] }, { name: 'All Files', extensions: ['*'] }]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, cancelled: true };
   try {
@@ -178,6 +192,20 @@ ipcMain.handle('pick-coco-file', async () => {
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+});
+
+// 2g. Pick the Greaseweazle host-tools executable (gw / gw.exe) and return its full path.
+ipcMain.handle('gw-pick-exe', async () => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Selecionar executável do Greaseweazle (gw)',
+    properties: ['openFile'],
+    filters: process.platform === 'win32'
+      ? [{ name: 'Greaseweazle (gw.exe)', extensions: ['exe'] }, { name: 'All Files', extensions: ['*'] }]
+      : [{ name: 'All Files', extensions: ['*'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false, cancelled: true };
+  return { success: true, path: result.filePaths[0] };
 });
 
 // 3. Extract DSK program and parse details
@@ -323,6 +351,26 @@ ipcMain.handle('image-analyze', async () => {
         return { success: true, kind: 'cocosdc', filePath, fileName, fatType: vol.type, entries };
       }
     } finally { fs.closeSync(fd); }
+
+    // 1b) Plain DriveWire container: N×161,280 STANDARD RS-DOS disks concatenated.
+    // MUST be checked BEFORE the MiniIDE scan — a DriveWire container is also a multiple of
+    // 161,280 and the doubled-disk probe false-positives on it, which then de-doubles every
+    // disk wrongly (directory survives, data granules misalign → files read as 1 blank granule).
+    // Discriminator: in a DriveWire container the first 161,280-byte slice IS a valid standard
+    // RS-DOS disk (FAT at track 17 sector 2); in a sector-doubled MiniIDE image it is NOT.
+    {
+      const STD = 161280;
+      if (stat.size % STD === 0 && stat.size / STD >= 2) {
+        const fdc = fs.openSync(filePath, 'r');
+        try {
+          const probe = Buffer.alloc(STD * 2);
+          fs.readSync(fdc, probe, 0, STD * 2, 0);
+          if (isRsDosDisk(probe.subarray(0, STD)) && isRsDosDisk(probe.subarray(STD, STD * 2))) {
+            return { success: true, kind: 'dsk', filePath, fileName, entries: [] };
+          }
+        } finally { fs.closeSync(fdc); }
+      }
+    }
 
     // 2) MiniIDE / HDBDOS — needs a full scan; cap the size so we never slurp a multi-GB image.
     if (stat.size <= 800 * 1024 * 1024) {

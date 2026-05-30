@@ -81,7 +81,16 @@ const api = {
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
 
+  // Fechamento da janela (X) -> abre o modal de "Sair" no renderer; confirmação fecha de verdade
+  onAppCloseRequest: (cb: () => void) => {
+    const listener = () => cb();
+    ipcRenderer.on('app-close-request', listener);
+    return () => ipcRenderer.removeListener('app-close-request', listener);
+  },
+  appCloseConfirmed: () => ipcRenderer.invoke('app-close-confirmed'),
+
   // Greaseweazle
+  gwPickExe: () => ipcRenderer.invoke('gw-pick-exe'),
   gwInfo: (opts: any) => ipcRenderer.invoke('gw-info', opts),
   gwRead: (opts: any) => ipcRenderer.invoke('gw-read', opts),
   gwWrite: (opts: any, image: Uint8Array) => ipcRenderer.invoke('gw-write', opts, image),

@@ -42,11 +42,13 @@
     "files": [
       "out/**/*"
     ],
+    "asarUnpack": [
+      "**/xroar/**"
+    ],
     "win": {
       "target": [
         "nsis"
-      ],
-      "icon": "resources/icon.ico"
+      ]
     },
     "nsis": {
       "oneClick": false,

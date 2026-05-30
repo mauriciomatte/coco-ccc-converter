@@ -60,6 +60,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwDriveLabel: 'Drive',
     gwDriveDefault: 'Padrão (auto)',
     gwPathLabel: 'Caminho do gw',
+    gwBrowseBtn: 'Procurar…',
     gwExtraLabel: 'Argumentos extras',
     gwTestBtn: 'Testar (gw info)',
     gwReadBtn: 'Ler disco → Painel A',
@@ -73,6 +74,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwHintDevice: 'Porta/dispositivo da placa Greaseweazle. Deixe vazio para detecção automática; informe (ex.: COM3 no Windows, /dev/ttyACM0 no Linux) se houver mais de uma placa conectada.',
     gwHintDrive: 'Qual drive de disquete no cabo da Greaseweazle. "Padrão" deixa o gw decidir; use A/B (ou 0/1) quando há dois drives no cabo.',
     gwHintPath: 'Caminho do executável "gw" (Greaseweazle host tools). Deixe "gw" se já está no PATH; senão informe o caminho completo (ex.: C:\\gw\\gw.exe). Este valor é salvo nas configurações.',
+    gwHintPane: 'Em qual painel (A/B) a imagem lida do disco será carregada — e de qual painel a imagem será gravada no disco. Se o painel já tiver conteúdo, o app pede confirmação antes de sobrescrever (cancele para salvar antes).',
     gwHintExtra: 'Argumentos extras passados ao gw, separados por espaço. Ex.: --no-verify (pula a verificação na gravação), --retries=3, --revs=2 (mais voltas na leitura). Consulte "gw read --help" / "gw write --help".',
     gwHintActions: 'Testar: roda "gw info" para conferir a placa. Ler disco: lê o disquete físico e carrega a imagem no Painel A da aba DSK. Gravar Painel A: grava no disquete a imagem do Painel A. Gravar .dsk…: escolhe um arquivo .dsk e grava no disquete.',
     gwHintMap: 'Cada quadradinho é uma trilha (coluna) por lado (linha L0/L1). Acende em verde conforme o gw lê/grava cada trilha; a barra mostra o progresso total.',
@@ -97,6 +99,8 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolSortAll: 'Ordenar Todos os discos do contêiner',
     dskToolXroar: 'Testar painel/DSK no XRoar (drive 0)',
     dskToolXroarShort: 'Testar',
+    dskToolGw: 'Gravar painel ativo em disco físico (Greaseweazle)',
+    dskToolGwShort: 'Gravar GW',
     dskUnsaved: 'alterações não salvas',
     dskRunHint: 'Duplo-clique: rodar no XRoar',
     dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
@@ -218,6 +222,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwDriveLabel: 'Drive',
     gwDriveDefault: 'Default (auto)',
     gwPathLabel: 'gw path',
+    gwBrowseBtn: 'Browse…',
     gwExtraLabel: 'Extra arguments',
     gwTestBtn: 'Test (gw info)',
     gwReadBtn: 'Read disk → Pane A',
@@ -231,6 +236,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwHintDevice: 'Greaseweazle board port/device. Leave empty for auto-detect; set it (e.g. COM3 on Windows, /dev/ttyACM0 on Linux) if more than one board is connected.',
     gwHintDrive: 'Which floppy drive on the Greaseweazle ribbon. "Default" lets gw decide; use A/B (or 0/1) when two drives share the cable.',
     gwHintPath: 'Path to the "gw" executable (Greaseweazle host tools). Leave "gw" if it is on PATH; otherwise give the full path (e.g. C:\\gw\\gw.exe). This value is saved in settings.',
+    gwHintPane: 'Which pane (A/B) the disk image read will load into — and which pane is written back to the disk. If the pane already has content, the app asks to confirm before overwriting (cancel to save first).',
     gwHintExtra: 'Extra arguments passed to gw, space-separated. E.g. --no-verify (skip write verification), --retries=3, --revs=2 (more read revolutions). See "gw read --help" / "gw write --help".',
     gwHintActions: 'Test: runs "gw info" to check the board. Read disk: reads the physical floppy and loads the image into Pane A of the DSK tab. Write Pane A: writes Pane A\'s image to the floppy. Write .dsk…: pick a .dsk file and write it to the floppy.',
     gwHintMap: 'Each little square is a track (column) per side (row L0/L1). It turns green as gw reads/writes each track; the bar shows overall progress.',
@@ -255,6 +261,8 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolSortAll: 'Sort All container disks',
     dskToolXroar: 'Test pane/DSK in XRoar (drive 0)',
     dskToolXroarShort: 'Test',
+    dskToolGw: 'Write active pane to physical disk (Greaseweazle)',
+    dskToolGwShort: 'Write GW',
     dskUnsaved: 'unsaved changes',
     dskRunHint: 'Double-click: run in XRoar',
     dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
@@ -417,6 +425,8 @@ export default function App() {
   const [gwDevice, setGwDevice] = useState<string>('');
   const [gwDrive, setGwDrive] = useState<string>('');
   const [gwExtra, setGwExtra] = useState<string>('');
+  const [gwPane, setGwPane] = useState<'A' | 'B'>('A'); // painel-alvo da leitura GW (e usado na gravação)
+  const [gwReadConfirm, setGwReadConfirm] = useState<boolean>(false); // modal: sobrescrever painel ao ler
   const [gwBusy, setGwBusy] = useState<boolean>(false);
   const [gwOp, setGwOp] = useState<'' | 'info' | 'read' | 'write'>('');
   const [gwDone, setGwDone] = useState<Set<string>>(new Set());
@@ -436,7 +446,7 @@ export default function App() {
   const [imageBusy, setImageBusy] = useState<boolean>(false);
   const [imageFilter, setImageFilter] = useState<string>('');
   const [imageProgress, setImageProgress] = useState<any>(null); // { phase, loaded, total }
-  const dskDragItem = useRef<{ pane: 'A' | 'B'; entries: any[] } | null>(null);
+  const dskDragItem = useRef<{ pane: 'A' | 'B'; entries: any[]; srcBuffer?: Uint8Array } | null>(null);
   const dskAnchor = useRef<{ pane: 'A' | 'B'; index: number } | null>(null);
   const dskKbdRef = useRef<any>({});
   const [translations, setTranslations] = useState<Record<string, Record<string, string>>>(DEFAULT_TRANSLATIONS);
@@ -504,6 +514,13 @@ export default function App() {
     return () => { if (typeof off === 'function') off(); };
   }, []);
 
+  // O X da janela dispara o MESMO modal de "Sair" (confirma + avisa sobre salvar).
+  useEffect(() => {
+    if (!window.cocoApi || typeof window.cocoApi.onAppCloseRequest !== 'function') return;
+    const off = window.cocoApi.onAppCloseRequest(() => setIsExitModalOpen(true));
+    return () => { if (typeof off === 'function') off(); };
+  }, []);
+
   // Atalhos de teclado da aba DSK (lê os handlers atuais via ref)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -561,6 +578,7 @@ export default function App() {
             if (typeof s.gwDevice === 'string') setGwDevice(s.gwDevice);
             if (typeof s.gwDrive === 'string') setGwDrive(s.gwDrive);
             if (typeof s.gwExtra === 'string') setGwExtra(s.gwExtra);
+            if (s.gwPane === 'A' || s.gwPane === 'B') setGwPane(s.gwPane);
             if (typeof s.fillerByte === 'number') setFillerByte(s.fillerByte);
             addLog('Configurações carregadas do arquivo de configuração.', 'Settings loaded from the configuration file.', 'success');
           } else if (typeof window.cocoApi.saveConfig === 'function') {
@@ -579,9 +597,9 @@ export default function App() {
   useEffect(() => {
     if (!settingsLoaded.current) return;
     if (window.cocoApi && typeof window.cocoApi.saveConfig === 'function') {
-      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, fillerByte });
+      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte });
     }
-  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, fillerByte]);
+  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte]);
 
   const changeLanguage = (lang: 'pt-br' | 'en-us') => {
     setCurrentLang(lang);
@@ -1208,9 +1226,10 @@ export default function App() {
 
   // Inicia a adição de uma LISTA de arquivos a um painel; pergunta se houver colisões
   const beginAddBatch = (which: 'A' | 'B', files: any[]) => {
-    const pane = getPane(which);
-    if (!pane) { addLog('Abra ou crie uma imagem no painel de destino primeiro.', 'Open or create an image in the target pane first.', 'warn'); return; }
     if (!files.length) return;
+    const pane = getPane(which);
+    // Painel de destino vazio → doAddBatch cria uma imagem nova e adiciona (sem colisões).
+    if (!pane) { doAddBatch(which, files, 'add'); return; }
     const collisions = files.filter((file: any) =>
       pane.files.some((f: any) => `${f.name}.${f.ext}`.toUpperCase() === `${file.name}.${file.ext}`.toUpperCase()));
     if (collisions.length > 0) {
@@ -1223,9 +1242,17 @@ export default function App() {
   const doAddBatch = async (which: 'A' | 'B', files: any[], mode: 'add' | 'overwrite' | 'rename') => {
     setDskCollision(null);
     const pane = getPane(which);
-    if (!pane) return;
     pushDskUndo();
-    let buffer: Uint8Array = pane.buffer;
+    let buffer: Uint8Array;
+    if (pane) {
+      buffer = pane.buffer;
+    } else {
+      // Painel vazio: cria uma imagem .dsk nova para receber o(s) arquivo(s) (automatiza o passo manual).
+      const blank = await window.cocoApi.dskNewBlank();
+      if (!blank.success) { addLog(`Novo disco: ${blank.error}`, `New disk: ${blank.error}`, 'error'); return; }
+      buffer = new Uint8Array(blank.image);
+      addLog(`Imagem nova criada no painel ${which} para receber o(s) arquivo(s).`, `New image created in pane ${which} to receive the file(s).`, 'info');
+    }
     let added = 0;
     try {
       for (const file of files) {
@@ -1316,6 +1343,11 @@ export default function App() {
       const res = await window.cocoApi.pickCocoFile();
       if (res.cancelled) return;
       if (!res.success) { addLog(`Inject: ${res.error}`, `Inject: ${res.error}`, 'error'); return; }
+      if ((res.ext || '').toLowerCase() === 'cas') {
+        const items = await casToInjectables(new Uint8Array(res.data));
+        if (items.length) beginAddBatch(activePane, items);
+        return;
+      }
       beginAddBatch(activePane, [{ name: res.name, ext: res.ext, fileType: res.fileType, asciiFlag: res.asciiFlag, data: res.data }]);
     } catch (err: any) { addLog(`Inject: ${err.message}`, `Inject: ${err.message}`, 'error'); }
   };
@@ -1446,11 +1478,24 @@ export default function App() {
     finally { setImageBusy(false); setImageProgress(null); }
   };
 
+  // XRoar deduz o formato do disco pela EXTENSÃO do nome do arquivo na sua VFS.
+  // Em contêiner (DriveWire/MiniIDE/CoCoSDC) o pane.fileName é um rótulo de disco
+  // (sem .dsk, às vezes com espaços/":"), o que faz o XRoar não reconhecer o disco -> erro de I/O.
+  // Normaliza para um nome .dsk válido (o buffer já é o disco único de 160 KB).
+  const toXroarDiskName = (fn?: string): string => {
+    const base = (fn || 'disk')
+      .replace(/\.(dsk|vdk|jvc|dmk)$/i, '')
+      .replace(/[^A-Za-z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 24) || 'disk';
+    return `${base}.dsk`;
+  };
+
   // Envia o disco do painel ativo para o emulador XRoar (drive 0) e abre a aba
   const handleTestInXroar = () => {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
-    setXroarLoad({ name: pane.fileName || 'disk.dsk', ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0 });
+    setXroarLoad({ name: toXroarDiskName(pane.fileName), ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0 });
     setActiveTab('xroar');
     addLog(`Enviando "${pane.fileName}" para o XRoar (drive 0).`, `Sending "${pane.fileName}" to XRoar (drive 0).`, 'info');
   };
@@ -1462,9 +1507,12 @@ export default function App() {
     if (!pane) return;
     const cmd = f.fileType === 0 ? `RUN"${f.name}"\r` : `LOADM"${f.name}":EXEC\r`;
     setActivePane(which);
-    setXroarLoad({ name: pane.fileName || 'disk.dsk', ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
+    const diskName = toXroarDiskName(pane.fileName);
+    setXroarLoad({ name: diskName, ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
     setActiveTab('xroar');
-    addLog(`Rodando "${f.fullName}" no XRoar (drive 0)…`, `Running "${f.fullName}" in XRoar (drive 0)…`, 'info');
+    // Diagnóstico: tamanho do disco (deve ser 161280), tipo do arquivo e comando exato enviado.
+    const dbg = `disco=${diskName} ${pane.buffer.length}B${pane.container ? ` (contêiner ${pane.container.kind} #${pane.container.index})` : ''} | ${f.fullName} type=${f.fileType} | cmd=${cmd.replace(/\r/g, '\\r')}`;
+    addLog(`Rodando "${f.fullName}" no XRoar (drive 0)… [${dbg}]`, `Running "${f.fullName}" in XRoar (drive 0)… [${dbg}]`, 'info');
   };
 
   const handleDskNew = async () => {
@@ -1516,6 +1564,34 @@ export default function App() {
     return out;
   };
 
+  // Converte um .cas (fita) em arquivos prontos para injetar no .dsk:
+  //  - código de máquina (tipo 2): embrulha o payload no formato DECB binário (.BIN: 0x00/len/load … 0xFF/exec)
+  //  - BASIC (tipo 0) e dados (tipo 1): o payload já é o conteúdo de disco -> grava como está (.BAS/.DAT)
+  const casToInjectables = async (bytes: Uint8Array): Promise<any[]> => {
+    const r = await window.cocoApi.parseCasPayload(bytes);
+    if (!r.success || !r.files?.length) {
+      addLog(`CAS: ${r.error || 'nenhum arquivo na fita'}`, `CAS: ${r.error || 'no files on tape'}`, 'warn');
+      return [];
+    }
+    const sanitize = (n: string, i: number) => ((n || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || `CAS${i}`.slice(0, 8));
+    const wrapDecb = (payload: Uint8Array, load: number, exec: number): Uint8Array => {
+      const len = payload.length;
+      const out = new Uint8Array(5 + len + 5);
+      out[0] = 0x00; out[1] = (len >> 8) & 0xFF; out[2] = len & 0xFF; out[3] = (load >> 8) & 0xFF; out[4] = load & 0xFF;
+      out.set(payload, 5);
+      const t = 5 + len;
+      out[t] = 0xFF; out[t + 1] = 0x00; out[t + 2] = 0x00; out[t + 3] = (exec >> 8) & 0xFF; out[t + 4] = exec & 0xFF;
+      return out;
+    };
+    return r.files.map((f: any, i: number) => {
+      const payload = new Uint8Array(f.payload);
+      if (f.fileType === 2) {
+        return { name: sanitize(f.name, i), ext: 'BIN', fileType: 2, asciiFlag: 0, data: wrapDecb(payload, f.loadAddr, f.execAddr) };
+      }
+      return { name: sanitize(f.name, i), ext: f.fileType === 0 ? 'BAS' : 'DAT', fileType: f.fileType, asciiFlag: f.asciiFlag, data: payload };
+    });
+  };
+
   // Drop externo num painel:
   //  - painel VAZIO + .dsk  -> abre a imagem
   //  - painel COM imagem    -> importa os arquivos dos itens soltos (.dsk extrai seu conteúdo; .bin/.bas entram direto)
@@ -1527,7 +1603,8 @@ export default function App() {
     setActivePane(which);
     const arr = Array.from(fileList);
 
-    // Painel sem imagem: um .dsk solto ABRE a imagem
+    // Painel sem imagem: um .dsk solto ABRE a imagem; outros arquivos caem no fluxo de
+    // importação abaixo (que cria uma imagem .dsk nova automaticamente para recebê-los).
     if (!getPane(which)) {
       const dskFile = arr.find((f) => f.name.toLowerCase().endsWith('.dsk'));
       if (dskFile) {
@@ -1537,10 +1614,9 @@ export default function App() {
           await loadPaneFromBuffer(which, new Uint8Array(reader.result as ArrayBuffer), dskFile.name);
         };
         reader.readAsArrayBuffer(dskFile);
-      } else {
-        addLog('Abra ou crie uma imagem neste painel antes de soltar arquivos.', 'Open or create an image in this pane before dropping files.', 'warn');
+        return;
       }
-      return;
+      // sem .dsk → segue para a importação (doAddBatch cria a imagem nova)
     }
 
     // Painel COM imagem: importa o conteúdo dos itens soltos para a imagem ativa
@@ -1557,8 +1633,11 @@ export default function App() {
       const reader = new FileReader();
       reader.onload = async () => {
         const bytes = new Uint8Array(reader.result as ArrayBuffer);
-        if (file.name.toLowerCase().endsWith('.dsk')) {
+        const lower = file.name.toLowerCase();
+        if (lower.endsWith('.dsk')) {
           out.push(...await extractAllFromDsk(bytes));
+        } else if (lower.endsWith('.cas')) {
+          out.push(...await casToInjectables(bytes));
         } else {
           const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
           const base = file.name.replace(/\.[^.]*$/, '');
@@ -1598,18 +1677,32 @@ export default function App() {
   };
 
   // Drop de uma ou mais linhas arrastadas de um painel para o outro (cópia A↔B)
-  const handleDskInternalDrop = async (targetWhich: 'A' | 'B', source: { pane: 'A' | 'B'; entries: any[] }) => {
+  const handleDskInternalDrop = async (targetWhich: 'A' | 'B', source: { pane: 'A' | 'B'; entries: any[]; srcBuffer?: Uint8Array }) => {
     if (source.pane === targetWhich) return;
     const src = getPane(source.pane);
     if (!src) return;
+    // Usa o disco EXATO capturado no início do arraste (não o buffer "vivo" do painel, que pode
+    // ter mudado de disco no container). Garante que cada arquivo sai do disco onde foi visto.
+    const srcBuffer = source.srcBuffer && source.srcBuffer.length ? source.srcBuffer : src.buffer;
     setActivePane(targetWhich);
     try {
       const files: any[] = [];
       for (const entry of source.entries) {
-        const res = await window.cocoApi.dskExtractRaw(src.buffer, entry);
-        if (res.success) files.push({ name: entry.name, ext: entry.ext, fileType: entry.fileType, asciiFlag: entry.asciiFlag, data: res.data });
+        const res = await window.cocoApi.dskExtractRaw(srcBuffer, entry);
+        if (!res.success) { addLog(`Extração falhou: ${entry.fullName} — ${res.error}`, `Extract failed: ${entry.fullName} — ${res.error}`, 'error'); continue; }
+        const data: Uint8Array = res.data;
+        // Sanidade: um grânulo "vazio" (tudo 0xFF/0x00) indica disco de origem desalinhado/corrompido
+        // no container — avisa e PULA, em vez de gravar lixo na nova imagem.
+        const blank = data.length === 0 || data.every((b: number) => b === 0xFF) || data.every((b: number) => b === 0x00);
+        if (blank) {
+          addLog(`"${entry.fullName}" extraiu vazio (${data.length}B) — disco de origem do container parece desalinhado; pulando.`,
+                 `"${entry.fullName}" extracted blank (${data.length}B) — source container disk looks misaligned; skipping.`, 'warn');
+          continue;
+        }
+        files.push({ name: entry.name, ext: entry.ext, fileType: entry.fileType, asciiFlag: entry.asciiFlag, data });
       }
-      beginAddBatch(targetWhich, files);
+      if (files.length) beginAddBatch(targetWhich, files);
+      else addLog('Nenhum arquivo válido para copiar (origem vazia/corrompida).', 'No valid file to copy (source blank/corrupt).', 'warn');
     } catch (err: any) { addLog(`DSK drop: ${err.message}`, `DSK drop: ${err.message}`, 'error'); }
   };
 
@@ -1927,6 +2020,17 @@ export default function App() {
   // --- Greaseweazle (aba GW) ---
   const gwOpts = () => ({ gwPath, format: gwFormat, device: gwDevice.trim(), drive: gwDrive, extra: gwExtra.trim().split(/\s+/).filter(Boolean) });
 
+  // Abre o diálogo para localizar o gw.exe e grava no campo (persiste automaticamente).
+  const handleGwPickExe = async () => {
+    try {
+      const r = await window.cocoApi.gwPickExe();
+      if (r?.cancelled) return;
+      if (!r?.success) { addLog(`gw: ${r?.error || 'falha ao selecionar'}`, `gw: ${r?.error || 'selection failed'}`, 'error'); return; }
+      setGwPath(r.path);
+      addLog(`Caminho do gw definido: ${r.path}`, `gw path set: ${r.path}`, 'success');
+    } catch (err: any) { addLog(`gw: ${err.message}`, `gw: ${err.message}`, 'error'); }
+  };
+
   const handleGwInfo = async () => {
     setGwBusy(true); setGwOp('info');
     addLog('Greaseweazle: gw info…', 'Greaseweazle: gw info…', 'info');
@@ -1935,14 +2039,23 @@ export default function App() {
     setGwBusy(false); setGwOp('');
   };
 
-  const handleGwRead = async () => {
+  // Pede a leitura: se o painel-alvo já tem conteúdo, confirma a sobrescrita antes (permite cancelar p/ salvar).
+  const handleGwRead = () => {
+    if (getPane(gwPane)) { setGwReadConfirm(true); return; }
+    doGwRead();
+  };
+
+  const doGwRead = async () => {
+    setGwReadConfirm(false);
     setGwBusy(true); setGwOp('read'); setGwDone(new Set());
-    addLog(`Greaseweazle: lendo disco (${gwFormat})…`, `Greaseweazle: reading disk (${gwFormat})…`, 'info');
+    addLog(`Greaseweazle: lendo disco (${gwFormat}) → Painel ${gwPane}…`, `Greaseweazle: reading disk (${gwFormat}) → Pane ${gwPane}…`, 'info');
     try {
       const res = await window.cocoApi.gwRead(gwOpts());
       if (res.success) {
-        await loadPaneFromBuffer('A', new Uint8Array(res.image), `GW_READ_${gwFormat.replace(/\./g, '_')}.dsk`);
-        addLog(`Leitura concluída: ${res.size} bytes. Imagem carregada no Painel A (aba DSK) — revise e salve lá.`, `Read complete: ${res.size} bytes. Image loaded into Pane A (DSK tab) — review and save it there.`, 'success');
+        await loadPaneFromBuffer(gwPane, new Uint8Array(res.image), `GW_READ_${gwFormat.replace(/\./g, '_')}.dsk`);
+        markDirty(gwPane); // imagem lida ainda não salva em arquivo
+        setActivePane(gwPane);
+        addLog(`Leitura concluída: ${res.size} bytes. Imagem carregada no Painel ${gwPane} — revise e salve.`, `Read complete: ${res.size} bytes. Image loaded into Pane ${gwPane} — review and save.`, 'success');
       } else addLog(`Falha na leitura (código ${res.code ?? res.error}).`, `Read failed (code ${res.code ?? res.error}).`, 'error');
     } catch (err: any) { addLog(`gw read: ${err.message}`, `gw read: ${err.message}`, 'error'); }
     setGwBusy(false); setGwOp('');
@@ -1959,9 +2072,20 @@ export default function App() {
     setGwBusy(false); setGwOp('');
   };
 
-  const handleGwWritePaneA = () => {
-    if (!paneA) { addLog('Painel A (aba DSK) sem imagem.', 'Pane A (DSK tab) has no image.', 'warn'); return; }
-    doGwWrite(paneA.buffer);
+  const handleGwWritePane = () => {
+    const pane = getPane(gwPane);
+    if (!pane) { addLog(`Painel ${gwPane} sem imagem.`, `Pane ${gwPane} has no image.`, 'warn'); return; }
+    doGwWrite(pane.buffer);
+  };
+
+  // Botão "Gravar GW" da aba DSK: abre a aba GW já apontando para o painel ativo e grava-o.
+  const handleDskWriteToGw = () => {
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    setGwPane(activePane);
+    setActiveTab('gw');
+    addLog(`Gravando Painel ${activePane} no disco físico via Greaseweazle…`, `Writing Pane ${activePane} to the physical disk via Greaseweazle…`, 'info');
+    doGwWrite(pane.buffer);
   };
   const handleGwWriteFile = async () => {
     try {
@@ -2016,8 +2140,18 @@ export default function App() {
               </select>
             </label>
             <label className={labelCls}>
+              <span>{currentLang === 'pt-br' ? 'Painel destino (leitura/gravação)' : 'Target pane (read/write)'}{gwHelp('gwHintPane')}</span>
+              <select className="input-select text-xs py-1.5" value={gwPane} onChange={e => setGwPane(e.target.value as 'A' | 'B')}>
+                <option value="A">{currentLang === 'pt-br' ? 'Painel A' : 'Pane A'}</option>
+                <option value="B">{currentLang === 'pt-br' ? 'Painel B' : 'Pane B'}</option>
+              </select>
+            </label>
+            <label className={labelCls}>
               <span>{t('gwPathLabel')}{gwHelp('gwHintPath')}</span>
-              <input className={fieldCls} value={gwPath} onChange={e => setGwPath(e.target.value)} />
+              <div className="flex gap-1.5 items-center">
+                <input className={fieldCls} style={{ flex: 1, minWidth: 0 }} value={gwPath} placeholder="gw  (ou C:\\gw\\gw.exe)" onChange={e => setGwPath(e.target.value)} />
+                <button type="button" onClick={handleGwPickExe} className="dsk-tool flex-shrink-0" title={t('gwBrowseBtn')}><FolderOpen size={13} /> {t('gwBrowseBtn')}</button>
+              </div>
             </label>
             <label className={labelCls}>
               <span>{t('gwExtraLabel')}{gwHelp('gwHintExtra')}</span>
@@ -2026,8 +2160,8 @@ export default function App() {
           </div>
           <div className="flex gap-2 flex-wrap pt-1 items-center">
             <button disabled={gwBusy} onClick={handleGwInfo} className="dsk-tool"><RefreshCw size={13} className={gwBusy && gwOp === 'info' ? 'animate-spin' : ''} /> {t('gwTestBtn')}</button>
-            <button disabled={gwBusy} onClick={handleGwRead} className="dsk-tool" style={{ borderColor: 'var(--border-active)', color: 'var(--primary)' }}><Download size={13} /> {t('gwReadBtn')}</button>
-            <button disabled={gwBusy || !paneA} onClick={handleGwWritePaneA} className="dsk-tool"><Upload size={13} /> {t('gwWritePaneBtn')}</button>
+            <button disabled={gwBusy} onClick={handleGwRead} className="dsk-tool" style={{ borderColor: 'var(--border-active)', color: 'var(--primary)' }}><Download size={13} /> {currentLang === 'pt-br' ? `Ler → Painel ${gwPane}` : `Read → Pane ${gwPane}`}</button>
+            <button disabled={gwBusy || !getPane(gwPane)} onClick={handleGwWritePane} className="dsk-tool"><Upload size={13} /> {currentLang === 'pt-br' ? `Gravar Painel ${gwPane} → Disco` : `Write Pane ${gwPane} → Disk`}</button>
             <button disabled={gwBusy} onClick={handleGwWriteFile} className="dsk-tool"><Upload size={13} /> {t('gwWriteFileBtn')}</button>
             {gwHelp('gwHintActions')}
           </div>
@@ -2049,20 +2183,16 @@ export default function App() {
             </h3>
             <span className="text-[11px] font-mono text-[var(--primary)]">{gwDone.size} / {total} ({pct}%)</span>
           </div>
-          <div className="mem-bar">
-            <div className="mem-block bg-[var(--primary)]" style={{ width: `${pct}%` }} />
-            <div className="mem-block bg-slate-900" style={{ flex: 1 }} />
-          </div>
           <div className="flex flex-col gap-1.5 mt-1">
             {Array.from({ length: geo.heads }).map((_, h) => (
               <div key={h} className="flex items-center gap-2">
-                <span className="text-[9px] text-[var(--text-muted)] font-mono" style={{ width: 28 }}>L{h}</span>
-                <div className="flex flex-wrap" style={{ gap: 2 }}>
+                <span className="text-[9px] text-[var(--text-muted)] font-mono flex-shrink-0" style={{ width: 28 }}>L{h}</span>
+                <div className="flex flex-1" style={{ gap: 2 }}>
                   {Array.from({ length: geo.cyls }).map((_, c) => (
                     <div
                       key={c}
                       title={`${currentLang === 'pt-br' ? 'Trilha' : 'Track'} ${c} · ${currentLang === 'pt-br' ? 'Lado' : 'Side'} ${h}`}
-                      style={{ width: 11, height: 11 }}
+                      style={{ flex: 1, minWidth: 3, height: 13 }}
                       className={`rounded-[2px] ${gwDone.has(`${c}.${h}`) ? 'bg-[var(--primary)]' : 'bg-slate-800'}`}
                     />
                   ))}
@@ -2151,7 +2281,9 @@ export default function App() {
                       draggable
                       onDragStart={(e) => {
                         const inSel = selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName);
-                        dskDragItem.current = { pane: which, entries: inSel ? selectedDsk!.entries : [f] };
+                        // Captura o buffer do disco ATUAL no início do arraste (imune a trocar de disco no
+                        // container entre arrastar e soltar). Cada arquivo é extraído deste disco exato.
+                        dskDragItem.current = { pane: which, entries: inSel ? selectedDsk!.entries : [f], srcBuffer: pane.buffer ? new Uint8Array(pane.buffer) : undefined };
                         e.dataTransfer.effectAllowed = 'copy';
                       }}
                       onClick={(e) => handleSelectDskFile(which, f, e)}
@@ -2855,8 +2987,9 @@ export default function App() {
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /> {t('dskToolXroarShort')}</button>
-              <span className="ml-auto flex items-center gap-2">
-                {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)]">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
+              <button onClick={handleDskWriteToGw} disabled={!getPane(activePane)} title={t('dskToolGw')} aria-label={t('dskToolGw')} className="dsk-tool"><HardDrive size={15} /> {t('dskToolGwShort')}</button>
+              {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)] ml-2">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
+              <span className="ml-auto flex items-center pl-4 pr-3 -mr-3 flex-shrink-0" style={{ borderLeft: '1px solid var(--border)' }}>
                 <span
                   className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1 rounded-md text-[var(--primary)]"
                   style={{ border: '1px solid var(--primary)', boxShadow: '0 0 8px var(--primary-glow)', background: 'var(--primary-glow)' }}
@@ -3011,12 +3144,35 @@ export default function App() {
                 {t('modalCancel')}
               </button>
               <button
-                onClick={() => window.close()}
+                onClick={() => { setIsExitModalOpen(false); window.cocoApi.appCloseConfirmed(); }}
                 className="btn py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5"
                 style={{ backgroundColor: 'hsl(0, 72%, 45%)', color: '#fff' }}
               >
                 <LogOut size={13} />
                 {t('exitButton')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GW read overwrite confirmation — alerta que o painel-alvo será sobrescrito pelo disco lido */}
+      {gwReadConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setGwReadConfirm(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 420, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Sobrescrever Painel ${gwPane}?` : `Overwrite Pane ${gwPane}?`}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `O Painel ${gwPane} já contém uma imagem. A leitura do Greaseweazle vai SUBSTITUIR todo o conteúdo do Painel ${gwPane} pelo disco lido. Alterações não salvas serão perdidas — cancele para salvar antes.`
+                : `Pane ${gwPane} already contains an image. The Greaseweazle read will REPLACE all of Pane ${gwPane}'s content with the read disk. Unsaved changes will be lost — cancel to save first.`}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setGwReadConfirm(false)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={doGwRead} className="btn py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5" style={{ backgroundColor: 'hsl(30, 75%, 42%)', color: '#fff' }}>
+                <Download size={13} /> {currentLang === 'pt-br' ? `Ler e sobrescrever` : `Read and overwrite`}
               </button>
             </div>
           </div>
