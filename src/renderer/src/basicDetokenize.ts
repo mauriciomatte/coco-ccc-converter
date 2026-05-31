@@ -61,6 +61,12 @@ export function detokenizeBasic(bytes: Uint8Array): DetokResult {
     let line = `${lineNo} `;
     while (p < bytes.length && bytes[p] !== 0x00) {
       const b = bytes[p];
+      // O ':' (0x3A) gravado antes de ELSE (0x84) ou do apóstrofo-REM ' (0x83) é suprimido
+      // pelo LIST do CoCo. Ex.: ":ELSE" → "ELSE", ":'" → "'".
+      if (b === 0x3A && (bytes[p + 1] === 0x84 || bytes[p + 1] === 0x83)) {
+        p += 1; // pula o ':' implícito
+        continue;
+      }
       if (b === 0xFF && p + 1 < bytes.length) {
         const f = bytes[p + 1];
         line += FUN[f - 0x80] ?? `[?FF${hx(f)}]`;

@@ -655,6 +655,12 @@ ipcMain.handle('gw-info', async (_, opts: any) => {
   return { success: r.code === 0, code: r.code };
 });
 
+// Comando gw genérico de diagnóstico (delays, seek, etc.) — a saída aparece no log do GW.
+ipcMain.handle('gw-run', async (_, opts: any, args: string[]) => {
+  const r = await runGw(opts.gwPath, Array.isArray(args) ? args : []);
+  return { success: r.code === 0, code: r.code };
+});
+
 // Flags que só fazem sentido em GRAVAÇÃO — se ficarem no campo "Argumentos extras" (compartilhado),
 // o `gw read` as rejeita e falha (código 1). Removemos da leitura.
 function stripWriteOnlyArgs(extra: any): string[] {

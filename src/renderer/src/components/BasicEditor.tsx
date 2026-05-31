@@ -10,8 +10,14 @@ interface Props {
   onNameChange: (v: string) => void;
   pane: 'A' | 'B';
   onPaneChange: (p: 'A' | 'B') => void;
-  screen: 'green' | 'orange';
-  onScreenChange: (s: 'green' | 'orange') => void;
+  screen: string;
+  onScreenChange: (s: string) => void;
+  addNew: boolean;
+  onAddNewChange: (v: boolean) => void;
+  addRun: boolean;
+  onAddRunChange: (v: boolean) => void;
+  bold: boolean;
+  onBoldChange: (v: boolean) => void;
   // Roda o programa no XRoar. reset=true força hard-reset (boot limpo) antes de digitar.
   onRun: (program: string, reset: boolean) => void;
   // Salva como .BAS (ASCII) num painel do editor DSK (A/B). A confirmação fica no App.
@@ -26,21 +32,28 @@ interface Props {
   onUpdateInDsk: () => void;
 }
 
-// Cores aproximadas das telas de texto do VDG do CoCo: verde (padrão) e laranja (modo ASCII alt).
-const SCREEN_BG = { green: '#1fa81f', orange: '#e08a1e' };
+// Combinações de cores do editor (fundo/letra) selecionáveis por dropdown.
+const SCHEMES: Record<string, { bg: string; fg: string; pt: string; en: string }> = {
+  'green-black':  { bg: '#1fa81f', fg: '#000000', pt: 'Fundo Verde / Letra Preta',       en: 'Green bg / Black text' },
+  'orange-black': { bg: '#e08a1e', fg: '#000000', pt: 'Fundo Laranja / Letra Preta',     en: 'Orange bg / Black text' },
+  'black-green':  { bg: '#0a0a0a', fg: '#33d83a', pt: 'Fundo Preto / Letra Verde',       en: 'Black bg / Green text' },
+  'black-orange': { bg: '#0a0a0a', fg: '#ff9a33', pt: 'Fundo Preto / Letra Laranja',     en: 'Black bg / Orange text' },
+  'blue-white':   { bg: '#000080', fg: '#ffffff', pt: 'Fundo Azul Marinho / Letra Branca', en: 'Navy bg / White text' },
+  'black-white':  { bg: '#0a0a0a', fg: '#ffffff', pt: 'Fundo Preto / Letra Branca',      en: 'Black bg / White text' },
+};
+const schemeOf = (k: string) => SCHEMES[k] || SCHEMES['green-black'];
 
 // Editor de BASIC do Color Computer: texto livre, SEMPRE em maiúsculas (o Color BASIC não
 // aceita minúsculas), com toolbar (abrir/salvar/recortar/copiar/colar/procurar/substituir),
 // injeção no XRoar e gravação como .BAS (ASCII) num painel DSK.
 export default function BasicEditor({
   lang, text, onTextChange, name, onNameChange, pane, onPaneChange, screen, onScreenChange,
+  addNew, onAddNewChange, addRun, onAddRunChange, bold, onBoldChange,
   onRun, onSaveToDisk, onSaveTextFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  const [addNew, setAddNew] = useState(true);   // prepende NEW antes de digitar (limpa programa anterior)
-  const [addRun, setAddRun] = useState(true);   // anexa RUN ao final (roda automaticamente)
   const [findOpen, setFindOpen] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
   const [findStr, setFindStr] = useState('');
@@ -217,7 +230,7 @@ export default function BasicEditor({
         </div>
       )}
 
-      {/* Textarea (digitação livre, sempre maiúscula, tela verde/laranja do VDG) */}
+      {/* Textarea (digitação livre, sempre maiúscula; cores conforme o esquema selecionado) */}
       <textarea
         ref={taRef}
         value={text}
@@ -226,22 +239,28 @@ export default function BasicEditor({
         autoCapitalize="characters"
         placeholder={'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}
         className="flex-1 w-full p-3 font-mono text-sm leading-relaxed resize-none outline-none rounded-lg"
-        style={{ minHeight: 0, color: '#000', fontWeight: 700, textTransform: 'uppercase', background: SCREEN_BG[screen], border: '2px solid rgba(0,0,0,0.35)', caretColor: '#000' }}
+        style={{ minHeight: 0, color: schemeOf(screen).fg, fontWeight: bold ? 700 : 400, textTransform: 'uppercase', background: schemeOf(screen).bg, border: '2px solid rgba(0,0,0,0.35)', caretColor: schemeOf(screen).fg }}
       />
 
-      {/* Footer: opções + contadores */}
+      {/* Footer: opções + esquema de cores + contadores */}
       <div className="flex items-center gap-4 mt-2 text-[10px] text-[var(--text-secondary)] flex-wrap flex-shrink-0">
         <label className="flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" checked={addNew} onChange={e => setAddNew(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+          <input type="checkbox" checked={addNew} onChange={e => onAddNewChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('NEW antes de injetar', 'NEW before injecting')}
         </label>
         <label className="flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" checked={addRun} onChange={e => setAddRun(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+          <input type="checkbox" checked={addRun} onChange={e => onAddRunChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('RUN ao final', 'RUN at the end')}
         </label>
-        <label className="flex items-center gap-1.5 cursor-pointer">
-          <input type="checkbox" checked={screen === 'orange'} onChange={e => onScreenChange(e.target.checked ? 'orange' : 'green')} style={{ accentColor: '#e08a1e' }} />
-          {t('Tela laranja (ASCII)', 'Orange screen (ASCII)')}
+        <label className="flex items-center gap-1.5">
+          <span className="font-semibold">{t('Cores', 'Colors')}:</span>
+          <select value={screen} onChange={e => onScreenChange(e.target.value)} className="input-select text-[11px] py-0.5">
+            {Object.keys(SCHEMES).map(k => <option key={k} value={k}>{t(SCHEMES[k].pt, SCHEMES[k].en)}</option>)}
+          </select>
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Texto em negrito', 'Bold text')}>
+          <input type="checkbox" checked={bold} onChange={e => onBoldChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+          {t('Negrito', 'Bold')}
         </label>
         <div className="flex-1" />
         <span className="font-mono">{lineCount} {t('linhas', 'lines')} · {text.length} {t('chars', 'chars')}</span>

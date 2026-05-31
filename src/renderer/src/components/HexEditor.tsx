@@ -5,9 +5,16 @@ interface HexEditorProps {
   onChange?: (newBuffer: Uint8Array) => void;
   baseAddress?: number;
   t: (key: string) => string;
+  // Reporta o endereço do topo visível ao rolar — usado para sincronizar o disassembly ao lado.
+  onViewportChange?: (topAddress: number) => void;
+  // Reporta o offset selecionado (clique/seta/busca) — usado para destacar ASCII e disassembly.
+  onSelect?: (offset: number | null) => void;
+  // Reporta o INTERVALO selecionado [start,end] (shift+clique) — usado p/ marcar código/dados no disasm.
+  onRangeChange?: (start: number, end: number) => void;
 }
 
-export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }: HexEditorProps) {
+export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t, onViewportChange, onSelect, onRangeChange }: HexEditorProps) {
+  const [rangeEnd, setRangeEnd] = useState<number | null>(null); // fim do intervalo (shift+clique); null = seleção única
   const [columns, setColumns] = useState<number>(16);
   const [selectedOffset, setSelectedOffset] = useState<number | null>(null);
   const [editingPart, setEditingPart] = useState<'hex' | 'ascii' | null>(null);
@@ -19,12 +26,41 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
 
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Focus container for keyboard control
+  // Focus container for keyboard control + mantém a célula selecionada visível (setas).
   useEffect(() => {
     if (selectedOffset !== null && containerRef.current) {
       containerRef.current.focus();
+      const sel = containerRef.current.querySelector('.hex-cell.selected') as HTMLElement | null;
+      if (sel) sel.scrollIntoView({ block: 'nearest' });
     }
   }, [selectedOffset]);
+
+  // Reporta a seleção para o pai (destaque sincronizado no ASCII e no disassembly).
+  useEffect(() => { onSelect?.(selectedOffset); }, [selectedOffset]);
+
+  // Reporta o intervalo selecionado [start,end] (para marcação código/dados no disassembly).
+  useEffect(() => {
+    if (selectedOffset === null) { onRangeChange?.(-1, -1); return; }
+    const b = rangeEnd ?? selectedOffset;
+    onRangeChange?.(Math.min(selectedOffset, b), Math.max(selectedOffset, b));
+  }, [selectedOffset, rangeEnd]);
+
+  // Clique numa célula: shift+clique estende o intervalo a partir do cursor; clique normal = única.
+  const selectCell = (e: React.MouseEvent, offset: number, part: 'hex' | 'ascii') => {
+    if (e.shiftKey && selectedOffset !== null) {
+      setRangeEnd(offset);
+    } else {
+      setSelectedOffset(offset);
+      setRangeEnd(null);
+      setEditingPart(part);
+      setEditNibble(0);
+    }
+  };
+  const inSel = (offset: number) => {
+    if (selectedOffset === null) return false;
+    const b = rangeEnd ?? selectedOffset;
+    return offset >= Math.min(selectedOffset, b) && offset <= Math.max(selectedOffset, b);
+  };
 
   // Handle byte edits
   const updateByte = (offset: number, value: number) => {
@@ -172,7 +208,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
 
   // Character cell renderer for standard and VDG modes
   const renderChar = (byte: number, offset: number, isHovered: boolean, isSelected: boolean) => {
-    const isEditing = editingPart === 'ascii' && isSelected;
+    const isEditing = editingPart === 'ascii' && selectedOffset === offset;
     
     // Search highlight check
     let isSearchHighlight = false;
@@ -215,10 +251,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
           <span
             key={`ascii-${offset}`}
             className={`${baseClass} coco-char-control`}
-            onClick={() => {
-              setSelectedOffset(offset);
-              setEditingPart('ascii');
-            }}
+            onClick={(e) => selectCell(e, offset, 'ascii')}
           >
             {isEditing ? '_' : `.`}
           </span>
@@ -231,10 +264,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
             key={`ascii-${offset}`}
             className={baseClass}
             style={{ color: useOrange ? 'var(--vdg-orange-bg)' : 'var(--vdg-green-bg)', fontWeight: 'bold' }}
-            onClick={() => {
-              setSelectedOffset(offset);
-              setEditingPart('ascii');
-            }}
+            onClick={(e) => selectCell(e, offset, 'ascii')}
           >
             {isEditing ? '_' : charStr}
           </span>
@@ -246,10 +276,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
           <span
             key={`ascii-${offset}`}
             className={`${baseClass} ${useOrange ? 'coco-char-inverse-orange' : 'coco-char-inverse'}`}
-            onClick={() => {
-              setSelectedOffset(offset);
-              setEditingPart('ascii');
-            }}
+            onClick={(e) => selectCell(e, offset, 'ascii')}
           >
             {isEditing ? '_' : charStr}
           </span>
@@ -268,10 +295,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
           <span
             key={`ascii-${offset}`}
             className={`${baseClass} coco-char-graphics`}
-            onClick={() => {
-              setSelectedOffset(offset);
-              setEditingPart('ascii');
-            }}
+            onClick={(e) => selectCell(e, offset, 'ascii')}
             title={`Semigraphics $${byte.toString(16).toUpperCase()}`}
           >
             {/* Top Left */}
@@ -301,7 +325,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
   }
 
   return (
-    <div className="hex-editor-wrapper h-full flex flex-col">
+    <div className="hex-editor-wrapper flex-1 min-h-0 flex flex-col">
       {/* Editor toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-4 p-4 border-b border-[var(--border)] bg-slate-900/40">
         <div className="flex items-center gap-3">
@@ -353,7 +377,15 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
         ref={containerRef}
         tabIndex={0}
         onKeyDown={handleKeyDown}
-        className="flex-1 overflow-y-auto p-4 font-mono select-none outline-none bg-slate-950/20"
+        onScroll={(e) => {
+          if (!onViewportChange) return;
+          const el = e.currentTarget;
+          const denom = el.scrollHeight - el.clientHeight;
+          const frac = denom > 0 ? el.scrollTop / denom : 0;
+          const topByte = Math.round(frac * Math.max(0, buffer.length - 1));
+          onViewportChange(baseAddress + topByte);
+        }}
+        className="flex-1 min-h-0 overflow-auto p-4 font-mono select-none outline-none bg-slate-950/20"
       >
         <table className="w-full border-collapse">
           <thead>
@@ -376,8 +408,8 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
                   {/* Hex bytes */}
                   <td className="py-1 text-left pl-2 select-none">
                     {line.map((offset) => {
-                      const isSelected = selectedOffset === offset;
-                      const isEditing = editingPart === 'hex' && isSelected;
+                      const isSelected = inSel(offset);
+                      const isEditing = editingPart === 'hex' && selectedOffset === offset;
                       const isHovered = selectedOffset === offset;
                       const byte = buffer[offset];
                       
@@ -399,11 +431,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
                             ${isEditing ? 'editing bg-[var(--secondary)] text-white' : ''}
                             ${isSearchHighlight && !isSelected ? 'border-b-2 border-cyan-400 bg-cyan-950/40 text-cyan-200' : ''}
                           `}
-                          onClick={() => {
-                            setSelectedOffset(offset);
-                            setEditingPart('hex');
-                            setEditNibble(0);
-                          }}
+                          onClick={(e) => selectCell(e, offset, 'hex')}
                         >
                           {isEditing && editNibble === 1
                             ? (byte >> 4).toString(16).toUpperCase() + '_'
@@ -423,7 +451,7 @@ export default function HexEditor({ buffer, onChange, baseAddress = 0x0000, t }:
                   <td className="py-1 pl-4 border-l border-[var(--border)] whitespace-nowrap select-none">
                     {line.map((offset) => {
                       const byte = buffer[offset];
-                      const isSelected = selectedOffset === offset;
+                      const isSelected = inSel(offset);
                       const isHovered = selectedOffset === offset;
                       return renderChar(byte, offset, isHovered, isSelected);
                     })}

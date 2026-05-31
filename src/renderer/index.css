@@ -176,7 +176,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: var(--text-secondary);
-  background: rgba(255, 255, 255, 0.03);
+  background: transparent;
   border: 1px solid var(--border);
   cursor: pointer;
   transition: all 0.15s ease;
@@ -299,7 +299,7 @@ body {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.04);
+  background: transparent;
   color: var(--text-primary);
   border: 1px solid var(--border);
 }
@@ -349,7 +349,7 @@ body {
 .hex-editor-wrapper {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  min-height: 0; /* deixa o corpo (flex-1 overflow-auto) rolar; altura vem do flex, não de % */
   overflow: hidden;
 }
 
@@ -405,8 +405,10 @@ body {
 }
 
 .coco-char.selected {
-  background: var(--primary) !important;
-  color: hsl(225, 60%, 4%) !important;
+  /* Laranja para o destaque do ASCII se diferenciar do texto verde da tela VDG. */
+  background: #ff8c1a !important;
+  color: #000 !important;
+  box-shadow: 0 0 8px rgba(255, 140, 26, 0.75);
 }
 
 /* Standard Mode CoCo 1 & 2 Green screen:
@@ -558,6 +560,35 @@ body {
 .cursor-pointer { cursor: pointer; }
 .outline-none { outline: none; }
 .whitespace-nowrap { white-space: nowrap; }
+.whitespace-pre { white-space: pre; }
+
+/* Utilitários que faltavam neste polyfill (sem Tailwind no projeto). Sem eles, classes como
+   min-h-0/overflow-auto/bg-transparent/mb-2/justify-end/flex-shrink-0 NÃO aplicavam nada. */
+.flex-row { flex-direction: row; }
+.flex-shrink-0 { flex-shrink: 0; }
+.min-h-0 { min-height: 0; }
+.min-w-0 { min-width: 0; }
+.overflow-auto { overflow: auto; }
+.items-end { align-items: flex-end; }
+.justify-end { justify-content: flex-end; }
+.bg-transparent { background-color: transparent; }
+.leading-tight { line-height: 1.25; }
+.leading-relaxed { line-height: 1.6; }
+.rounded-sm { border-radius: 2px; }
+.font-extrabold { font-weight: 800; }
+.pt-1 { padding-top: 4px; }
+.pt-1\.5 { padding-top: 6px; }
+.pb-1 { padding-bottom: 4px; }
+.pb-3 { padding-bottom: 12px; }
+.px-1 { padding-left: 4px; padding-right: 4px; }
+.px-2\.5 { padding-left: 10px; padding-right: 10px; }
+.py-1\.5 { padding-top: 6px; padding-bottom: 6px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-3 { margin-bottom: 12px; }
+.ml-1 { margin-left: 4px; }
+.ml-2 { margin-left: 8px; }
+.ml-auto { margin-left: auto; }
+.border-r { border-right: 1px solid var(--border); }
 
 .border-b { border-bottom: 1px solid var(--border); }
 .border-t { border-top: 1px solid var(--border); }

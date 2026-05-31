@@ -95,6 +95,7 @@ const api = {
   // Greaseweazle
   gwPickExe: () => ipcRenderer.invoke('gw-pick-exe'),
   gwInfo: (opts: any) => ipcRenderer.invoke('gw-info', opts),
+  gwRun: (opts: any, args: string[]) => ipcRenderer.invoke('gw-run', opts, args),
   gwRead: (opts: any) => ipcRenderer.invoke('gw-read', opts),
   gwWrite: (opts: any, image: Uint8Array) => ipcRenderer.invoke('gw-write', opts, image),
   onGwLog: (cb: (line: string) => void) => {

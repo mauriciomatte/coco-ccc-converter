@@ -34,12 +34,14 @@ import {
   Search,
   X,
   MonitorPlay,
-  FileCode2
+  FileCode2,
+  Eraser
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
 import { detokenizeBasic } from './basicDetokenize';
+import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
 
 interface LogMessage {
   time: string;
@@ -84,6 +86,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwHintExtra: 'Argumentos extras passados ao gw, separados por espaço. Ex.: --no-verify (pula a verificação na gravação), --retries=3, --revs=2 (mais voltas na leitura). Consulte "gw read --help" / "gw write --help".',
     gwHintDirect: 'Comando direto: quando preenchido, o app IGNORA formato/dispositivo/drive/extras e usa SOMENTE esta linha como argumentos do gw (o caminho do arquivo temporário é acrescentado automaticamente no final). Ex.: "read --format coco.decb --device COM7 --drive 0 --revs 3". Não é salvo nas configurações.',
     gwHintActions: 'Testar: roda "gw info" para conferir a placa. Ler disco: lê o disquete físico e carrega a imagem no Painel A da aba DSK. Gravar Painel A: grava no disquete a imagem do Painel A. Gravar .dsk…: escolhe um arquivo .dsk e grava no disquete.',
+    gwHintDiag: 'Diagnóstico do drive (saída no log abaixo). "Testar seek" roda "gw seek 0" para exercitar/recalibrar a cabeça — útil contra erros de seek/Track0. "Ver tempos" roda "gw delays" e mostra os tempos atuais (e suas unidades). "Step (µs)" + "Aplicar step" roda "gw delays --step" para alargar o atraso entre passos da cabeça (aumente para ~8000–12000 em drives lentos); o valor fica salvo no dispositivo.',
     gwHintMap: 'Cada quadradinho é uma trilha (coluna) por lado (linha L0/L1). Acende em verde conforme o gw lê/grava cada trilha; a barra mostra o progresso total.',
     exitConfirmTitle: 'Sair do aplicativo?',
     exitConfirmMsg: 'Alterações não salvas em imagens .DSK ou conversões serão perdidas. Deseja realmente sair?',
@@ -252,6 +255,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwHintExtra: 'Extra arguments passed to gw, space-separated. E.g. --no-verify (skip write verification), --retries=3, --revs=2 (more read revolutions). See "gw read --help" / "gw write --help".',
     gwHintDirect: 'Direct command: when filled, the app IGNORES format/device/drive/extras and uses ONLY this line as the gw arguments (the temp file path is appended automatically at the end). E.g. "read --format coco.decb --device COM7 --drive 0 --revs 3". Not saved in settings.',
     gwHintActions: 'Test: runs "gw info" to check the board. Read disk: reads the physical floppy and loads the image into Pane A of the DSK tab. Write Pane A: writes Pane A\'s image to the floppy. Write .dsk…: pick a .dsk file and write it to the floppy.',
+    gwHintDiag: 'Drive diagnostics (output in the log below). "Seek test" runs "gw seek 0" to exercise/recalibrate the head — useful against seek/Track0 errors. "Show delays" runs "gw delays" and prints the current timings (and their units). "Step (µs)" + "Apply step" runs "gw delays --step" to widen the delay between head steps (raise to ~8000–12000 for slow drives); the value is stored on the device.',
     gwHintMap: 'Each little square is a track (column) per side (row L0/L1). It turns green as gw reads/writes each track; the bar shows overall progress.',
     exitConfirmTitle: 'Quit the application?',
     exitConfirmMsg: 'Unsaved changes to .DSK images or conversions will be lost. Do you really want to quit?',
@@ -437,7 +441,10 @@ export default function App() {
   const [basicText, setBasicText] = useState<string>('');
   const [basicName, setBasicName] = useState<string>('');
   const [basicPane, setBasicPane] = useState<'A' | 'B'>('A');          // painel DSK destino do .BAS
-  const [basicScreen, setBasicScreen] = useState<'green' | 'orange'>('green'); // cor da "tela" do editor
+  const [basicScreen, setBasicScreen] = useState<string>('green-black'); // esquema de cores (fundo/letra) do editor
+  const [basicAddNew, setBasicAddNew] = useState<boolean>(true);       // prepende NEW ao injetar
+  const [basicAddRun, setBasicAddRun] = useState<boolean>(true);       // anexa RUN ao injetar
+  const [basicBold, setBasicBold] = useState<boolean>(true);          // fonte do editor em negrito
   // Origem do programa aberto no editor (se veio de um arquivo num DSK) — habilita o "Salvar" in-place.
   // Guarda também a identidade do disco (nome + índice no contêiner) p/ detectar troca de imagem.
   type BasicSrc = { pane: 'A' | 'B'; entry: any; diskName?: string; containerIndex?: number };
@@ -457,6 +464,7 @@ export default function App() {
   const [gwDrive, setGwDrive] = useState<string>('');
   const [gwExtra, setGwExtra] = useState<string>('');
   const [gwDirect, setGwDirect] = useState<string>(''); // comando direto (NÃO persistente): substitui todos os args construídos
+  const [gwStep, setGwStep] = useState<string>('3000'); // step delay (µs) p/ "gw delays --step" (diagnóstico do drive)
   const [gwPane, setGwPane] = useState<'A' | 'B'>('A'); // painel-alvo da leitura GW (e usado na gravação)
   const [gwReadConfirm, setGwReadConfirm] = useState<boolean>(false); // modal: sobrescrever painel ao ler
   const [dskGwConfirm, setDskGwConfirm] = useState<boolean>(false); // modal: confirmar gravação no GW a partir da aba DSK
@@ -518,9 +526,34 @@ export default function App() {
 
   // Estados do Modal do Sub-editor Hexadecimal
   const [isHexModalOpen, setIsHexModalOpen] = useState<boolean>(false);
+  const [showDisasm, setShowDisasm] = useState<boolean>(true);    // painel de disassembly 6809 (sempre aberto junto do hexa)
+  const [disasmWidth, setDisasmWidth] = useState<number>(420);    // largura do painel disasm (split ajustável)
+  const [disasmOrigin, setDisasmOrigin] = useState<string>('');   // endereço de origem (hex) p/ o disassembly
+  const [disasmFlow, setDisasmFlow] = useState<boolean>(true);    // seguir fluxo (recursive-descent) vs linear
+  const disasmPreRef = useRef<HTMLDivElement>(null);              // contêiner do disassembly (p/ rolagem sincronizada)
+  const disasmLinesRef = useRef<DisasmLine[]>([]);                // linhas atuais do disassembly
+  const [hexSel, setHexSel] = useState<number | null>(null);     // offset selecionado no hexa (destaca ASCII + disasm)
+  const [hexRange, setHexRange] = useState<[number, number]>([-1, -1]); // intervalo selecionado no hexa (p/ marcar)
+  const [disasmData, setDisasmData] = useState<Array<[number, number]>>([]); // intervalos marcados como DADOS
+  const [disasmCode, setDisasmCode] = useState<number[]>([]);    // offsets marcados como entrada de CÓDIGO
+  // Painéis rolam de forma autônoma; ao selecionar um byte no hexa, traz a instrução
+  // correspondente do disassembly para a vista (só rola se estiver fora da tela) e destaca.
+  useEffect(() => {
+    if (!showDisasm || hexSel == null) return;
+    const pre = disasmPreRef.current; const lines = disasmLinesRef.current;
+    if (!pre || !lines.length) return;
+    const origin = (parseInt(disasmOrigin, 16) || loadAddr || 0) & 0xFFFF;
+    const target = origin + hexSel;
+    const idx = lines.findIndex(l => target >= l.addr && target < l.addr + l.bytes.length);
+    if (idx < 0) return;
+    const child = pre.children[idx] as HTMLElement | undefined;
+    if (child) child.scrollIntoView({ block: 'nearest' });
+  }, [hexSel, showDisasm, disasmOrigin, loadAddr]);
   const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
   const [modalBuffer, setModalBuffer] = useState<Uint8Array | null>(null);
   const [modalFileName, setModalFileName] = useState<string>('');
+  // Novo arquivo aberto no modal → limpa as marcações de código/dados do disassembly.
+  useEffect(() => { setDisasmData([]); setDisasmCode([]); }, [modalFileName]);
 
   // Resultados de compilação
   const [compiledRom, setCompiledRom] = useState<Uint8Array | null>(null);
@@ -617,7 +650,11 @@ export default function App() {
             if (typeof s.basicText === 'string') setBasicText(s.basicText);
             if (typeof s.basicName === 'string') setBasicName(s.basicName);
             if (s.basicPane === 'A' || s.basicPane === 'B') setBasicPane(s.basicPane);
-            if (s.basicScreen === 'green' || s.basicScreen === 'orange') setBasicScreen(s.basicScreen);
+            if (typeof s.basicScreen === 'string') setBasicScreen(s.basicScreen === 'green' ? 'green-black' : s.basicScreen === 'orange' ? 'orange-black' : s.basicScreen);
+            if (typeof s.basicAddNew === 'boolean') setBasicAddNew(s.basicAddNew);
+            if (typeof s.basicAddRun === 'boolean') setBasicAddRun(s.basicAddRun);
+            if (typeof s.basicBold === 'boolean') setBasicBold(s.basicBold);
+            if (typeof s.gwStep === 'string') setGwStep(s.gwStep);
             addLog('Configurações carregadas do arquivo de configuração.', 'Settings loaded from the configuration file.', 'success');
           } else if (typeof window.cocoApi.saveConfig === 'function') {
             await window.cocoApi.saveConfig({ currentLang: 'pt-br', gwPath: 'gw', gwFormat: 'coco.decb', gwDevice: '', gwDrive: '', gwExtra: '', fillerByte: 0xFF });
@@ -635,9 +672,9 @@ export default function App() {
   useEffect(() => {
     if (!settingsLoaded.current) return;
     if (window.cocoApi && typeof window.cocoApi.saveConfig === 'function') {
-      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen });
+      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep });
     }
-  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen]);
+  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep]);
 
   const changeLanguage = (lang: 'pt-br' | 'en-us') => {
     setCurrentLang(lang);
@@ -1737,6 +1774,14 @@ export default function App() {
     } catch (err: any) { addLog(`Editar BAS: ${err.message}`, `Edit BAS: ${err.message}`, 'error'); }
   };
 
+  // Limpa um painel (volta ao estado de app recém-aberto para aquele painel).
+  const handleClearPane = (which: 'A' | 'B') => {
+    setPane(which, null);
+    if (selectedDsk?.pane === which) setSelectedDsk(null);
+    clearDirty(which);
+    addLog(`Painel ${which} limpo.`, `Pane ${which} cleared.`, 'info');
+  };
+
   // "Novo" disco: se o painel ativo já tem uma imagem carregada, confirma antes (vai descartá-la).
   const handleDskNew = () => {
     if (getPane(activePane)) { setDskNewConfirm(activePane); return; }
@@ -2052,6 +2097,24 @@ export default function App() {
     document.addEventListener('mouseup', stopDrag);
   };
 
+  // Split vertical entre o hexa/ASCII e o painel de disassembly (arrasta p/ esquerda = disasm mais largo).
+  const startResizingDisasm = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    setIsResizing(true);
+    const startX = mouseDownEvent.clientX;
+    const startWidth = disasmWidth;
+    const doDrag = (e: MouseEvent) => {
+      setDisasmWidth(Math.max(240, Math.min(900, startWidth + (startX - e.clientX))));
+    };
+    const stopDrag = () => {
+      setIsResizing(false);
+      document.removeEventListener('mousemove', doDrag);
+      document.removeEventListener('mouseup', stopDrag);
+    };
+    document.addEventListener('mousemove', doDrag);
+    document.addEventListener('mouseup', stopDrag);
+  };
+
   // Executa a montagem e compilação do Cartucho EPROM
   const handleCompile = async () => {
     if (!extractedPayload) {
@@ -2289,6 +2352,23 @@ export default function App() {
     setGwBusy(false); setGwOp('');
   };
 
+  // Diagnóstico do drive: roda comandos gw avulsos (delays/seek), com --device se preenchido.
+  const gwDiag = async (args: string[], ptMsg: string, enMsg: string) => {
+    setGwBusy(true); setGwOp('info');
+    addLog(ptMsg, enMsg, 'info');
+    const full = [...args, ...(gwDevice.trim() ? ['--device', gwDevice.trim()] : [])];
+    const r = await window.cocoApi.gwRun({ gwPath }, full);
+    if (!r.success) addLog(`gw ${args[0]} falhou (código ${r.code}).`, `gw ${args[0]} failed (code ${r.code}).`, 'warn');
+    setGwBusy(false); setGwOp('');
+  };
+  const handleGwShowDelays = () => gwDiag(['delays'], 'Greaseweazle: lendo tempos do drive (gw delays)…', 'Greaseweazle: reading drive timings (gw delays)…');
+  const handleGwSetStep = () => {
+    const v = parseInt(gwStep, 10);
+    if (!Number.isFinite(v) || v <= 0) { addLog('Step inválido (informe µs, ex.: 3000).', 'Invalid step (enter µs, e.g. 3000).', 'warn'); return; }
+    gwDiag(['delays', '--step', String(v)], `Greaseweazle: ajustando step para ${v} µs…`, `Greaseweazle: setting step to ${v} µs…`);
+  };
+  const handleGwSeekTest = () => gwDiag(['seek', ...(gwDrive ? ['--drive', gwDrive] : ['--drive', '0']), '0'], 'Greaseweazle: teste de seek (recalibrar trilha 0)…', 'Greaseweazle: seek test (recalibrate track 0)…');
+
   // Pede a leitura: se o painel-alvo já tem conteúdo, confirma a sobrescrita antes (permite cancelar p/ salvar).
   const handleGwRead = () => {
     if (getPane(gwPane)) { setGwReadConfirm(true); return; }
@@ -2305,6 +2385,7 @@ export default function App() {
         await loadPaneFromBuffer(gwPane, new Uint8Array(res.image), `GW_READ_${gwFormat.replace(/\./g, '_')}.dsk`);
         markDirty(gwPane); // imagem lida ainda não salva em arquivo
         setActivePane(gwPane);
+        setActiveTab('dsk'); // leitura OK → vai para a aba DSK com o painel-alvo focado
         addLog(`Leitura concluída: ${res.size} bytes. Imagem carregada no Painel ${gwPane} — revise e salve.`, `Read complete: ${res.size} bytes. Image loaded into Pane ${gwPane} — review and save.`, 'success');
       } else addLog(`Falha na leitura (código ${res.code ?? res.error}).`, `Read failed (code ${res.code ?? res.error}).`, 'error');
     } catch (err: any) { addLog(`gw read: ${err.message}`, `gw read: ${err.message}`, 'error'); }
@@ -2429,6 +2510,15 @@ export default function App() {
             <button disabled={gwBusy} onClick={handleGwWriteFile} className="dsk-tool"><Upload size={13} /> {t('gwWriteFileBtn')}</button>
             {gwHelp('gwHintActions')}
           </div>
+          {/* Diagnóstico / ajuste do drive — útil quando o seek/verify falha (ver saga GW). */}
+          <div className="flex gap-2 flex-wrap items-center pt-1 border-t border-[var(--border)] mt-1">
+            <span className="text-[10px] uppercase tracking-wider font-bold text-[var(--text-muted)] flex items-center">{currentLang === 'pt-br' ? 'Diagnóstico do drive' : 'Drive diagnostics'}{gwHelp('gwHintDiag')}</span>
+            <button disabled={gwBusy} onClick={handleGwSeekTest} className="dsk-tool" title={currentLang === 'pt-br' ? 'gw seek 0 — testa o movimento da cabeça / recalibra' : 'gw seek 0 — test head movement / recalibrate'}><RefreshCw size={13} className={gwBusy && gwOp === 'info' ? 'animate-spin' : ''} /> {currentLang === 'pt-br' ? 'Testar seek' : 'Seek test'}</button>
+            <button disabled={gwBusy} onClick={handleGwShowDelays} className="dsk-tool" title="gw delays">{currentLang === 'pt-br' ? 'Ver tempos' : 'Show delays'}</button>
+            <span className="text-[10px] text-[var(--text-secondary)] font-semibold ml-1">Step (µs):</span>
+            <input value={gwStep} onChange={e => setGwStep(e.target.value.replace(/[^0-9]/g, ''))} className="input-text py-1 text-xs" style={{ width: 70 }} placeholder="3000" title={currentLang === 'pt-br' ? 'Atraso entre passos da cabeça (µs). Aumente (ex.: 8000–12000) para drives lentos.' : 'Delay between head steps (µs). Increase (e.g. 8000–12000) for slow drives.'} />
+            <button disabled={gwBusy} onClick={handleGwSetStep} className="dsk-tool" title="gw delays --step">{currentLang === 'pt-br' ? 'Aplicar step' : 'Apply step'}</button>
+          </div>
           {activeHint && activeHint.startsWith('gwHint') ? (
             <div className="text-[10px] text-[var(--text-secondary)] bg-slate-950/60 p-2.5 rounded-lg border border-[var(--primary)]/30 leading-relaxed flex gap-2 items-start animate-slideup">
               <HelpCircle size={12} className="text-[var(--primary)] mt-0.5 flex-shrink-0" />
@@ -2495,9 +2585,27 @@ export default function App() {
         <div className="flex-1 flex flex-row overflow-hidden" style={{ minHeight: 0 }}>
           {/* Left: open + image info */}
           <div className="flex flex-col gap-2 p-3 border-r border-[var(--border)] flex-shrink-0" style={{ width: 200 }}>
-            <div className="flex items-center gap-2">
-              <span className="step-badge">{which}</span>
-              <span className="text-xs font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Imagem' : 'Image'} {which}</span>
+            <div className="flex items-center justify-center gap-2">
+              {/* Badge PAINEL A/B — brilho laranja quando o painel está ativo (distingue ativo/inativo) */}
+              <span
+                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
+                style={which === activePane
+                  ? { color: '#000', background: '#ff8c1a', border: '1px solid #ff8c1a', boxShadow: '0 0 10px rgba(255,140,26,0.8)' }
+                  : { color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
+              >
+                {currentLang === 'pt-br' ? 'Painel' : 'Pane'} {which}
+              </span>
+              {/* Limpar painel (somente ícone) — sempre visível; volta ao estado recém-aberto */}
+              <button
+                onClick={(e) => { e.stopPropagation(); handleClearPane(which); }}
+                disabled={!pane}
+                className="dsk-tool"
+                style={{ padding: '4px 6px' }}
+                title={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`}
+                aria-label={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`}
+              >
+                <Eraser size={14} />
+              </button>
             </div>
             <button
               onClick={() => handleImageImport(which)}
@@ -2563,7 +2671,10 @@ export default function App() {
                       onClick={(e) => handleSelectDskFile(which, f, e)}
                       onDoubleClick={() => handleRunFileInXroar(which, f)}
                       title={t('dskRunHint')}
-                      className={`cursor-pointer border-b border-[var(--border)]/40 hover:bg-slate-800 ${selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName) ? 'bg-cyan-950/40 text-cyan-300 font-semibold' : 'text-[var(--text-secondary)]'}`}
+                      className={`cursor-pointer border-b border-[var(--border)]/40 hover:bg-slate-800 ${selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName) ? 'font-semibold' : 'text-[var(--text-secondary)]'}`}
+                      style={selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName)
+                        ? { background: 'rgba(255,140,26,0.16)', boxShadow: 'inset 0 0 8px rgba(255,140,26,0.45)', color: '#ffb066' }
+                        : undefined}
                     >
                       <td className="p-2 font-mono">{f.name}</td>
                       <td className="p-2 text-center">{f.ext}</td>
@@ -2645,13 +2756,17 @@ export default function App() {
 
         {/* Global Toolbar (hex editor + language + exit) */}
         <div className="flex items-center gap-3 bg-slate-900/40 border border-[var(--border)] p-1.5 px-3 rounded-xl backdrop-blur-md">
-          {/* Hex Editor (global) */}
+          {/* Hex Editor (global) — escuro quando fechado, verde quando o modal está aberto */}
           <button
             onClick={handleOpenHexEditor}
-            className="px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer text-[var(--primary)] border border-[var(--primary)]/30 bg-[var(--primary-glow)] hover:bg-[var(--primary)] hover:text-slate-950"
+            className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
+              isHexModalOpen
+                ? 'bg-[var(--primary)] text-slate-950 shadow-[0_0_10px_var(--primary-glow)] font-extrabold'
+                : 'bg-transparent text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
+            }`}
             title={t('hexEditorBtn')}
           >
-            <Binary size={13} /> HEX
+            <Binary size={13} /> HEX/DISASM
           </button>
           <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
 
@@ -2661,22 +2776,22 @@ export default function App() {
             className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
               currentLang === 'pt-br'
                 ? 'bg-[var(--primary)] text-slate-950 shadow-[0_0_10px_var(--primary-glow)] font-extrabold'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
+                : 'bg-transparent text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
             }`}
             title="Português (Brasil)"
           >
-            <span>🇧🇷</span> BR
+            BR
           </button>
           <button
             onClick={() => changeLanguage('en-us')}
             className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
               currentLang === 'en-us'
                 ? 'bg-[var(--primary)] text-slate-950 shadow-[0_0_10px_var(--primary-glow)] font-extrabold'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
+                : 'bg-transparent text-[var(--text-secondary)] hover:text-white hover:bg-slate-800/50'
             }`}
             title="English (United States)"
           >
-            <span>🇺🇸</span> US
+            US
           </button>
 
           {/* Divider */}
@@ -3248,6 +3363,12 @@ export default function App() {
             onPaneChange={setBasicPane}
             screen={basicScreen}
             onScreenChange={setBasicScreen}
+            addNew={basicAddNew}
+            onAddNewChange={setBasicAddNew}
+            addRun={basicAddRun}
+            onAddRunChange={setBasicAddRun}
+            bold={basicBold}
+            onBoldChange={setBasicBold}
             onRun={handleBasicRun}
             onSaveToDisk={handleBasicSaveToDisk}
             onSaveTextFile={handleBasicSaveTextFile}
@@ -3398,7 +3519,7 @@ export default function App() {
       {/* Floating Sub-editor Hexadecimal Modal Overlay */}
       {isHexModalOpen && modalBuffer && (
         <div className="glass-modal-overlay" onClick={() => { setHexEditTarget(null); setIsHexModalOpen(false); }}>
-          <div className="glass-modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="glass-modal-content" onClick={(e) => e.stopPropagation()} style={showDisasm ? { maxWidth: 1400, width: '96vw' } : undefined}>
             <div className="flex justify-between items-center px-6 py-4 border-b border-[var(--border-active)] bg-slate-900/80">
               <div className="flex items-center gap-3">
                 <Binary className="text-[var(--primary)] glow-text-primary" size={20} />
@@ -3418,16 +3539,103 @@ export default function App() {
                 {t('modalClose')}
               </button>
             </div>
-            
-            <div className="flex-1 overflow-hidden">
-              <HexEditor 
-                buffer={modalBuffer}
-                onChange={(newBuf) => {
-                  setModalBuffer(newBuf);
-                }}
-                baseAddress={loadAddr}
-                t={t}
-              />
+
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-row">
+              <div className="flex-1 min-h-0 overflow-hidden flex flex-col" style={{ minWidth: 0 }}>
+                <HexEditor
+                  buffer={modalBuffer}
+                  onChange={(newBuf) => {
+                    setModalBuffer(newBuf);
+                  }}
+                  baseAddress={loadAddr}
+                  t={t}
+                  onSelect={setHexSel}
+                  onRangeChange={(s, e) => setHexRange([s, e])}
+                />
+              </div>
+              {showDisasm && (
+                <div
+                  onMouseDown={startResizingDisasm}
+                  className="flex-shrink-0"
+                  style={{ width: 6, cursor: 'col-resize', background: 'var(--border-active)' }}
+                  title={currentLang === 'pt-br' ? 'Arraste para redimensionar' : 'Drag to resize'}
+                />
+              )}
+              {showDisasm && (() => {
+                const origin = (parseInt(disasmOrigin, 16) || loadAddr || 0) & 0xFFFF;
+                const lines = disasmFlow ? disassembleSmart(modalBuffer, origin, [execAddr], { dataRanges: disasmData, codeOffsets: disasmCode }) : disassemble(modalBuffer, origin);
+                disasmLinesRef.current = lines;
+                return (
+                  <div className="flex flex-col min-h-0 flex-shrink-0" style={{ width: disasmWidth, minWidth: 240 }}>
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] bg-slate-900/70 flex-shrink-0">
+                      <Cpu size={13} className="text-[var(--primary)]" />
+                      <span className="text-[10px] uppercase font-bold text-[var(--primary)] tracking-wider">ASM 6809</span>
+                      <label className="text-[10px] text-[var(--text-secondary)] flex items-center gap-1 cursor-pointer ml-2" title={currentLang === 'pt-br' ? 'Segue o fluxo a partir do ponto de execução; o que não é código vira dados/strings (FCB/FCC). Desmarque p/ desmontagem linear.' : 'Follows flow from the exec point; non-code becomes data/strings (FCB/FCC). Uncheck for linear disassembly.'}>
+                        <input type="checkbox" checked={disasmFlow} onChange={e => setDisasmFlow(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+                        {currentLang === 'pt-br' ? 'Seguir fluxo' : 'Follow flow'}
+                      </label>
+                      <span className="text-[10px] text-[var(--text-secondary)] ml-auto">{currentLang === 'pt-br' ? 'Origem $' : 'Origin $'}</span>
+                      <input
+                        value={disasmOrigin}
+                        onChange={e => setDisasmOrigin(e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 4).toUpperCase())}
+                        placeholder={(loadAddr || 0).toString(16).toUpperCase().padStart(4, '0')}
+                        className="input-text py-0.5 text-[11px] font-mono text-center"
+                        style={{ width: 64 }}
+                        title={currentLang === 'pt-br' ? 'Endereço de carga (hex) onde o código começa. Padrão = endereço de carga do .BIN.' : 'Load address (hex) where code starts. Default = .BIN load address.'}
+                      />
+                    </div>
+                    {/* Marcação manual (Fase 3): selecione bytes no hexa (clique + shift-clique) e marque. */}
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-[var(--border)] bg-slate-950/40 flex-shrink-0 flex-wrap">
+                      <span className="text-[9px] uppercase text-[var(--text-muted)] tracking-wider">{currentLang === 'pt-br' ? 'Marcar sel.:' : 'Mark sel.:'}</span>
+                      <button
+                        onClick={() => { if (hexRange[0] >= 0) setDisasmData(d => [...d, [hexRange[0], hexRange[1]]]); }}
+                        disabled={hexRange[0] < 0}
+                        className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
+                        title={currentLang === 'pt-br' ? 'Força a seleção a ser tratada como DADOS (FCB/FCC)' : 'Force selection to be treated as DATA (FCB/FCC)'}
+                      >{currentLang === 'pt-br' ? 'Dados' : 'Data'}</button>
+                      <button
+                        onClick={() => { if (hexRange[0] >= 0) setDisasmCode(c => [...c, hexRange[0]]); }}
+                        disabled={hexRange[0] < 0}
+                        className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
+                        title={currentLang === 'pt-br' ? 'Força o início da seleção a ser tratado como CÓDIGO (entrada do disassembly)' : 'Force the selection start to be treated as CODE (disassembly entry)'}
+                      >{currentLang === 'pt-br' ? 'Código' : 'Code'}</button>
+                      <button
+                        onClick={() => { setDisasmData([]); setDisasmCode([]); }}
+                        disabled={!disasmData.length && !disasmCode.length}
+                        className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
+                        title={currentLang === 'pt-br' ? 'Remove todas as marcações' : 'Clear all marks'}
+                      >{currentLang === 'pt-br' ? 'Limpar' : 'Clear'}</button>
+                      <span className="text-[9px] text-[var(--text-muted)] ml-1">
+                        {hexRange[0] >= 0
+                          ? `$${(origin + hexRange[0]).toString(16).toUpperCase().padStart(4, '0')}–$${(origin + hexRange[1]).toString(16).toUpperCase().padStart(4, '0')}`
+                          : (currentLang === 'pt-br' ? '(clique/shift-clique no hexa)' : '(click/shift-click in hex)')}
+                        {(disasmData.length || disasmCode.length) ? ` · ${disasmData.length}D/${disasmCode.length}C` : ''}
+                      </span>
+                    </div>
+                    <div ref={disasmPreRef} className="flex-1 min-h-0 overflow-auto p-2 text-[11px] font-mono leading-tight select-text" style={{ color: 'var(--text-secondary)' }}>
+                      {lines.map((l, k) => {
+                        // destaca a instrução cujo intervalo de bytes contém o offset selecionado no hexa
+                        const sel = hexSel != null && (origin + hexSel) >= l.addr && (origin + hexSel) < l.addr + l.bytes.length;
+                        return (
+                          <div
+                            key={k}
+                            data-disasm-addr={l.addr}
+                            className="whitespace-pre px-1 rounded-sm"
+                            style={sel ? { background: '#ff8c1a', color: '#000', fontWeight: 700 } : undefined}
+                          >
+                            {formatLine(l)}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="px-3 py-1.5 border-t border-[var(--border)] bg-slate-950/40 text-[9px] text-[var(--text-muted)] flex-shrink-0">
+                      {currentLang === 'pt-br'
+                        ? 'Disassembly linear (somente leitura). Trechos de dados/strings aparecem como instruções — confira a coluna ASCII do hexa ao lado.'
+                        : 'Linear disassembly (read-only). Data/strings show up as instructions — cross-check the hex ASCII column.'}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
             
             <div className="flex justify-end gap-3 px-6 py-4 border-t border-[var(--border)] bg-slate-950/40">
