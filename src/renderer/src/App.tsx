@@ -33,10 +33,13 @@ import {
   Database,
   Search,
   X,
-  MonitorPlay
+  MonitorPlay,
+  FileCode2
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
+import BasicEditor from './components/BasicEditor';
+import { detokenizeBasic } from './basicDetokenize';
 
 interface LogMessage {
   time: string;
@@ -52,6 +55,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     tabDsk: 'DSK',
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
+    tabBasic: 'BASIC',
     hexEditorBtn: 'Editor Hexadecimal',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Leitura/Gravação de Discos Reais',
@@ -62,6 +66,8 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwPathLabel: 'Caminho do gw',
     gwBrowseBtn: 'Procurar…',
     gwExtraLabel: 'Argumentos extras',
+    gwDirectLabel: 'Comando direto (opcional)',
+    gwUsePaneLabel: 'Use o Painel:',
     gwTestBtn: 'Testar (gw info)',
     gwReadBtn: 'Ler disco → Painel A',
     gwWritePaneBtn: 'Gravar Painel A → disco',
@@ -76,6 +82,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwHintPath: 'Caminho do executável "gw" (Greaseweazle host tools). Deixe "gw" se já está no PATH; senão informe o caminho completo (ex.: C:\\gw\\gw.exe). Este valor é salvo nas configurações.',
     gwHintPane: 'Em qual painel (A/B) a imagem lida do disco será carregada — e de qual painel a imagem será gravada no disco. Se o painel já tiver conteúdo, o app pede confirmação antes de sobrescrever (cancele para salvar antes).',
     gwHintExtra: 'Argumentos extras passados ao gw, separados por espaço. Ex.: --no-verify (pula a verificação na gravação), --retries=3, --revs=2 (mais voltas na leitura). Consulte "gw read --help" / "gw write --help".',
+    gwHintDirect: 'Comando direto: quando preenchido, o app IGNORA formato/dispositivo/drive/extras e usa SOMENTE esta linha como argumentos do gw (o caminho do arquivo temporário é acrescentado automaticamente no final). Ex.: "read --format coco.decb --device COM7 --drive 0 --revs 3". Não é salvo nas configurações.',
     gwHintActions: 'Testar: roda "gw info" para conferir a placa. Ler disco: lê o disquete físico e carrega a imagem no Painel A da aba DSK. Gravar Painel A: grava no disquete a imagem do Painel A. Gravar .dsk…: escolhe um arquivo .dsk e grava no disquete.',
     gwHintMap: 'Cada quadradinho é uma trilha (coluna) por lado (linha L0/L1). Acende em verde conforme o gw lê/grava cada trilha; a barra mostra o progresso total.',
     exitConfirmTitle: 'Sair do aplicativo?',
@@ -98,13 +105,14 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolSort: 'Ordenar A-Z (disco ativo)',
     dskToolSortAll: 'Ordenar Todos os discos do contêiner',
     dskToolXroar: 'Testar painel/DSK no XRoar (drive 0)',
-    dskToolXroarShort: 'Testar',
+    dskToolXroarShort: 'Testar Painel',
     dskToolGw: 'Gravar painel ativo em disco físico (Greaseweazle)',
     dskToolGwShort: 'Gravar GW',
     dskUnsaved: 'alterações não salvas',
     dskRunHint: 'Duplo-clique: rodar no XRoar',
     dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
     dskToolSave: 'Salvar',
+    dskToolSaveAs: 'Salvar Como',
     dskActivePane: 'Painel ativo',
     imgBrowserTitle: 'Navegador de imagem',
     imgFilterPlaceholder: 'Filtrar discos/arquivos…',
@@ -143,6 +151,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskColSize: 'Tamanho',
     dskColGran: 'Grân.',
     dskColTracks: 'Trilhas',
+    dskColKind: 'Formato',
     casBlocksTitle: 'Blocos CAS Demodulados',
     extractedPayloadButton: 'Ver/Editar Programa Extraído',
     exportBinButton: 'Exportar Executável (.BIN)',
@@ -214,6 +223,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     tabDsk: 'DSK',
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
+    tabBasic: 'BASIC',
     hexEditorBtn: 'Hex Editor',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Read/Write Real Disks',
@@ -224,6 +234,8 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwPathLabel: 'gw path',
     gwBrowseBtn: 'Browse…',
     gwExtraLabel: 'Extra arguments',
+    gwDirectLabel: 'Direct command (optional)',
+    gwUsePaneLabel: 'Use pane:',
     gwTestBtn: 'Test (gw info)',
     gwReadBtn: 'Read disk → Pane A',
     gwWritePaneBtn: 'Write Pane A → disk',
@@ -238,6 +250,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     gwHintPath: 'Path to the "gw" executable (Greaseweazle host tools). Leave "gw" if it is on PATH; otherwise give the full path (e.g. C:\\gw\\gw.exe). This value is saved in settings.',
     gwHintPane: 'Which pane (A/B) the disk image read will load into — and which pane is written back to the disk. If the pane already has content, the app asks to confirm before overwriting (cancel to save first).',
     gwHintExtra: 'Extra arguments passed to gw, space-separated. E.g. --no-verify (skip write verification), --retries=3, --revs=2 (more read revolutions). See "gw read --help" / "gw write --help".',
+    gwHintDirect: 'Direct command: when filled, the app IGNORES format/device/drive/extras and uses ONLY this line as the gw arguments (the temp file path is appended automatically at the end). E.g. "read --format coco.decb --device COM7 --drive 0 --revs 3". Not saved in settings.',
     gwHintActions: 'Test: runs "gw info" to check the board. Read disk: reads the physical floppy and loads the image into Pane A of the DSK tab. Write Pane A: writes Pane A\'s image to the floppy. Write .dsk…: pick a .dsk file and write it to the floppy.',
     gwHintMap: 'Each little square is a track (column) per side (row L0/L1). It turns green as gw reads/writes each track; the bar shows overall progress.',
     exitConfirmTitle: 'Quit the application?',
@@ -260,13 +273,14 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolSort: 'Sort A-Z (active disk)',
     dskToolSortAll: 'Sort All container disks',
     dskToolXroar: 'Test pane/DSK in XRoar (drive 0)',
-    dskToolXroarShort: 'Test',
+    dskToolXroarShort: 'Test Pane',
     dskToolGw: 'Write active pane to physical disk (Greaseweazle)',
     dskToolGwShort: 'Write GW',
     dskUnsaved: 'unsaved changes',
     dskRunHint: 'Double-click: run in XRoar',
     dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
     dskToolSave: 'Save',
+    dskToolSaveAs: 'Save As',
     dskActivePane: 'Active pane',
     imgBrowserTitle: 'Image browser',
     imgFilterPlaceholder: 'Filter disks/files…',
@@ -305,6 +319,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskColName: 'Name',
     dskColType: 'Type',
     dskColSize: 'Size',
+    dskColKind: 'Format',
     casBlocksTitle: 'Demodulated CAS Blocks',
     extractedPayloadButton: 'View/Edit Extracted Program',
     exportBinButton: 'Export Executable (.BIN)',
@@ -414,8 +429,24 @@ function fileTracks(entry: any): string {
 export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
-  const [activeTab, setActiveTab] = useState<'dsk' | 'xroar' | 'gw' | 'eprom'>('dsk');
+  const [activeTab, setActiveTab] = useState<'dsk' | 'xroar' | 'gw' | 'basic' | 'eprom'>('dsk');
   const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string } | null>(null);
+  // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
+  const [xroarType, setXroarType] = useState<{ text: string; key: number; reset?: boolean } | null>(null);
+  // Editor BASIC: conteúdo e nome do arquivo persistem mesmo ao trocar de aba.
+  const [basicText, setBasicText] = useState<string>('');
+  const [basicName, setBasicName] = useState<string>('');
+  const [basicPane, setBasicPane] = useState<'A' | 'B'>('A');          // painel DSK destino do .BAS
+  const [basicScreen, setBasicScreen] = useState<'green' | 'orange'>('green'); // cor da "tela" do editor
+  // Origem do programa aberto no editor (se veio de um arquivo num DSK) — habilita o "Salvar" in-place.
+  // Guarda também a identidade do disco (nome + índice no contêiner) p/ detectar troca de imagem.
+  type BasicSrc = { pane: 'A' | 'B'; entry: any; diskName?: string; containerIndex?: number };
+  const [basicSource, setBasicSource] = useState<BasicSrc | null>(null);
+  // Modais do editor BASIC
+  const [basicSaveConfirm, setBasicSaveConfirm] = useState<{ name: string; program: string; pane: 'A' | 'B' } | null>(null);
+  const [basicOpenPending, setBasicOpenPending] = useState<{ text: string; label: string; source: BasicSrc | null; name: string } | null>(null);
+  // Modal: o arquivo de origem sumiu / disco foi trocado ao tentar "Salvar" in-place.
+  const [basicUpdateConfirm, setBasicUpdateConfirm] = useState<{ which: 'A' | 'B'; name: string; reason: 'missing' | 'diskChanged' } | null>(null);
   const [dskDirty, setDskDirty] = useState<{ A: boolean; B: boolean }>({ A: false, B: false }); // alterações não salvas por painel
   const [consoleMax, setConsoleMax] = useState<boolean>(false);
 
@@ -425,8 +456,11 @@ export default function App() {
   const [gwDevice, setGwDevice] = useState<string>('');
   const [gwDrive, setGwDrive] = useState<string>('');
   const [gwExtra, setGwExtra] = useState<string>('');
+  const [gwDirect, setGwDirect] = useState<string>(''); // comando direto (NÃO persistente): substitui todos os args construídos
   const [gwPane, setGwPane] = useState<'A' | 'B'>('A'); // painel-alvo da leitura GW (e usado na gravação)
   const [gwReadConfirm, setGwReadConfirm] = useState<boolean>(false); // modal: sobrescrever painel ao ler
+  const [dskGwConfirm, setDskGwConfirm] = useState<boolean>(false); // modal: confirmar gravação no GW a partir da aba DSK
+  const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
   const [gwBusy, setGwBusy] = useState<boolean>(false);
   const [gwOp, setGwOp] = useState<'' | 'info' | 'read' | 'write'>('');
   const [gwDone, setGwDone] = useState<Set<string>>(new Set());
@@ -441,7 +475,7 @@ export default function App() {
   const [dskCollision, setDskCollision] = useState<any>(null); // pending add awaiting overwrite/rename/cancel
   const [dskUndo, setDskUndo] = useState<any[]>([]); // pilha de snapshots {A,B}
   const [dskRedo, setDskRedo] = useState<any[]>([]);
-  const [dskTopHeight, setDskTopHeight] = useState<number>(280);
+  const [dskTopHeight, setDskTopHeight] = useState<number>(266); // -5% para dar folga à barra de ferramentas do DSK
   const [diskPicker, setDiskPicker] = useState<{ which: 'A' | 'B' } | null>(null); // modal de busca/salto de disco do contêiner
   const [imageBusy, setImageBusy] = useState<boolean>(false);
   const [imageFilter, setImageFilter] = useState<string>('');
@@ -580,6 +614,10 @@ export default function App() {
             if (typeof s.gwExtra === 'string') setGwExtra(s.gwExtra);
             if (s.gwPane === 'A' || s.gwPane === 'B') setGwPane(s.gwPane);
             if (typeof s.fillerByte === 'number') setFillerByte(s.fillerByte);
+            if (typeof s.basicText === 'string') setBasicText(s.basicText);
+            if (typeof s.basicName === 'string') setBasicName(s.basicName);
+            if (s.basicPane === 'A' || s.basicPane === 'B') setBasicPane(s.basicPane);
+            if (s.basicScreen === 'green' || s.basicScreen === 'orange') setBasicScreen(s.basicScreen);
             addLog('Configurações carregadas do arquivo de configuração.', 'Settings loaded from the configuration file.', 'success');
           } else if (typeof window.cocoApi.saveConfig === 'function') {
             await window.cocoApi.saveConfig({ currentLang: 'pt-br', gwPath: 'gw', gwFormat: 'coco.decb', gwDevice: '', gwDrive: '', gwExtra: '', fillerByte: 0xFF });
@@ -597,9 +635,9 @@ export default function App() {
   useEffect(() => {
     if (!settingsLoaded.current) return;
     if (window.cocoApi && typeof window.cocoApi.saveConfig === 'function') {
-      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte });
+      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen });
     }
-  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte]);
+  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen]);
 
   const changeLanguage = (lang: 'pt-br' | 'en-us') => {
     setCurrentLang(lang);
@@ -1090,7 +1128,7 @@ export default function App() {
       const res = await window.cocoApi.openDskPane();
       if (res.cancelled) return;
       if (!res.success) { addLog(`DSK ${which}: ${res.error}`, `DSK ${which}: ${res.error}`, 'error'); return; }
-      await loadPaneFromBuffer(which, new Uint8Array(res.buffer), res.fileName);
+      await loadPaneFromBuffer(which, new Uint8Array(res.buffer), res.fileName, 0, res.filePath);
       setActivePane(which);
       if (selectedDsk?.pane === which) setSelectedDsk(null);
     } catch (err: any) { addLog(`DSK open: ${err.message}`, `DSK open: ${err.message}`, 'error'); }
@@ -1125,7 +1163,7 @@ export default function App() {
   const STD_DISK = 161280; // disco RS-DOS padrão (35 trilhas)
 
   // Carrega uma imagem nova num painel; detecta contêiner multi-disco (N x 161280) e mostra o disco 0
-  const loadPaneFromBuffer = async (which: 'A' | 'B', full: Uint8Array, fileName: string, index = 0): Promise<boolean> => {
+  const loadPaneFromBuffer = async (which: 'A' | 'B', full: Uint8Array, fileName: string, index = 0, sourcePath?: string): Promise<boolean> => {
     let count = (full.length > 0 && full.length % STD_DISK === 0) ? full.length / STD_DISK : 1;
     if (count > 1) {
       // Um arquivo múltiplo de 161.280 pode ser um contêiner multi-disco OU um disco único
@@ -1139,6 +1177,8 @@ export default function App() {
     if (!res.success) { addLog(`DSK: ${res.error}`, `DSK: ${res.error}`, 'error'); return false; }
     setPane(which, {
       buffer: slice, fileName, size: slice.length,
+      // Caminho do arquivo de origem só para imagem ÚNICA (não-contêiner) → habilita "Salvar" (sobrescrever).
+      sourcePath: count > 1 ? undefined : sourcePath,
       files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
       container: count > 1 ? {
         source: 'memory', kind: 'driveWire', full, count, index,
@@ -1204,6 +1244,7 @@ export default function App() {
       buffer: image,
       fileName: fileName ?? prev.fileName ?? (which === 'A' ? 'NOVO_A.DSK' : 'NOVO_B.DSK'),
       size: size ?? image.length,
+      sourcePath: prev.sourcePath, // preserva o caminho de origem para o "Salvar" (sobrescrever)
       files: res.files,
       freeGranules: res.freeGranules,
       totalGranules: res.totalGranules,
@@ -1451,7 +1492,7 @@ export default function App() {
       if (res.kind === 'dsk') {
         // .dsk simples ou contêiner DriveWire (em memória; passa pelo guard de contêiner)
         const ex = await window.cocoApi.imageExtract(res.filePath, { kind: 'dsk' });
-        if (ex.success) { if (selectedDsk?.pane === which) setSelectedDsk(null); await loadPaneFromBuffer(which, new Uint8Array(ex.image), res.fileName); setActivePane(which); }
+        if (ex.success) { if (selectedDsk?.pane === which) setSelectedDsk(null); await loadPaneFromBuffer(which, new Uint8Array(ex.image), res.fileName, 0, res.filePath); setActivePane(which); }
         else addLog(`Imagem: ${ex.error}`, `Image: ${ex.error}`, 'error');
         return;
       }
@@ -1515,18 +1556,207 @@ export default function App() {
     addLog(`Rodando "${f.fullName}" no XRoar (drive 0)… [${dbg}]`, `Running "${f.fullName}" in XRoar (drive 0)… [${dbg}]`, 'info');
   };
 
-  const handleDskNew = async () => {
+  // Aba BASIC: injeta o programa digitado no XRoar (via type_string). reset=true reinicia
+  // o emulador para garantir o prompt OK mesmo se algo estiver rodando.
+  const handleBasicRun = (program: string, reset: boolean) => {
+    if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    setActiveTab('xroar');
+    setXroarType({ text: program, key: Date.now(), reset });
+    addLog(
+      reset ? 'BASIC → XRoar: reiniciando e digitando o programa…' : 'BASIC → XRoar: digitando o programa no prompt…',
+      reset ? 'BASIC → XRoar: resetting and typing the program…' : 'BASIC → XRoar: typing the program at the prompt…',
+      'info'
+    );
+  };
+
+  // Converte o texto do editor para bytes ASCII BASIC (maiúsculas, linhas terminadas em CR 0x0D),
+  // como um SAVE"…",A faria no CoCo.
+  const basicTextToAsciiBytes = (program: string): Uint8Array => {
+    let ascii = program.toUpperCase().replace(/\r\n/g, '\n').replace(/\n/g, '\r');
+    if (ascii.length && !ascii.endsWith('\r')) ascii += '\r';
+    const data = new Uint8Array(ascii.length);
+    for (let i = 0; i < ascii.length; i++) data[i] = ascii.charCodeAt(i) & 0xFF;
+    return data;
+  };
+
+  // Lê bytes de um arquivo .BAS e devolve o texto editável. Tokenizado (binário) não é suportado.
+  const decodeBasToText = (bytes: Uint8Array, asciiFlag?: number): { text: string; tokenized: boolean } => {
+    let printable = 0, total = 0;
+    for (let i = 0; i < bytes.length; i++) {
+      const b = bytes[i];
+      if (b === 0x00) continue; // padding / terminador
+      total++;
+      if ((b >= 0x20 && b < 0x7F) || b === 0x0D || b === 0x0A || b === 0x09) printable++;
+    }
+    const ratio = total ? printable / total : 1;
+    const tokenized = (asciiFlag === 0 && ratio < 0.95) || ratio < 0.85;
+    if (tokenized) {
+      // Tokenizado → tenta detokenizar (Color/Extended/Disk BASIC). Se conseguir, vira texto editável.
+      const d = detokenizeBasic(bytes);
+      if (d.ok) return { text: d.text.toUpperCase(), tokenized: false };
+      return { text: '', tokenized: true };
+    }
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) { const b = bytes[i]; if (b !== 0x00) s += String.fromCharCode(b); }
+    s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').toUpperCase().replace(/\s+$/, '');
+    return { text: s, tokenized: false };
+  };
+
+  // Aba BASIC: grava o texto como .BAS ASCII (tipo 0, flag 0xFF) num painel DSK (A/B). O CoCo
+  // carrega esse formato com LOAD"NOME" (re-tokeniza na carga) — sem precisar tokenizar aqui.
+  // Se o painel de destino já tiver um disco com arquivos, pede confirmação antes.
+  const handleBasicSaveToDisk = (name: string, program: string) => {
+    if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    const pane = getPane(basicPane);
+    if (pane && pane.files && pane.files.length) {
+      setBasicSaveConfirm({ name, program, pane: basicPane });
+    } else {
+      doBasicSaveToDisk(name, program, basicPane);
+    }
+  };
+  const doBasicSaveToDisk = (name: string, program: string, pane: 'A' | 'B') => {
+    setBasicSaveConfirm(null);
+    beginAddBatch(pane, [{ name, ext: 'BAS', fileType: 0, asciiFlag: 0xFF, data: basicTextToAsciiBytes(program) }]);
+  };
+
+  // Aba BASIC: salva o programa como ARQUIVO DE TEXTO (.bas) no sistema de arquivos.
+  const handleBasicSaveTextFile = async (name: string, program: string) => {
+    if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    try {
+      const data = basicTextToAsciiBytes(program);
+      const res = await window.cocoApi.saveCartridgeFile(
+        data, `${name}.bas`,
+        currentLang === 'pt-br' ? 'Salvar programa BASIC (texto)' : 'Save BASIC program (text)',
+        [{ name: 'BASIC Text (.bas)', extensions: ['bas'] }, { name: 'Text (.txt)', extensions: ['txt'] }, { name: 'All Files', extensions: ['*'] }]
+      );
+      if (res.success) addLog(`Programa BASIC salvo em: ${res.filePath}`, `BASIC program saved at: ${res.filePath}`, 'success');
+      else if (res.error) addLog(`Salvar .BAS: ${res.error}`, `Save .BAS: ${res.error}`, 'error');
+    } catch (err: any) { addLog(`Salvar .BAS: ${err.message}`, `Save .BAS: ${err.message}`, 'error'); }
+  };
+
+  // Carrega texto no editor BASIC; se o editor já tiver conteúdo, pede confirmação (apaga o atual).
+  // source != null quando o programa veio de um arquivo num DSK (habilita o "Salvar" in-place).
+  // Nome sugerido a partir da origem (arquivo do painel ou do sistema) → preenche o campo PRG-NOME.
+  const suggestNameFrom = (source: BasicSrc | null, label: string): string => {
+    const base = source?.entry?.name ? String(source.entry.name) : label.replace(/\.[^.]*$/, '');
+    return base.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  };
+  const requestLoadBasic = (newText: string, label: string, source: BasicSrc | null = null) => {
+    const name = suggestNameFrom(source, label);
+    if (basicText.trim()) { setBasicOpenPending({ text: newText, label, source, name }); return; }
+    setBasicText(newText);
+    setBasicSource(source);
+    if (name) setBasicName(name);
+    setActiveTab('basic');
+    addLog(`"${label}" aberto no editor BASIC.`, `"${label}" opened in the BASIC editor.`, 'success');
+  };
+  const applyBasicOpen = () => {
+    if (!basicOpenPending) return;
+    setBasicText(basicOpenPending.text);
+    setBasicSource(basicOpenPending.source);
+    if (basicOpenPending.name) setBasicName(basicOpenPending.name);
+    setActiveTab('basic');
+    addLog(`"${basicOpenPending.label}" aberto no editor BASIC (conteúdo anterior substituído).`, `"${basicOpenPending.label}" opened in the BASIC editor (previous content replaced).`, 'success');
+    setBasicOpenPending(null);
+  };
+
+  // Atualiza o arquivo .BAS DENTRO da imagem DSK de onde foi aberto (in-place). Apaga a versão
+  // antiga (libera granules na FAT) e regrava a nova (aloca granules livres) — outros arquivos
+  // do disco ficam intactos. Se faltar espaço, nada é comitado (o original é preservado).
+  const handleBasicUpdateInDsk = async () => {
+    if (!basicSource) return;
+    const { pane: which, entry } = basicSource;
+    const pane = getPane(which);
+    if (!pane) { addLog(`Painel ${which} de origem não está mais carregado.`, `Source pane ${which} is no longer loaded.`, 'warn'); return; }
+    if (!basicText.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    // A imagem/disco do painel mudou desde que o arquivo foi aberto?
+    const diskChanged = (pane.fileName !== basicSource.diskName) || ((pane.container?.index ?? -1) !== (basicSource.containerIndex ?? -1));
+    if (diskChanged) { setBasicUpdateConfirm({ which, name: entry.fullName, reason: 'diskChanged' }); return; }
+    // O arquivo ainda existe no disco atual?
+    try {
+      const dir = await window.cocoApi.readDskDirectory(pane.buffer);
+      const exists = dir.success && dir.files.some((f: any) => `${f.name}.${f.ext}`.toUpperCase() === `${entry.name}.${entry.ext}`.toUpperCase());
+      if (!exists) { setBasicUpdateConfirm({ which, name: entry.fullName, reason: 'missing' }); return; }
+    } catch { setBasicUpdateConfirm({ which, name: entry.fullName, reason: 'missing' }); return; }
+    doBasicUpdateCommit(which, entry);
+  };
+
+  // Grava de fato a versão atual do editor sobre o arquivo de origem (delete + add).
+  const doBasicUpdateCommit = async (which: 'A' | 'B', entry: any) => {
+    setBasicUpdateConfirm(null);
+    const pane = getPane(which);
+    if (!pane) return;
+    pushDskUndo();
+    try {
+      const data = basicTextToAsciiBytes(basicText);
+      const del = await window.cocoApi.dskDeleteFile(pane.buffer, entry);
+      const buffer = del.success ? del.image : pane.buffer;
+      const res = await window.cocoApi.dskAddBytes(buffer, entry.name, entry.ext, entry.fileType ?? 0, 0xFF, data);
+      if (res.success) {
+        await refreshPane(which, res.image);
+        markDirty(which);
+        addLog(`"${entry.fullName}" atualizado na imagem do Painel ${which}. Lembre-se de salvar a imagem (.DSK).`,
+               `"${entry.fullName}" updated in Pane ${which}'s image. Remember to save the .DSK image.`, 'success');
+      } else {
+        // dskAddBytes operou num buffer local; como NÃO chamamos refreshPane, o painel mantém o original.
+        addLog(`Atualizar "${entry.fullName}": ${res.error} (provável falta de espaço — o arquivo original foi preservado).`,
+               `Update "${entry.fullName}": ${res.error} (likely out of space — the original file was preserved).`, 'error');
+      }
+    } catch (err: any) { addLog(`Atualizar BAS: ${err.message}`, `Update BAS: ${err.message}`, 'error'); }
+  };
+
+  // Aba BASIC: abre um arquivo de texto (.bas/.txt) do sistema de arquivos no editor.
+  const handleBasicOpenTextFile = async () => {
+    try {
+      const f = await window.cocoApi.selectFile();
+      if (!f) return;
+      const { text, tokenized } = decodeBasToText(new Uint8Array(f.buffer), 0xFF);
+      if (tokenized) { addLog(`"${f.fileName}" não parece texto (.bas tokenizado/binário). Abra um .BAS em ASCII.`, `"${f.fileName}" is not text (tokenized/binary .bas). Open an ASCII .BAS.`, 'warn'); return; }
+      // Arquivo do sistema de arquivos não tem origem em DSK → sem "Salvar" in-place.
+      requestLoadBasic(text, f.fileName || 'arquivo.bas', null);
+    } catch (err: any) { addLog(`Abrir .BAS: ${err.message}`, `Open .BAS: ${err.message}`, 'error'); }
+  };
+
+  // DSK: botão "Editar" — abre o .BAS selecionado no editor BASIC (somente formato ASCII/texto).
+  const handleDskEditBas = async () => {
+    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo .BAS.', 'Select a .BAS file.', 'warn'); return; }
+    const entry = selectedDsk.entries[0];
+    if ((entry.ext || '').toUpperCase() !== 'BAS') { addLog('Selecione um arquivo .BAS para editar.', 'Select a .BAS file to edit.', 'warn'); return; }
+    const pane = getPane(selectedDsk.pane);
+    if (!pane) return;
+    try {
+      const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
+      if (!res.success) { addLog(`Editar BAS: ${res.error}`, `Edit BAS: ${res.error}`, 'error'); return; }
+      const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag);
+      if (tokenized) {
+        addLog(`"${entry.fullName}" está em formato TOKENIZADO — o editor abre apenas .BAS em ASCII/texto por enquanto. No CoCo, salve como ASCII (SAVE"NOME",A) e tente de novo.`,
+               `"${entry.fullName}" is TOKENIZED — the editor only opens ASCII/text .BAS for now. On the CoCo, save it as ASCII (SAVE"NAME",A) and retry.`, 'warn');
+        return;
+      }
+      requestLoadBasic(text, entry.fullName, { pane: selectedDsk.pane, entry, diskName: pane.fileName, containerIndex: pane.container?.index });
+    } catch (err: any) { addLog(`Editar BAS: ${err.message}`, `Edit BAS: ${err.message}`, 'error'); }
+  };
+
+  // "Novo" disco: se o painel ativo já tem uma imagem carregada, confirma antes (vai descartá-la).
+  const handleDskNew = () => {
+    if (getPane(activePane)) { setDskNewConfirm(activePane); return; }
+    doDskNew(activePane);
+  };
+  const doDskNew = async (which: 'A' | 'B') => {
+    setDskNewConfirm(null);
     pushDskUndo();
     try {
       const res = await window.cocoApi.dskNewBlank();
       if (!res.success) { addLog(`New disk: ${res.error}`, `New disk: ${res.error}`, 'error'); return; }
-      await loadPaneFromBuffer(activePane, new Uint8Array(res.image), activePane === 'A' ? 'NOVO_A.DSK' : 'NOVO_B.DSK');
-      markDirty(activePane); // disco novo ainda não salvo
-      addLog(`Novo disco vazio criado no painel ${activePane}.`, `New blank disk created in pane ${activePane}.`, 'success');
+      await loadPaneFromBuffer(which, new Uint8Array(res.image), which === 'A' ? 'NOVO_A.DSK' : 'NOVO_B.DSK');
+      markDirty(which); // disco novo ainda não salvo
+      addLog(`Novo disco vazio criado no painel ${which}.`, `New blank disk created in pane ${which}.`, 'success');
     } catch (err: any) { addLog(`New disk: ${err.message}`, `New disk: ${err.message}`, 'error'); }
   };
 
-  const handleDskSavePane = async () => {
+  // "Salvar como": abre o diálogo de Salvar e grava num arquivo escolhido (preserva o original).
+  // Em imagem única, memoriza o caminho escolhido em sourcePath → o "Salvar" passa a sobrescrever ali.
+  const handleDskSaveAs = async () => {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     try {
@@ -1534,12 +1764,29 @@ export default function App() {
       const saveBuf = pane.container ? pane.container.full : pane.buffer;
       const r = await window.cocoApi.saveCartridgeFile(
         saveBuf, pane.fileName || 'disk.dsk',
-        currentLang === 'pt-br' ? `Salvar imagem .DSK (painel ${activePane})` : `Save .DSK image (pane ${activePane})`,
+        currentLang === 'pt-br' ? `Salvar imagem .DSK como… (painel ${activePane})` : `Save .DSK image as… (pane ${activePane})`,
         [{ name: 'RS-DOS Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]
       );
-      if (r.success) { clearDirty(activePane); addLog(`Imagem do painel ${activePane} salva em: ${r.filePath}${pane.container ? ` (contêiner com ${pane.container.count} discos)` : ''}`, `Pane ${activePane} image saved at: ${r.filePath}${pane.container ? ` (${pane.container.count}-disk container)` : ''}`, 'success'); }
+      if (r.success) {
+        clearDirty(activePane);
+        if (!pane.container && r.filePath) setPane(activePane, { ...getPane(activePane), sourcePath: r.filePath }); // futuras gravações sobrescrevem aqui
+        addLog(`Imagem do painel ${activePane} salva em: ${r.filePath}${pane.container ? ` (contêiner com ${pane.container.count} discos)` : ''}`, `Pane ${activePane} image saved at: ${r.filePath}${pane.container ? ` (${pane.container.count}-disk container)` : ''}`, 'success');
+      }
       else if (r.error) addLog(`Save: ${r.error}`, `Save: ${r.error}`, 'error');
     } catch (err: any) { addLog(`Save: ${err.message}`, `Save: ${err.message}`, 'error'); }
+  };
+
+  // "Salvar": sobrescreve o arquivo de origem (sem diálogo). Sem caminho conhecido (disco novo,
+  // leitura GW, contêiner) → cai no "Salvar como".
+  const handleDskSaveOverwrite = async () => {
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    if (!pane.sourcePath || pane.container) { handleDskSaveAs(); return; }
+    try {
+      const r = await window.cocoApi.saveDskOverwrite(pane.sourcePath, pane.buffer);
+      if (r.success) { clearDirty(activePane); addLog(`Alterações gravadas (sobrescrito): ${r.filePath}`, `Changes saved (overwritten): ${r.filePath}`, 'success'); }
+      else addLog(`Salvar: ${r.error}`, `Save: ${r.error}`, 'error');
+    } catch (err: any) { addLog(`Salvar: ${err.message}`, `Save: ${err.message}`, 'error'); }
   };
 
   // Drop externo num painel: .dsk abre a imagem; .bin/.bas injeta (aceita múltiplos)
@@ -1737,7 +1984,10 @@ export default function App() {
       } catch (err: any) { addLog(`Hex: ${err.message}`, `Hex: ${err.message}`, 'error'); }
       return;
     }
-    if (extractedPayload) {
+    // Fallback ao programa extraído (fita/.bin/.rom) SÓ vale no contexto da aba EPROM.
+    // Fora dela (ex.: aba DSK sem arquivo selecionado), abrir esse buffer mostraria dados
+    // antigos e sem relação com o que está na tela — então exigimos uma seleção real.
+    if (activeTab === 'eprom' && extractedPayload) {
       setHexEditTarget(null);
       setModalBuffer(extractedPayload);
       setModalFileName(programName || 'payload');
@@ -2018,7 +2268,7 @@ export default function App() {
   };
 
   // --- Greaseweazle (aba GW) ---
-  const gwOpts = () => ({ gwPath, format: gwFormat, device: gwDevice.trim(), drive: gwDrive, extra: gwExtra.trim().split(/\s+/).filter(Boolean) });
+  const gwOpts = () => ({ gwPath, format: gwFormat, device: gwDevice.trim(), drive: gwDrive, extra: gwExtra.trim().split(/\s+/).filter(Boolean), direct: gwDirect.trim() });
 
   // Abre o diálogo para localizar o gw.exe e grava no campo (persiste automaticamente).
   const handleGwPickExe = async () => {
@@ -2078,8 +2328,15 @@ export default function App() {
     doGwWrite(pane.buffer);
   };
 
-  // Botão "Gravar GW" da aba DSK: abre a aba GW já apontando para o painel ativo e grava-o.
+  // Botão "Gravar GW" da aba DSK: confirma antes de gravar (a gravação respeita as configurações da aba GW).
   const handleDskWriteToGw = () => {
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    setDskGwConfirm(true);
+  };
+  // Confirmado: abre a aba GW já apontando para o painel ativo e grava-o.
+  const proceedDskWriteToGw = () => {
+    setDskGwConfirm(false);
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     setGwPane(activePane);
@@ -2127,7 +2384,10 @@ export default function App() {
             </label>
             <label className={labelCls}>
               <span>{t('gwDeviceLabel')}{gwHelp('gwHintDevice')}</span>
-              <input className={fieldCls} value={gwDevice} placeholder="auto (ex.: COM3)" onChange={e => setGwDevice(e.target.value)} />
+              <div className="flex gap-1.5 items-center">
+                <input className={fieldCls} style={{ flex: 1, minWidth: 0 }} value={gwDevice} placeholder="auto (ex.: COM3)" onChange={e => setGwDevice(e.target.value)} />
+                <button type="button" disabled={gwBusy} onClick={handleGwInfo} className="dsk-tool flex-shrink-0" title={t('gwTestBtn')}><RefreshCw size={13} className={gwBusy && gwOp === 'info' ? 'animate-spin' : ''} /> {t('gwTestBtn')}</button>
+              </div>
             </label>
             <label className={labelCls}>
               <span>{t('gwDriveLabel')}{gwHelp('gwHintDrive')}</span>
@@ -2139,14 +2399,7 @@ export default function App() {
                 <option value="1">1</option>
               </select>
             </label>
-            <label className={labelCls}>
-              <span>{currentLang === 'pt-br' ? 'Painel destino (leitura/gravação)' : 'Target pane (read/write)'}{gwHelp('gwHintPane')}</span>
-              <select className="input-select text-xs py-1.5" value={gwPane} onChange={e => setGwPane(e.target.value as 'A' | 'B')}>
-                <option value="A">{currentLang === 'pt-br' ? 'Painel A' : 'Pane A'}</option>
-                <option value="B">{currentLang === 'pt-br' ? 'Painel B' : 'Pane B'}</option>
-              </select>
-            </label>
-            <label className={labelCls}>
+            <label className={labelCls} style={{ gridColumn: '1 / span 2' }}>
               <span>{t('gwPathLabel')}{gwHelp('gwHintPath')}</span>
               <div className="flex gap-1.5 items-center">
                 <input className={fieldCls} style={{ flex: 1, minWidth: 0 }} value={gwPath} placeholder="gw  (ou C:\\gw\\gw.exe)" onChange={e => setGwPath(e.target.value)} />
@@ -2157,9 +2410,20 @@ export default function App() {
               <span>{t('gwExtraLabel')}{gwHelp('gwHintExtra')}</span>
               <input className={fieldCls} value={gwExtra} placeholder="--no-verify --retries=3" onChange={e => setGwExtra(e.target.value)} />
             </label>
+            <label className={labelCls}>
+              <span>{t('gwDirectLabel')}{gwHelp('gwHintDirect')}</span>
+              <input className={fieldCls} value={gwDirect} placeholder="read --format coco.decb --device COM7 --drive 0 --revs 3"
+                style={gwDirect.trim() ? { borderColor: 'var(--primary)', boxShadow: '0 0 6px var(--primary-glow)' } : undefined}
+                onChange={e => setGwDirect(e.target.value)} />
+            </label>
           </div>
           <div className="flex gap-2 flex-wrap pt-1 items-center">
-            <button disabled={gwBusy} onClick={handleGwInfo} className="dsk-tool"><RefreshCw size={13} className={gwBusy && gwOp === 'info' ? 'animate-spin' : ''} /> {t('gwTestBtn')}</button>
+            {/* Seletor de painel inline (rótulo + dropdown) — ocupa o lugar do antigo botão Testar, sem esticar a linha */}
+            <span className="text-[11px] text-[var(--text-secondary)] font-semibold flex items-center">{t('gwUsePaneLabel')}{gwHelp('gwHintPane')}</span>
+            <select className="input-select text-xs py-1.5" style={{ minWidth: 88 }} value={gwPane} onChange={e => setGwPane(e.target.value as 'A' | 'B')}>
+              <option value="A">{currentLang === 'pt-br' ? 'Painel A' : 'Pane A'}</option>
+              <option value="B">{currentLang === 'pt-br' ? 'Painel B' : 'Pane B'}</option>
+            </select>
             <button disabled={gwBusy} onClick={handleGwRead} className="dsk-tool" style={{ borderColor: 'var(--border-active)', color: 'var(--primary)' }}><Download size={13} /> {currentLang === 'pt-br' ? `Ler → Painel ${gwPane}` : `Read → Pane ${gwPane}`}</button>
             <button disabled={gwBusy || !getPane(gwPane)} onClick={handleGwWritePane} className="dsk-tool"><Upload size={13} /> {currentLang === 'pt-br' ? `Gravar Painel ${gwPane} → Disco` : `Write Pane ${gwPane} → Disk`}</button>
             <button disabled={gwBusy} onClick={handleGwWriteFile} className="dsk-tool"><Upload size={13} /> {t('gwWriteFileBtn')}</button>
@@ -2207,6 +2471,15 @@ export default function App() {
 
   // Mantém o ref dos atalhos com os handlers/estado atuais
   dskKbdRef.current = { activeTab, handleDskCopy, handleDskPaste, handleDskDelete, handleDskUndo, handleDskRedo };
+
+  // Rótulo do tipo de arquivo lido do header (entrada de diretório): byte 11 = fileType,
+  // byte 12 = asciiFlag. 0=BASIC, 1=Dados, 2=Código de Máquina, 3=Fonte; ASCII vs BIN.
+  const fileKind = (f: any): string => {
+    const labels: Record<number, string> = currentLang === 'pt-br'
+      ? { 0: 'BASIC', 1: 'DADOS', 2: 'MÁQUINA', 3: 'FONTE' }
+      : { 0: 'BASIC', 1: 'DATA', 2: 'MACHINE', 3: 'SOURCE' };
+    return labels[f.fileType] ?? (f.fileTypeName || '?');
+  };
 
   const renderDskPane = (which: 'A' | 'B', pane: any) => {
     const usedGran = pane ? pane.totalGranules - pane.freeGranules : 0;
@@ -2272,6 +2545,7 @@ export default function App() {
                     <th className="p-2 text-right">{t('dskColSize')}</th>
                     <th className="p-2 text-center">{t('dskColGran')}</th>
                     <th className="p-2">{t('dskColTracks')}</th>
+                    <th className="p-2">{t('dskColKind')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2296,6 +2570,7 @@ export default function App() {
                       <td className="p-2 text-right font-mono">{f.totalSize} B</td>
                       <td className="p-2 text-center font-mono">{f.granuleChain ? f.granuleChain.length : '-'}</td>
                       <td className="p-2 font-mono text-[10px]">{fileTracks(f)}</td>
+                      <td className="p-2 font-mono text-[10px] whitespace-nowrap">{fileKind(f)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -2353,11 +2628,19 @@ export default function App() {
             <HardDrive size={14} /> {t('tabGw')}
           </button>
           <button
+            onClick={() => setActiveTab('basic')}
+            className={`tab-btn ${activeTab === 'basic' ? 'tab-btn-active' : ''}`}
+          >
+            <FileCode2 size={14} /> {t('tabBasic')}
+          </button>
+          {/* Aba EPROM ocultada temporariamente — reativar removendo este comentário.
+          <button
             onClick={() => setActiveTab('eprom')}
             className={`tab-btn ${activeTab === 'eprom' ? 'tab-btn-active' : ''}`}
           >
             <Cpu size={14} /> {t('tabEprom')}
           </button>
+          */}
         </div>
 
         {/* Global Toolbar (hex editor + language + exit) */}
@@ -2954,10 +3237,29 @@ export default function App() {
         </div>
         ) : activeTab === 'gw' ? (
           renderGwTab()
+        ) : activeTab === 'basic' ? (
+          <BasicEditor
+            lang={currentLang}
+            text={basicText}
+            onTextChange={setBasicText}
+            name={basicName}
+            onNameChange={setBasicName}
+            pane={basicPane}
+            onPaneChange={setBasicPane}
+            screen={basicScreen}
+            onScreenChange={setBasicScreen}
+            onRun={handleBasicRun}
+            onSaveToDisk={handleBasicSaveToDisk}
+            onSaveTextFile={handleBasicSaveTextFile}
+            onOpenTextFile={handleBasicOpenTextFile}
+            sourceLabel={basicSource ? `${basicSource.entry.fullName} (${basicSource.pane})` : null}
+            onUpdateInDsk={handleBasicUpdateInDsk}
+          />
         ) : activeTab === 'xroar' ? null : (
           <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
-            {/* DSK toolbar */}
-            <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+            {/* DSK toolbar — folga simples (mb-3) como na aba BASIC; o brilho do painel ativo
+                foi reduzido p/ anel fino (CSS .dsk-pane-active) para não vazar e "colar" na barra. */}
+            <div className="flex items-center gap-1.5 mb-3 flex-wrap flex-shrink-0">
               <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
               <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FilePlus size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
@@ -2965,6 +3267,15 @@ export default function App() {
               <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length} title={t('dskToolCut')} aria-label={t('dskToolCut')} className="dsk-tool"><Scissors size={15} /></button>
               <button onClick={handleDskPaste} disabled={!dskClipboard} title={t('dskToolPaste')} aria-label={t('dskToolPaste')} className="dsk-tool"><Clipboard size={15} /></button>
               <button onClick={handleDskDelete} disabled={!selectedDsk?.entries.length} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
+              <button
+                onClick={handleDskEditBas}
+                disabled={!(selectedDsk?.entries.length && (selectedDsk.entries[0].ext || '').toUpperCase() === 'BAS')}
+                title={t('Editar .BAS no editor BASIC', 'Edit .BAS in the BASIC editor')}
+                aria-label="Editar BAS"
+                className="dsk-tool"
+              >
+                <FileCode2 size={15} /> {t('Editar', 'Edit')}
+              </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleCopyPaneAToB} disabled={!paneA} title={t('dskToolCopyAtoB')} aria-label={t('dskToolCopyAtoB')} className="dsk-tool"><ArrowRight size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
@@ -2975,15 +3286,27 @@ export default function App() {
               {getPane(activePane)?.container && (
                 <button onClick={handleDskSortAll} disabled={!getPane(activePane)?.files.length} title={t('dskToolSortAll')} aria-label={t('dskToolSortAll')} className="dsk-tool"><Layers size={15} /></button>
               )}
+              {/* Salvar = sobrescreve o arquivo de origem (sem diálogo). Destaque amarelo se há alterações. */}
               <button
-                onClick={handleDskSavePane}
+                onClick={handleDskSaveOverwrite}
+                disabled={!getPane(activePane)}
                 title={dskDirty[activePane] ? `${t('dskToolSave')} • ${t('dskUnsaved')}` : t('dskToolSave')}
                 aria-label={t('dskToolSave')}
                 className="dsk-tool"
                 style={dskDirty[activePane] ? { color: 'hsl(45,95%,62%)', borderColor: 'hsl(45,90%,55%)', boxShadow: '0 0 9px hsla(45,90%,55%,0.65)' } : undefined}
               >
-                <Save size={15} />
+                <Save size={15} /> {t('dskToolSave')}
                 {dskDirty[activePane] && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'hsl(45,95%,60%)', display: 'inline-block', marginLeft: 4, boxShadow: '0 0 5px hsl(45,95%,60%)' }} />}
+              </button>
+              {/* Salvar Como = abre o diálogo "Salvar como" e grava numa nova imagem (preserva a anterior). */}
+              <button
+                onClick={handleDskSaveAs}
+                disabled={!getPane(activePane)}
+                title={t('dskToolSaveAs')}
+                aria-label={t('dskToolSaveAs')}
+                className="dsk-tool"
+              >
+                <Download size={15} /> {t('dskToolSaveAs')}
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /> {t('dskToolXroarShort')}</button>
@@ -2998,22 +3321,26 @@ export default function App() {
                 </span>
               </span>
             </div>
-            {/* Pane A (top) */}
-            <div style={{ height: dskTopHeight, minHeight: 0 }} className="flex-shrink-0">
-              {renderDskPane('A', paneA)}
-            </div>
-            {/* DSK horizontal splitter */}
-            <div className="splitter-h my-1.5" onMouseDown={startResizingDskSplit} />
-            {/* Pane B (bottom) */}
-            <div className="flex-1" style={{ minHeight: 0 }}>
-              {renderDskPane('B', paneB)}
+            {/* Região dos painéis: ocupa só o espaço que sobra abaixo da toolbar (que tem altura
+                natural garantida por flex-shrink-0), evitando que a toolbar seja cortada. */}
+            <div className="flex-1 flex flex-col overflow-hidden" style={{ minHeight: 0 }}>
+              {/* Pane A (top) */}
+              <div style={{ height: dskTopHeight, minHeight: 0 }} className="flex-shrink-0">
+                {renderDskPane('A', paneA)}
+              </div>
+              {/* DSK horizontal splitter */}
+              <div className="splitter-h my-1.5" onMouseDown={startResizingDskSplit} />
+              {/* Pane B (bottom) */}
+              <div className="flex-1" style={{ minHeight: 0 }}>
+                {renderDskPane('B', paneB)}
+              </div>
             </div>
           </div>
         )}
 
         {/* XRoar emulator — always mounted (hidden unless active) so it never reboots on tab switch */}
         <div style={{ display: activeTab === 'xroar' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} onLog={addLog} />
+          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} pendingType={xroarType} onLog={addLog} />
         </div>
 
         {/* SPLITTER 3 (Horizontal) */}
@@ -3173,6 +3500,131 @@ export default function App() {
               <button onClick={() => setGwReadConfirm(false)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
               <button onClick={doGwRead} className="btn py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5" style={{ backgroundColor: 'hsl(30, 75%, 42%)', color: '#fff' }}>
                 <Download size={13} /> {currentLang === 'pt-br' ? `Ler e sobrescrever` : `Read and overwrite`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DSK "Gravar GW" confirmation — avisa que a gravação usará as configurações atuais da aba GW */}
+      {dskGwConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setDskGwConfirm(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 420, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Gravar no Greaseweazle?' : 'Write to Greaseweazle?'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? 'O disco será gravado agora, conforme as configuração do GW. Se você não ter certeza, cancele a operação e verifique suas configurações antes.'
+                : 'The disk will be written now, using the current GW settings. If you are not sure, cancel the operation and check your settings first.'}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setDskGwConfirm(false)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={proceedDskWriteToGw} className="btn py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5" style={{ backgroundColor: 'hsl(30, 75%, 42%)', color: '#fff' }}>
+                <HardDrive size={13} /> {currentLang === 'pt-br' ? 'Prosseguir' : 'Proceed'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BASIC "Salvar" in-place: arquivo de origem sumiu / disco trocado — confirma antes de gravar */}
+      {basicUpdateConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setBasicUpdateConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 450, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Arquivo de origem indisponível' : 'Source file unavailable'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? (basicUpdateConfirm.reason === 'diskChanged'
+                    ? `A imagem/disco do Painel ${basicUpdateConfirm.which} foi trocada desde que "${basicUpdateConfirm.name}" foi aberto. Não dá para garantir que seja o mesmo arquivo. Você pode CANCELAR, ou gravar "${basicUpdateConfirm.name}" como um NOVO arquivo no disco atual do Painel ${basicUpdateConfirm.which}.`
+                    : `O arquivo "${basicUpdateConfirm.name}" não existe mais no disco atual do Painel ${basicUpdateConfirm.which} (foi removido ou a imagem mudou). Você pode CANCELAR, ou gravá-lo como um NOVO arquivo no disco atual.`)
+                : (basicUpdateConfirm.reason === 'diskChanged'
+                    ? `Pane ${basicUpdateConfirm.which}'s image/disk changed since "${basicUpdateConfirm.name}" was opened. It can't be guaranteed to be the same file. You can CANCEL, or save "${basicUpdateConfirm.name}" as a NEW file on Pane ${basicUpdateConfirm.which}'s current disk.`
+                    : `"${basicUpdateConfirm.name}" no longer exists on Pane ${basicUpdateConfirm.which}'s current disk (removed, or the image changed). You can CANCEL, or save it as a NEW file on the current disk.`)}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setBasicUpdateConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button
+                onClick={() => {
+                  const c = basicUpdateConfirm; setBasicUpdateConfirm(null);
+                  if (c) beginAddBatch(c.which, [{ name: c.name.split('.')[0], ext: 'BAS', fileType: 0, asciiFlag: 0xFF, data: basicTextToAsciiBytes(basicText) }]);
+                }}
+                className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5"
+              >
+                <Save size={13} /> {currentLang === 'pt-br' ? 'Gravar como novo' : 'Save as new'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* "Novo" disco sobre painel com conteúdo — confirma antes de descartar a imagem atual */}
+      {dskNewConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setDskNewConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 430, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Novo disco no Painel ${dskNewConfirm}?` : `New disk in Pane ${dskNewConfirm}?`}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `O Painel ${dskNewConfirm} já contém uma imagem. Criar um disco novo vai DESCARTAR a imagem atual do painel (alterações não salvas serão perdidas). Deseja continuar?`
+                : `Pane ${dskNewConfirm} already contains an image. Creating a new disk will DISCARD the pane's current image (unsaved changes will be lost). Continue?`}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setDskNewConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={() => doDskNew(dskNewConfirm)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+                <Plus size={13} /> {currentLang === 'pt-br' ? 'Criar' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BASIC: confirma gravar .BAS num painel que já tem disco/arquivos */}
+      {basicSaveConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setBasicSaveConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 430, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Gravar no Painel ${basicSaveConfirm.pane}?` : `Save into Pane ${basicSaveConfirm.pane}?`}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `O Painel ${basicSaveConfirm.pane} já contém um disco com arquivos. O programa "${basicSaveConfirm.name}.BAS" será adicionado a esse disco (em caso de nome igual, será pedido para substituir/renomear). Deseja continuar?`
+                : `Pane ${basicSaveConfirm.pane} already contains a disk with files. The program "${basicSaveConfirm.name}.BAS" will be added to that disk (on a name clash you'll be asked to overwrite/rename). Continue?`}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setBasicSaveConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={() => doBasicSaveToDisk(basicSaveConfirm.name, basicSaveConfirm.program, basicSaveConfirm.pane)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+                <Save size={13} /> {currentLang === 'pt-br' ? 'Salvar' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BASIC: confirma abrir arquivo apagando o conteúdo atual do editor */}
+      {basicOpenPending && (
+        <div className="glass-modal-overlay" onClick={() => setBasicOpenPending(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 430, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Abrir e substituir?' : 'Open and replace?'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `O editor BASIC já contém um programa. Abrir "${basicOpenPending.label}" vai APAGAR o conteúdo atual do editor. Deseja continuar?`
+                : `The BASIC editor already has a program. Opening "${basicOpenPending.label}" will ERASE the current editor content. Continue?`}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setBasicOpenPending(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={applyBasicOpen} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+                <FolderOpen size={13} /> {currentLang === 'pt-br' ? 'Abrir' : 'Open'}
               </button>
             </div>
           </div>

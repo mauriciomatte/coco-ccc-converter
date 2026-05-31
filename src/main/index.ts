@@ -107,6 +107,7 @@ ipcMain.handle('select-file', async () => {
     properties: ['openFile'],
     filters: [
       { name: 'Color Computer Files', extensions: ['cas', 'dsk', 'bin', 'ccc', 'hex'] },
+      { name: 'BASIC Text (.bas/.txt)', extensions: ['bas', 'txt'] },
       { name: 'Cassette Files', extensions: ['cas'] },
       { name: 'RS-DOS Disk Images', extensions: ['dsk'] },
       { name: 'Binary Payloads', extensions: ['bin', 'hex'] },
@@ -454,6 +455,7 @@ ipcMain.handle('open-dsk-pane', async () => {
       success: true,
       buffer: new Uint8Array(buf),
       fileName: path.basename(fp),
+      filePath: fp,
       size: buf.length,
       files: parsed.files,
       freeGranules: parsed.freeGranules,
@@ -653,9 +655,28 @@ ipcMain.handle('gw-info', async (_, opts: any) => {
   return { success: r.code === 0, code: r.code };
 });
 
+// Flags que só fazem sentido em GRAVAÇÃO — se ficarem no campo "Argumentos extras" (compartilhado),
+// o `gw read` as rejeita e falha (código 1). Removemos da leitura.
+function stripWriteOnlyArgs(extra: any): string[] {
+  if (!Array.isArray(extra)) return [];
+  const writeOnly = new Set(['--no-verify', '--erase-empty']);
+  return extra.filter((s: string) => {
+    const tok = String(s).toLowerCase();
+    return !writeOnly.has(tok) && !tok.startsWith('--precomp') && !tok.startsWith('--fake');
+  });
+}
+
+// Quebra um "comando direto" em argumentos (split simples por espaços).
+function splitDirect(direct: string): string[] {
+  return String(direct || '').trim().split(/\s+/).filter(Boolean);
+}
+
 ipcMain.handle('gw-read', async (_, opts: any) => {
   const tmp = path.join(app.getPath('temp'), `gw-read-${Date.now()}.dsk`);
-  const args = ['read', '--format', String(opts.format), ...gwExtraArgs(opts), tmp];
+  // Comando direto preenchido → usa SÓ ele (+ caminho do arquivo temporário no final).
+  const args = opts.direct
+    ? [...splitDirect(opts.direct), tmp]
+    : ['read', '--format', String(opts.format), ...gwExtraArgs({ ...opts, extra: stripWriteOnlyArgs(opts.extra) }), tmp];
   const r = await runGw(opts.gwPath, args);
   if (r.code !== 0) return { success: false, code: r.code };
   try {
@@ -669,10 +690,23 @@ ipcMain.handle('gw-write', async (_, opts: any, imageUint8Array: Uint8Array) => 
   const tmp = path.join(app.getPath('temp'), `gw-write-${Date.now()}.dsk`);
   try { fs.writeFileSync(tmp, Buffer.from(imageUint8Array)); }
   catch (e: any) { return { success: false, error: e.message }; }
-  const args = ['write', '--format', String(opts.format), ...gwExtraArgs(opts), tmp];
+  const args = opts.direct
+    ? [...splitDirect(opts.direct), tmp]
+    : ['write', '--format', String(opts.format), ...gwExtraArgs(opts), tmp];
   const r = await runGw(opts.gwPath, args);
   try { fs.unlinkSync(tmp); } catch { /* ignore */ }
   return { success: r.code === 0, code: r.code };
+});
+
+// 7b. Overwrite an existing file in place (no dialog) — usado pelo "Salvar" da aba DSK.
+ipcMain.handle('save-dsk-overwrite', async (_, filePath: string, dataUint8Array: Uint8Array) => {
+  try {
+    if (!filePath) return { success: false, error: 'No file path.' };
+    fs.writeFileSync(filePath, Buffer.from(dataUint8Array));
+    return { success: true, filePath };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
 });
 
 // 8. Save final cartridge/EPROM file to system disk

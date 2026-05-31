@@ -147,7 +147,8 @@ body {
 /* Active DSK pane highlight (glow ring) */
 .dsk-pane-active {
   border-color: var(--primary) !important;
-  box-shadow: 0 0 0 2px var(--primary), 0 0 24px 2px var(--primary-glow) !important;
+  /* Apenas um anel fino — sem o glow de 24px que vazava p/ cima e "colava" na toolbar do DSK. */
+  box-shadow: 0 0 0 2px var(--primary) !important;
 }
 
 /* Maximized system console overlay */

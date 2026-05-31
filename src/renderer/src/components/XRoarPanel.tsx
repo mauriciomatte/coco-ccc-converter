@@ -35,15 +35,17 @@ const JOY_OPTIONS = [
 ];
 
 interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; }
+interface PendingType { text: string; key: number; reset?: boolean; }
 
 interface Props {
   lang: 'pt-br' | 'en-us';
   active?: boolean;
   pendingLoad?: PendingLoad | null;
+  pendingType?: PendingType | null;
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
 }
 
-export default function XRoarPanel({ lang, active, pendingLoad, onLog }: Props) {
+export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onLog }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [machine, setMachine] = useState('coco3');
@@ -61,6 +63,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, onLog }: Props) 
   const [loaded, setLoaded] = useState(false); // config carregada? (evita salvar antes da carga)
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
   const lastLoadKey = useRef(0);
+  const lastTypeKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
 
   // Toda a config visual vai no boot (URL). Trocar máquina ou saída de vídeo reinicia (rápido
@@ -144,6 +147,29 @@ export default function XRoarPanel({ lang, active, pendingLoad, onLog }: Props) 
       setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: 60 }); focusEmu(); }, 3400); // boot pronto → digita
     }
   }, [pendingLoad, ready]);
+
+  // Injeção de BASIC/texto (aba BASIC) → digita no emulador via type_string.
+  //  - reset=true: HARD RESET primeiro (boot limpo, garante o prompt OK mesmo com algo rodando),
+  //    aguarda o boot e então digita.
+  //  - reset=false: digita direto no prompt atual (mais rápido; o texto já costuma incluir NEW).
+  useEffect(() => {
+    if (!pendingType || pendingType.key === lastTypeKey.current || !ready) return;
+    lastTypeKey.current = pendingType.key;
+    const { text, reset } = pendingType;
+    // "Prime" do 1º caractere: a primeira tecla é perdida quando o teclado emulado ainda não
+    // está pronto (emulador recém-visível/resetado). Um CR inicial NÃO resolve (o XRoar ignora
+    // CR à frente). Usamos um ESPAÇO imprimível: se for engolido, o "10" sobrevive; se não for,
+    // o BASIC ignora espaços antes do número da linha/comando. Preserva o "1" do "10".
+    const primed = ' ' + text;
+    if (reset) {
+      sendCmd('hard_reset');
+      setTimeout(() => { focusEmu(); sendCmd('type_string', { text: primed, delayMs: 60 }); }, 2800); // espera o boot
+    } else {
+      // Atraso curto para o canvas focar/processar antes de digitar (aba recém-exibida).
+      focusEmu();
+      setTimeout(() => { sendCmd('type_string', { text: primed, delayMs: 60 }); }, 450);
+    }
+  }, [pendingType, ready]);
 
   // Trocar máquina ou saída de vídeo reinicia o emulador → limpa as drives.
   useEffect(() => { setDrives(['', '', '', '']); }, [machine, tvInput]);

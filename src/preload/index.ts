@@ -75,8 +75,11 @@ const api = {
   buildCocoFlashBin: (romImage: Uint8Array) =>
     ipcRenderer.invoke('build-cocoflash-bin', romImage),
 
-  saveCartridgeFile: (romBuffer: Uint8Array, defaultName: string, title?: string, filters?: any[]) => 
+  saveCartridgeFile: (romBuffer: Uint8Array, defaultName: string, title?: string, filters?: any[]) =>
     ipcRenderer.invoke('save-cartridge-file', romBuffer, defaultName, title, filters),
+
+  saveDskOverwrite: (filePath: string, data: Uint8Array) =>
+    ipcRenderer.invoke('save-dsk-overwrite', filePath, data),
     
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
