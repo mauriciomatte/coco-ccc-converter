@@ -127,14 +127,55 @@ const P3: Record<number, Op> = {
 const IDX_REG = ['X', 'Y', 'U', 'S'];
 const TFR_REG: Record<number, string> = { 0: 'D', 1: 'X', 2: 'Y', 3: 'U', 4: 'S', 5: 'PC', 8: 'A', 9: 'B', 0xA: 'CC', 0xB: 'DP' };
 
+// Símbolos de hardware do CoCo (endereços FIXOS por hardware — fatos, não código de terceiros).
+// Operandos absolutos que caem aqui são nomeados (ex.: STA $FFDF → STA MAPRAM). Rotinas da ROM
+// NÃO entram aqui de propósito: seus endereços devem sair das disassemblies "Unravelled" (docs do
+// usuário), para não arriscar nomes errados. Ver [[coco-docs-and-basic-tokens]].
+const SYMBOLS: Record<number, string> = {
+  // PIA0 — teclado / joystick / HSYNC
+  0xFF00: 'PIA0DA', 0xFF01: 'PIA0CA', 0xFF02: 'PIA0DB', 0xFF03: 'PIA0CB',
+  // PIA1 — DAC / cassete / controle do VDG / impressora
+  0xFF20: 'PIA1DA', 0xFF21: 'PIA1CA', 0xFF22: 'PIA1DB', 0xFF23: 'PIA1CB',
+  // Controlador de disco / cartucho (também o registrador de banco do CocoFLASH)
+  0xFF40: 'DSKREG',
+  // GIME (CoCo 3): init / IRQ-FIRQ / timer / vídeo
+  0xFF90: 'INIT0', 0xFF91: 'INIT1', 0xFF92: 'IRQENR', 0xFF93: 'FIRQENR',
+  0xFF94: 'TMRMSB', 0xFF95: 'TMRLSB', 0xFF98: 'VMODE', 0xFF99: 'VRES',
+  0xFF9A: 'BORDER', 0xFF9C: 'VSCROLL', 0xFF9D: 'VOFFMSB', 0xFF9E: 'VOFFLSB', 0xFF9F: 'HVOFF',
+  // GIME MMU (páginas de 8K) — task 0 ($FFA0-7) e task 1 ($FFA8-F)
+  0xFFA0: 'MMU0', 0xFFA1: 'MMU1', 0xFFA2: 'MMU2', 0xFFA3: 'MMU3',
+  0xFFA4: 'MMU4', 0xFFA5: 'MMU5', 0xFFA6: 'MMU6', 0xFFA7: 'MMU7',
+  0xFFA8: 'MMU8', 0xFFA9: 'MMU9', 0xFFAA: 'MMU10', 0xFFAB: 'MMU11',
+  0xFFAC: 'MMU12', 0xFFAD: 'MMU13', 0xFFAE: 'MMU14', 0xFFAF: 'MMU15',
+  // GIME paleta (16 registradores)
+  0xFFB0: 'PAL0', 0xFFB1: 'PAL1', 0xFFB2: 'PAL2', 0xFFB3: 'PAL3', 0xFFB4: 'PAL4', 0xFFB5: 'PAL5',
+  0xFFB6: 'PAL6', 0xFFB7: 'PAL7', 0xFFB8: 'PAL8', 0xFFB9: 'PAL9', 0xFFBA: 'PAL10', 0xFFBB: 'PAL11',
+  0xFFBC: 'PAL12', 0xFFBD: 'PAL13', 0xFFBE: 'PAL14', 0xFFBF: 'PAL15',
+  // SAM (MC6883): velocidade da CPU e tipo de mapa de memória (ROM x all-RAM — usado no loader 2 estágios)
+  0xFFD8: 'SAMSLOW', 0xFFD9: 'SAMFAST', 0xFFDE: 'MAPROM', 0xFFDF: 'MAPRAM',
+  // Vetores de interrupção do 6809
+  0xFFF2: 'VSWI3', 0xFFF4: 'VSWI2', 0xFFF6: 'VFIRQ', 0xFFF8: 'VIRQ',
+  0xFFFA: 'VSWI', 0xFFFC: 'VNMI', 0xFFFE: 'VRESET',
+};
+
 function s8(b: number) { return b < 0x80 ? b : b - 0x100; }
 function s16(w: number) { return w < 0x8000 ? w : w - 0x10000; }
 function soff(n: number) { return (n < 0 ? '-$' + hx2(-n) : '$' + hx2(n)); }
 
-export interface DisasmLine { addr: number; bytes: number[]; text: string }
+export interface DisasmLine {
+  addr: number;
+  bytes: number[];
+  text: string;
+  target?: number;  // endereço absoluto referenciado (desvio/chamada/ext) — substituído no operando
+  ref?: number;     // endereço referenciado via ,PCR — anotado como comentário "; →NOME" (operando é offset)
+  label?: string;   // se preenchido com bytes vazios, a linha é um marcador de label "NOME:"
+  run?: number;     // linha de dados colapsada — nº de repetições (a coluna de bytes vira "N×…")
+  period?: number;  // bytes por unidade repetida (1 = byte idêntico; 2-4 = tile periódico de gráfico)
+}
 
-// Decodifica o operando indexado (postbyte em p[i]); retorna [texto, bytesConsumidos].
-function decodeIndexed(p: Uint8Array, i: number): [string, number] {
+// Decodifica o operando indexado (postbyte em p[i]); retorna [texto, bytesConsumidos, offsetPCR?].
+// offsetPCR (com sinal) só vem nos modos ,PCR — o chamador soma ao PC pra achar o alvo absoluto.
+function decodeIndexed(p: Uint8Array, i: number): [string, number, number?] {
   const pb = p[i]; let n = 1;
   const reg = IDX_REG[(pb >> 5) & 3];
   if ((pb & 0x80) === 0) { // offset de 5 bits com sinal
@@ -143,7 +184,7 @@ function decodeIndexed(p: Uint8Array, i: number): [string, number] {
   }
   const indirect = (pb & 0x10) !== 0;
   const type = pb & 0x0F;
-  let inner = '';
+  let inner = ''; let pcrOff: number | undefined;
   switch (type) {
     case 0x0: inner = `,${reg}+`; break;
     case 0x1: inner = `,${reg}++`; break;
@@ -155,12 +196,12 @@ function decodeIndexed(p: Uint8Array, i: number): [string, number] {
     case 0x8: { const o = s8(p[i + 1]); inner = `${soff(o)},${reg}`; n += 1; break; }
     case 0x9: { const o = s16((p[i + 1] << 8) | p[i + 2]); inner = `${o < 0 ? '-$' + hx4(-o) : '$' + hx4(o)},${reg}`; n += 2; break; }
     case 0xB: inner = `D,${reg}`; break;
-    case 0xC: { const o = s8(p[i + 1]); inner = `${soff(o)},PCR`; n += 1; break; }
-    case 0xD: { const o = s16((p[i + 1] << 8) | p[i + 2]); inner = `${o < 0 ? '-$' + hx4(-o) : '$' + hx4(o)},PCR`; n += 2; break; }
+    case 0xC: { const o = s8(p[i + 1]); inner = `${soff(o)},PCR`; pcrOff = o; n += 1; break; }
+    case 0xD: { const o = s16((p[i + 1] << 8) | p[i + 2]); inner = `${o < 0 ? '-$' + hx4(-o) : '$' + hx4(o)},PCR`; pcrOff = o; n += 2; break; }
     case 0xF: { const a = (p[i + 1] << 8) | p[i + 2]; inner = `$${hx4(a)}`; n += 2; break; } // só indireto: [$addr]
     default: inner = `?${hx2(pb)}`; break;
   }
-  return [indirect ? `[${inner}]` : inner, n];
+  return [indirect ? `[${inner}]` : inner, n, pcrOff];
 }
 
 function regList(pb: number, stackU: boolean): string {
@@ -184,16 +225,23 @@ function decodeOne(p: Uint8Array, i: number, base: number): [DisasmLine, number]
   }
 
   let operand = '';
+  let target: number | undefined;  // alvo absoluto p/ ext e relativos (vira label/símbolo no operando)
+  let ref: number | undefined;     // alvo absoluto p/ ,PCR (vira comentário "; →NOME")
   let j = i2;
   switch (op.mode) {
     case 'inh': break;
     case 'imm8': operand = `#$${hx2(p[j])}`; j += 1; break;
     case 'imm16': operand = `#$${hx4((p[j] << 8) | p[j + 1])}`; j += 2; break;
-    case 'dir': operand = `<$${hx2(p[j])}`; j += 1; break;
-    case 'ext': operand = `$${hx4((p[j] << 8) | p[j + 1])}`; j += 2; break;
-    case 'idx': { const [t, n] = decodeIndexed(p, j); operand = t; j += n; break; }
-    case 'rel8': { const t = (base + (j + 1) + s8(p[j])) & 0xFFFF; operand = `$${hx4(t)}`; j += 1; break; }
-    case 'rel16': { const t = (base + (j + 2) + s16((p[j] << 8) | p[j + 1])) & 0xFFFF; operand = `$${hx4(t)}`; j += 2; break; }
+    case 'dir': operand = `<$${hx2(p[j])}`; j += 1; break;  // dir depende do DP → não vira label
+    case 'ext': { const a = ((p[j] << 8) | p[j + 1]) & 0xFFFF; operand = `$${hx4(a)}`; target = a; j += 2; break; }
+    case 'idx': {
+      const [t, n, pcrOff] = decodeIndexed(p, j); operand = t;
+      // ,PCR: alvo = PC após a instrução (base + fim) + offset
+      if (pcrOff !== undefined) ref = (base + j + n + pcrOff) & 0xFFFF;
+      j += n; break;
+    }
+    case 'rel8': { const t = (base + (j + 1) + s8(p[j])) & 0xFFFF; operand = `$${hx4(t)}`; target = t; j += 1; break; }
+    case 'rel16': { const t = (base + (j + 2) + s16((p[j] << 8) | p[j + 1])) & 0xFFFF; operand = `$${hx4(t)}`; target = t; j += 2; break; }
     case 'exg': operand = `${TFR_REG[(p[j] >> 4) & 0xF] || '?'},${TFR_REG[p[j] & 0xF] || '?'}`; j += 1; break;
     case 'pshs': operand = regList(p[j], true); j += 1; break;
     case 'pshu': operand = regList(p[j], false); j += 1; break;
@@ -201,7 +249,34 @@ function decodeOne(p: Uint8Array, i: number, base: number): [DisasmLine, number]
   const bytes: number[] = [];
   for (let k = start; k < j; k++) bytes.push(p[k]);
   const text = operand ? `${op.m.padEnd(5)} ${operand}` : op.m;
-  return [{ addr, bytes, text }, j];
+  return [{ addr, bytes, text, target, ref }, j];
+}
+
+// Pós-processo: nomeia operandos absolutos. Endereços de hardware viram símbolos (SYMBOLS);
+// alvos internos (que começam exatamente numa linha) viram labels "L####" com marcador no destino.
+// Só substitui quando há um destino real, então o nome nunca é ambíguo (o hex sempre está no L####).
+function annotate(out: DisasmLine[]): DisasmLine[] {
+  const lineStart = new Set(out.map(l => l.addr));
+  const internal = new Set<number>();
+  const nameOf = (t: number): string | null => SYMBOLS[t] || (lineStart.has(t) ? 'L' + hx4(t) : null);
+  for (const l of out) {
+    if (l.target != null) { // ext/relativo: substitui o operando hex pelo símbolo/label
+      const sym = SYMBOLS[l.target];
+      if (sym) l.text = l.text.replace('$' + hx4(l.target), sym);
+      else if (lineStart.has(l.target)) { l.text = l.text.replace('$' + hx4(l.target), 'L' + hx4(l.target)); internal.add(l.target); }
+    }
+    if (l.ref != null) { // ,PCR: operando é offset → anota o alvo resolvido como comentário
+      const name = nameOf(l.ref);
+      if (name) { l.text += `  ; →${name}`; if (!SYMBOLS[l.ref]) internal.add(l.ref); }
+    }
+  }
+  if (!internal.size) return out;
+  const res: DisasmLine[] = [];
+  for (const l of out) {
+    if (internal.has(l.addr)) res.push({ addr: l.addr, bytes: [], text: '', label: 'L' + hx4(l.addr) });
+    res.push(l);
+  }
+  return res;
 }
 
 /** Desmonta o buffer inteiro (varredura linear) a partir do endereço de carga `base`. */
@@ -223,7 +298,7 @@ export function disassemble(buf: Uint8Array, base = 0): DisasmLine[] {
     }
     if (i <= before) i = before + 1; // nunca trava
   }
-  return out;
+  return annotate(out);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -261,24 +336,106 @@ function flowInfo(buf: Uint8Array, i: number, base: number): { len: number; targ
 }
 
 const isPrintable = (b: number) => b >= 0x20 && b <= 0x7E && b !== 0x22; // exclui " p/ FCC simples
+const REPEAT_MIN = 6; // ≥6 bytes idênticos → colapsa numa única linha (ex.: padding $FF)
+const TILE_MIN = 8;   // ≥8 bytes formando um padrão periódico de 2-4 bytes → dados (linha de gráfico)
 
-// Emite os bytes de dados [from,to): runs imprimíveis (≥4) viram FCC "texto"; o resto, FCB.
+const printRun = (buf: Uint8Array, p: number, to: number) => { let r = 0; while (p + r < to && isPrintable(buf[p + r])) r++; return r; };
+const sameRun = (buf: Uint8Array, p: number, to: number) => { const v = buf[p]; let r = 0; while (p + r < to && buf[p + r] === v) r++; return r; };
+
+// Maior run periódico (período 2..4) a partir de p. Captura tiles de gráfico ("00 C0 00 C0…",
+// "55 AA 55 AA…"). Retorna {len, period} com len múltiplo do período (≥TILE_MIN), ou len 0.
+// Runs de byte idêntico já foram tratados antes (sameRun), então o período aqui é sempre real.
+function tileRun(buf: Uint8Array, p: number, to: number): { len: number; period: number } {
+  let best = { len: 0, period: 0 };
+  for (let k = 2; k <= 4; k++) {
+    if (p + 2 * k > to) continue; // precisa de ao menos 2 unidades
+    let r = k;
+    while (p + r < to && buf[p + r] === buf[p + (r % k)]) r++;
+    const len = Math.floor(r / k) * k;
+    if (len >= TILE_MIN && len > best.len) best = { len, period: k };
+  }
+  return best;
+}
+
+// Emite uma string como FCC "...".
+function pushStr(buf: Uint8Array, i: number, r: number, base: number, out: DisasmLine[]) {
+  const bytes: number[] = []; let s = '';
+  for (let k = 0; k < r; k++) { bytes.push(buf[i + k]); s += String.fromCharCode(buf[i + k]); }
+  out.push({ addr: base + i, bytes, text: `FCC   "${s}"` });
+}
+// Emite um run de bytes idênticos de forma compacta (uma linha "N×$XX").
+function pushRun(buf: Uint8Array, i: number, r: number, base: number, out: DisasmLine[]) {
+  const bytes: number[] = []; for (let k = 0; k < r; k++) bytes.push(buf[i + k]);
+  out.push({ addr: base + i, bytes, text: `FCB   $${hx2(buf[i])}`, run: r, period: 1 });
+}
+// Emite um tile periódico de forma compacta (uma linha "N×[$xx$yy]").
+function pushTile(buf: Uint8Array, i: number, len: number, period: number, base: number, out: DisasmLine[]) {
+  const bytes: number[] = []; for (let k = 0; k < len; k++) bytes.push(buf[i + k]);
+  const unit = bytes.slice(0, period).map(b => '$' + hx2(b)).join(',');
+  out.push({ addr: base + i, bytes, text: `FCB   ${unit}`, run: len / period, period });
+}
+
+// Emite um run imprimível [i, i+r) como string, mas se ela termina em $00 (forte sinal de string)
+// descasca até 2 bytes iniciais "fracos" — minúscula/pontuação, NUNCA dígito/maiúscula/espaço —
+// como FCB. Isso remove o prefixo de coordenada (ex.: "hHIGH"→FCB $68 + "HIGH"; "$BONUS"→"BONUS").
+const STR_FLOOR = 3; // após descascar, a string ainda precisa ter ≥3 chars
+function emitStringRun(buf: Uint8Array, i: number, r: number, to: number, base: number, out: DisasmLine[]) {
+  const terminated = (i + r >= to) || buf[i + r] === 0x00;
+  let s = i, len = r, peeled = 0;
+  while (terminated && peeled < 2 && len - 1 >= STR_FLOOR) {
+    const c = buf[s];
+    const weak = c >= 0x21 && c <= 0x7E && !(c >= 0x41 && c <= 0x5A) && !(c >= 0x30 && c <= 0x39);
+    if (!weak) break;
+    out.push({ addr: base + s, bytes: [c], text: `FCB   $${hx2(c)}` });
+    s++; len--; peeled++;
+  }
+  pushStr(buf, s, len, base, out);
+}
+
+// Emite os bytes de dados [from,to): strings (≥4) viram FCC; runs longos colapsam; o resto, FCB.
 function emitData(buf: Uint8Array, from: number, to: number, base: number, out: DisasmLine[]) {
   const MIN = 4;
   let i = from;
-  const runLen = (p: number) => { let r = 0; while (p + r < to && isPrintable(buf[p + r])) r++; return r; };
   while (i < to) {
-    const r = runLen(i);
-    if (r >= MIN) {
-      const bytes: number[] = []; let s = '';
-      for (let k = 0; k < r; k++) { bytes.push(buf[i + k]); s += String.fromCharCode(buf[i + k]); }
-      out.push({ addr: base + i, bytes, text: `FCC   "${s}"` });
-      i += r;
-    } else {
-      const start = i; const bytes: number[] = [];
-      while (i < to && bytes.length < 8 && runLen(i) < MIN) { bytes.push(buf[i]); i++; }
-      out.push({ addr: base + start, bytes, text: `FCB   ${bytes.map(b => '$' + hx2(b)).join(',')}` });
-    }
+    const same = sameRun(buf, i, to);
+    if (same >= REPEAT_MIN) { pushRun(buf, i, same, base, out); i += same; continue; }
+    const tile = tileRun(buf, i, to);
+    if (tile.len) { pushTile(buf, i, tile.len, tile.period, base, out); i += tile.len; continue; }
+    const r = printRun(buf, i, to);
+    if (r >= MIN) { emitStringRun(buf, i, r, to, base, out); i += r; continue; }
+    const start = i; const bytes: number[] = [];
+    while (i < to && bytes.length < 8 && printRun(buf, i, to) < MIN && sameRun(buf, i, to) < REPEAT_MIN) { bytes.push(buf[i]); i++; }
+    if (!bytes.length) { bytes.push(buf[i]); i++; } // garante progresso
+    out.push({ addr: base + start, bytes, text: `FCB   ${bytes.map(b => '$' + hx2(b)).join(',')}` });
+  }
+}
+
+// Emite a região [from,to) de forma LINEAR: desmonta como código, mas detecta strings e runs
+// de dados. Usado quando o fluxo praticamente falhou (loader que remapeia/relocaliza), para
+// não esconder o corpo do programa como um "mar de FCB". Instruções que cruzam `to` viram FCB.
+function emitLinear(buf: Uint8Array, from: number, to: number, base: number, out: DisasmLine[]) {
+  let i = from; let guard = 0;
+  while (i < to && guard++ < 200000) {
+    const same = sameRun(buf, i, to);
+    if (same >= REPEAT_MIN) { pushRun(buf, i, same, base, out); i += same; continue; }
+    const tile = tileRun(buf, i, to);
+    if (tile.len) { pushTile(buf, i, tile.len, tile.period, base, out); i += tile.len; continue; }
+    const r = printRun(buf, i, to);
+    if (r >= 5) { emitStringRun(buf, i, r, to, base, out); i += r; continue; } // limiar maior p/ não comer código
+    try {
+      const [line, next] = decodeOne(buf, i, base);
+      // Guarda anti-engolir: se a instrução cruzaria o início de uma string clara logo à frente,
+      // não a decodifica inteira — emite os bytes até a string como FCB (ex.: "1E 50" EXG não come o 'P').
+      let cut = next;
+      for (let j = i + 1; j < next; j++) { if (printRun(buf, j, to) >= 5) { cut = j; break; } }
+      if (cut < next) {
+        const bytes: number[] = []; for (let k = i; k < cut; k++) bytes.push(buf[k]);
+        out.push({ addr: base + i, bytes, text: `FCB   ${bytes.map(b => '$' + hx2(b)).join(',')}` });
+        i = cut; continue;
+      }
+      if (next > to) { out.push({ addr: base + i, bytes: [buf[i]], text: `FCB   $${hx2(buf[i])}` }); i += 1; }
+      else { out.push(line); i = next > i ? next : i + 1; }
+    } catch { out.push({ addr: base + i, bytes: [buf[i]], text: `FCB   $${hx2(buf[i])}` }); i += 1; }
   }
 }
 
@@ -315,6 +472,14 @@ export function disassembleSmart(buf: Uint8Array, base = 0, entries: number[] = 
     for (const t of targets) push(t - base);
     if (fall) push(i + len);
   }
+  // Cobertura: fração do buffer alcançada como código pelo fluxo. Se for muito baixa, o fluxo
+  // praticamente falhou (ex.: loader que remapeia via MMU e dá JMP p/ fora) — nesse caso as
+  // regiões não-alcançadas são desmontadas LINEARMENTE em vez de viram um "mar de FCB".
+  let codeBytes = 0;
+  for (const s of codeStart) { const [ln] = decodeOne(buf, s, base); codeBytes += ln.bytes.length; }
+  const coverage = n ? codeBytes / n : 0;
+  const sparse = coverage < 0.15; // limiar (ajustável): abaixo disso, varre o resto como código
+
   const out: DisasmLine[] = [];
   let i = 0; let g = 0;
   while (i < n && g++ < 500000) {
@@ -323,14 +488,32 @@ export function disassembleSmart(buf: Uint8Array, base = 0, entries: number[] = 
       out.push(line); i = next > i ? next : i + 1;
     } else {
       let j = i; while (j < n && !codeStart.has(j)) j++;
-      emitData(buf, i, j, base, out); i = j;
+      (sparse ? emitLinear : emitData)(buf, i, j, base, out); i = j;
     }
   }
-  return out;
+  const res = annotate(out) as DisasmLine[] & { coverage: number; sparse: boolean };
+  res.coverage = coverage; res.sparse = sparse;
+  return res;
 }
 
-/** Formata uma linha como texto "ADDR  BYTES   MNEM OPERAND". */
+// Largura fixa da coluna de bytes — cabe a maior instrução do 6809 (5 bytes = "XX XX XX XX XX").
+// Linhas de dados com mais bytes são capadas com "…" para os mnemônicos/diretivas sempre alinharem.
+const BYTECOL = 15;
+
+/** Formata uma linha como texto "ADDR  BYTES(fixo)  MNEM OPERAND" (ou "NOME:" p/ marcadores de label). */
 export function formatLine(l: DisasmLine): string {
-  const b = l.bytes.map(hx2).join(' ');
-  return `${hx4(l.addr)}  ${b.padEnd(11)}  ${l.text}`;
+  if (l.bytes.length === 0 && l.label) return `${l.label}:`;
+  let col: string;
+  if (l.run) { // dado colapsado: "N×$XX" (byte) ou "N×[$xx$yy]" (tile) em vez de despejar tudo
+    const period = l.period || 1;
+    col = period === 1
+      ? `${l.run}×$${hx2(l.bytes[0])}`
+      : `${l.run}×[${l.bytes.slice(0, period).map(hx2).join('')}]`;
+  } else if (l.bytes.length > 5) { // dado longo (FCC/FCB): mostra os 4 primeiros + "…"
+    col = l.bytes.slice(0, 4).map(hx2).join(' ') + '…';
+  } else {
+    col = l.bytes.map(hx2).join(' ');
+  }
+  const tail = l.run ? `  ; ×${l.run}` : '';
+  return `${hx4(l.addr)}  ${col.padEnd(BYTECOL)}  ${l.text}${tail}`;
 }

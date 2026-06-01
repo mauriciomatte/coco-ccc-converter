@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   FileAudio, 
   Disc, 
@@ -35,13 +35,35 @@ import {
   X,
   MonitorPlay,
   FileCode2,
-  Eraser
+  Eraser,
+  FileInput
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
 import { detokenizeBasic } from './basicDetokenize';
 import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
+
+// Persistência (localStorage) das marcas código/dados do disassembly, por arquivo.
+// Mapa { fileKey → { data: [[ini,fim]…], code: [offset…] } }. fileKey = nome|tamanho.
+const DISASM_MARKS_KEY = 'disasmMarks:v1';
+type DisasmMarks = { data: Array<[number, number]>; code: number[] };
+function loadAllDisasmMarks(): Record<string, DisasmMarks> {
+  try { return JSON.parse(localStorage.getItem(DISASM_MARKS_KEY) || '{}'); } catch { return {}; }
+}
+function loadDisasmMarks(key: string): DisasmMarks {
+  if (!key) return { data: [], code: [] };
+  const m = loadAllDisasmMarks()[key];
+  return { data: m?.data || [], code: m?.code || [] };
+}
+function saveDisasmMarks(key: string, data: Array<[number, number]>, code: number[]): void {
+  if (!key) return;
+  try {
+    const all = loadAllDisasmMarks();
+    if (!data.length && !code.length) delete all[key]; else all[key] = { data, code };
+    localStorage.setItem(DISASM_MARKS_KEY, JSON.stringify(all));
+  } catch { /* armazenamento indisponível — segue sem persistir */ }
+}
 
 interface LogMessage {
   time: string;
@@ -552,8 +574,31 @@ export default function App() {
   const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
   const [modalBuffer, setModalBuffer] = useState<Uint8Array | null>(null);
   const [modalFileName, setModalFileName] = useState<string>('');
-  // Novo arquivo aberto no modal → limpa as marcações de código/dados do disassembly.
-  useEffect(() => { setDisasmData([]); setDisasmCode([]); }, [modalFileName]);
+  // Marcas código/dados do disassembly PERSISTEM por arquivo (localStorage), chaveadas por
+  // nome + tamanho. (Não uso checksum de conteúdo de propósito: as marcas são por OFFSET, então
+  // devem sobreviver a edições de byte no hexa — que mantêm o tamanho e os offsets válidos.)
+  const disasmFileKey = useMemo(
+    () => (modalBuffer && modalBuffer.length ? `${modalFileName}|${modalBuffer.length}` : ''),
+    [modalFileName, modalBuffer]
+  );
+  useEffect(() => {
+    const m = loadDisasmMarks(disasmFileKey);
+    setDisasmData(m.data); setDisasmCode(m.code);
+  }, [disasmFileKey]);
+  // Mutações das marcas: atualizam o estado E gravam (a chave é estável durante a edição).
+  const addDisasmDataMark = () => {
+    if (hexRange[0] < 0) return;
+    const nd: Array<[number, number]> = [...disasmData, [hexRange[0], hexRange[1]]];
+    setDisasmData(nd); saveDisasmMarks(disasmFileKey, nd, disasmCode);
+  };
+  const addDisasmCodeMark = () => {
+    if (hexRange[0] < 0) return;
+    const nc = [...disasmCode, hexRange[0]];
+    setDisasmCode(nc); saveDisasmMarks(disasmFileKey, disasmData, nc);
+  };
+  const clearDisasmMarks = () => {
+    setDisasmData([]); setDisasmCode([]); saveDisasmMarks(disasmFileKey, [], []);
+  };
 
   // Resultados de compilação
   const [compiledRom, setCompiledRom] = useState<Uint8Array | null>(null);
@@ -3382,7 +3427,7 @@ export default function App() {
                 foi reduzido p/ anel fino (CSS .dsk-pane-active) para não vazar e "colar" na barra. */}
             <div className="flex items-center gap-1.5 mb-3 flex-wrap flex-shrink-0">
               <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
-              <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FilePlus size={15} /></button>
+              <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FileInput size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={() => handleDskCopy(false)} disabled={!selectedDsk?.entries.length} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
               <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length} title={t('dskToolCut')} aria-label={t('dskToolCut')} className="dsk-tool"><Scissors size={15} /></button>
@@ -3588,19 +3633,19 @@ export default function App() {
                     <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-[var(--border)] bg-slate-950/40 flex-shrink-0 flex-wrap">
                       <span className="text-[9px] uppercase text-[var(--text-muted)] tracking-wider">{currentLang === 'pt-br' ? 'Marcar sel.:' : 'Mark sel.:'}</span>
                       <button
-                        onClick={() => { if (hexRange[0] >= 0) setDisasmData(d => [...d, [hexRange[0], hexRange[1]]]); }}
+                        onClick={addDisasmDataMark}
                         disabled={hexRange[0] < 0}
                         className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
                         title={currentLang === 'pt-br' ? 'Força a seleção a ser tratada como DADOS (FCB/FCC)' : 'Force selection to be treated as DATA (FCB/FCC)'}
                       >{currentLang === 'pt-br' ? 'Dados' : 'Data'}</button>
                       <button
-                        onClick={() => { if (hexRange[0] >= 0) setDisasmCode(c => [...c, hexRange[0]]); }}
+                        onClick={addDisasmCodeMark}
                         disabled={hexRange[0] < 0}
                         className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
                         title={currentLang === 'pt-br' ? 'Força o início da seleção a ser tratado como CÓDIGO (entrada do disassembly)' : 'Force the selection start to be treated as CODE (disassembly entry)'}
                       >{currentLang === 'pt-br' ? 'Código' : 'Code'}</button>
                       <button
-                        onClick={() => { setDisasmData([]); setDisasmCode([]); }}
+                        onClick={clearDisasmMarks}
                         disabled={!disasmData.length && !disasmCode.length}
                         className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
                         title={currentLang === 'pt-br' ? 'Remove todas as marcações' : 'Clear all marks'}
@@ -3616,12 +3661,13 @@ export default function App() {
                       {lines.map((l, k) => {
                         // destaca a instrução cujo intervalo de bytes contém o offset selecionado no hexa
                         const sel = hexSel != null && (origin + hexSel) >= l.addr && (origin + hexSel) < l.addr + l.bytes.length;
+                        const isLabel = l.bytes.length === 0 && !!l.label; // marcador "L####:"
                         return (
                           <div
                             key={k}
                             data-disasm-addr={l.addr}
                             className="whitespace-pre px-1 rounded-sm"
-                            style={sel ? { background: '#ff8c1a', color: '#000', fontWeight: 700 } : undefined}
+                            style={sel ? { background: '#ff8c1a', color: '#000', fontWeight: 700 } : isLabel ? { color: 'var(--primary)', fontWeight: 700 } : undefined}
                           >
                             {formatLine(l)}
                           </div>
@@ -3629,9 +3675,20 @@ export default function App() {
                       })}
                     </div>
                     <div className="px-3 py-1.5 border-t border-[var(--border)] bg-slate-950/40 text-[9px] text-[var(--text-muted)] flex-shrink-0">
+                      {disasmFlow && typeof (lines as { coverage?: number }).coverage === 'number' && (() => {
+                        const cov = Math.round(((lines as { coverage?: number }).coverage || 0) * 100);
+                        const sparse = (lines as { sparse?: boolean }).sparse;
+                        return (
+                          <div className={sparse ? 'text-amber-400 mb-1' : 'mb-1'}>
+                            {currentLang === 'pt-br'
+                              ? `Fluxo alcançou ${cov}% do arquivo como código.${sparse ? ' Baixa cobertura (provável loader que remapeia/salta p/ fora) — o resto foi desmontado linearmente. Marque os blocos de dados, ou ajuste a Origem.' : ''}`
+                              : `Flow reached ${cov}% of the file as code.${sparse ? ' Low coverage (likely a relocating/mapping loader) — the rest was disassembled linearly. Mark the data blocks, or adjust Origin.' : ''}`}
+                          </div>
+                        );
+                      })()}
                       {currentLang === 'pt-br'
-                        ? 'Disassembly linear (somente leitura). Trechos de dados/strings aparecem como instruções — confira a coluna ASCII do hexa ao lado.'
-                        : 'Linear disassembly (read-only). Data/strings show up as instructions — cross-check the hex ASCII column.'}
+                        ? 'Somente leitura. Labels L#### nos alvos de desvio; registradores de hardware nomeados (ex.: MAPRAM=$FFDF). Em "Seguir fluxo", o que não é código vira dados/strings (FCB/FCC) — confira a coluna ASCII do hexa.'
+                        : 'Read-only. L#### labels at branch targets; hardware registers named (e.g. MAPRAM=$FFDF). In "Follow flow", non-code becomes data/strings (FCB/FCC) — cross-check the hex ASCII column.'}
                     </div>
                   </div>
                 );
