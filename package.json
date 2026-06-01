@@ -53,7 +53,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "CoCoDSK&CCCUtility_${version}_Setup.${ext}"
+      "artifactName": "CoCoDSK&CCCUtility_Setup ${version}.${ext}"
     },
     "linux": {
       "target": [
