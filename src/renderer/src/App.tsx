@@ -48,20 +48,20 @@ import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './di
 // Persistência (localStorage) das marcas código/dados do disassembly, por arquivo.
 // Mapa { fileKey → { data: [[ini,fim]…], code: [offset…] } }. fileKey = nome|tamanho.
 const DISASM_MARKS_KEY = 'disasmMarks:v1';
-type DisasmMarks = { data: Array<[number, number]>; code: number[] };
+type DisasmMarks = { data: Array<[number, number]>; code: number[]; cvec: Array<[number, number]>; dvec: Array<[number, number]> };
 function loadAllDisasmMarks(): Record<string, DisasmMarks> {
   try { return JSON.parse(localStorage.getItem(DISASM_MARKS_KEY) || '{}'); } catch { return {}; }
 }
 function loadDisasmMarks(key: string): DisasmMarks {
-  if (!key) return { data: [], code: [] };
+  if (!key) return { data: [], code: [], cvec: [], dvec: [] };
   const m = loadAllDisasmMarks()[key];
-  return { data: m?.data || [], code: m?.code || [] };
+  return { data: m?.data || [], code: m?.code || [], cvec: m?.cvec || [], dvec: m?.dvec || [] };
 }
-function saveDisasmMarks(key: string, data: Array<[number, number]>, code: number[]): void {
+function saveDisasmMarks(key: string, m: DisasmMarks): void {
   if (!key) return;
   try {
     const all = loadAllDisasmMarks();
-    if (!data.length && !code.length) delete all[key]; else all[key] = { data, code };
+    if (!m.data.length && !m.code.length && !m.cvec.length && !m.dvec.length) delete all[key]; else all[key] = m;
     localStorage.setItem(DISASM_MARKS_KEY, JSON.stringify(all));
   } catch { /* armazenamento indisponível — segue sem persistir */ }
 }
@@ -578,6 +578,8 @@ export default function App() {
   const [hexRange, setHexRange] = useState<[number, number]>([-1, -1]); // intervalo selecionado no hexa (p/ marcar)
   const [disasmData, setDisasmData] = useState<Array<[number, number]>>([]); // intervalos marcados como DADOS
   const [disasmCode, setDisasmCode] = useState<number[]>([]);    // offsets marcados como entrada de CÓDIGO
+  const [disasmCvec, setDisasmCvec] = useState<Array<[number, number]>>([]); // tabela de vetores de CÓDIGO (FDB)
+  const [disasmDvec, setDisasmDvec] = useState<Array<[number, number]>>([]); // tabela de vetores de DADOS (FDB)
   // Painéis rolam de forma autônoma; ao selecionar um byte no hexa, traz a instrução
   // correspondente do disassembly para a vista (só rola se estiver fora da tela) e destaca.
   useEffect(() => {
@@ -603,21 +605,34 @@ export default function App() {
   );
   useEffect(() => {
     const m = loadDisasmMarks(disasmFileKey);
-    setDisasmData(m.data); setDisasmCode(m.code);
+    setDisasmData(m.data); setDisasmCode(m.code); setDisasmCvec(m.cvec); setDisasmDvec(m.dvec);
   }, [disasmFileKey]);
   // Mutações das marcas: atualizam o estado E gravam (a chave é estável durante a edição).
+  const persistMarks = (data: Array<[number, number]>, code: number[], cvec: Array<[number, number]>, dvec: Array<[number, number]>) =>
+    saveDisasmMarks(disasmFileKey, { data, code, cvec, dvec });
   const addDisasmDataMark = () => {
     if (hexRange[0] < 0) return;
     const nd: Array<[number, number]> = [...disasmData, [hexRange[0], hexRange[1]]];
-    setDisasmData(nd); saveDisasmMarks(disasmFileKey, nd, disasmCode);
+    setDisasmData(nd); persistMarks(nd, disasmCode, disasmCvec, disasmDvec);
   };
   const addDisasmCodeMark = () => {
     if (hexRange[0] < 0) return;
     const nc = [...disasmCode, hexRange[0]];
-    setDisasmCode(nc); saveDisasmMarks(disasmFileKey, disasmData, nc);
+    setDisasmCode(nc); persistMarks(disasmData, nc, disasmCvec, disasmDvec);
+  };
+  const addDisasmCvecMark = () => {
+    if (hexRange[0] < 0) return;
+    const nv: Array<[number, number]> = [...disasmCvec, [hexRange[0], hexRange[1]]];
+    setDisasmCvec(nv); persistMarks(disasmData, disasmCode, nv, disasmDvec);
+  };
+  const addDisasmDvecMark = () => {
+    if (hexRange[0] < 0) return;
+    const nv: Array<[number, number]> = [...disasmDvec, [hexRange[0], hexRange[1]]];
+    setDisasmDvec(nv); persistMarks(disasmData, disasmCode, disasmCvec, nv);
   };
   const clearDisasmMarks = () => {
-    setDisasmData([]); setDisasmCode([]); saveDisasmMarks(disasmFileKey, [], []);
+    setDisasmData([]); setDisasmCode([]); setDisasmCvec([]); setDisasmDvec([]);
+    persistMarks([], [], [], []);
   };
 
   // Resultados de compilação
@@ -3831,7 +3846,7 @@ export default function App() {
               )}
               {showDisasm && (() => {
                 const origin = (parseInt(disasmOrigin, 16) || loadAddr || 0) & 0xFFFF;
-                const lines = disasmFlow ? disassembleSmart(modalBuffer, origin, [execAddr], { dataRanges: disasmData, codeOffsets: disasmCode }) : disassemble(modalBuffer, origin);
+                const lines = disasmFlow ? disassembleSmart(modalBuffer, origin, [execAddr], { dataRanges: disasmData, codeOffsets: disasmCode, cvecRanges: disasmCvec, dvecRanges: disasmDvec }) : disassemble(modalBuffer, origin);
                 disasmLinesRef.current = lines;
                 return (
                   <div className="flex flex-col min-h-0 flex-shrink-0" style={{ width: disasmWidth, minWidth: 240 }}>
@@ -3868,8 +3883,20 @@ export default function App() {
                         title={currentLang === 'pt-br' ? 'Força o início da seleção a ser tratado como CÓDIGO (entrada do disassembly)' : 'Force the selection start to be treated as CODE (disassembly entry)'}
                       >{currentLang === 'pt-br' ? 'Código' : 'Code'}</button>
                       <button
+                        onClick={addDisasmCvecMark}
+                        disabled={hexRange[0] < 0}
+                        className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
+                        title={currentLang === 'pt-br' ? 'Marca a seleção como TABELA DE VETORES DE CÓDIGO (FDB): cada par de bytes é um endereço de código, seguido e rotulado' : 'Mark selection as a CODE-VECTOR table (FDB): each 2-byte entry is a code address, followed and labeled'}
+                      >C-vetor</button>
+                      <button
+                        onClick={addDisasmDvecMark}
+                        disabled={hexRange[0] < 0}
+                        className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
+                        title={currentLang === 'pt-br' ? 'Marca a seleção como TABELA DE VETORES DE DADOS (FDB): cada par de bytes é um endereço, rotulado (sem seguir como código)' : 'Mark selection as a DATA-VECTOR table (FDB): each 2-byte entry is an address, labeled (not followed as code)'}
+                      >D-vetor</button>
+                      <button
                         onClick={clearDisasmMarks}
-                        disabled={!disasmData.length && !disasmCode.length}
+                        disabled={!disasmData.length && !disasmCode.length && !disasmCvec.length && !disasmDvec.length}
                         className="dsk-tool text-[10px]" style={{ padding: '2px 6px' }}
                         title={currentLang === 'pt-br' ? 'Remove todas as marcações' : 'Clear all marks'}
                       >{currentLang === 'pt-br' ? 'Limpar' : 'Clear'}</button>
@@ -3877,7 +3904,7 @@ export default function App() {
                         {hexRange[0] >= 0
                           ? `$${(origin + hexRange[0]).toString(16).toUpperCase().padStart(4, '0')}–$${(origin + hexRange[1]).toString(16).toUpperCase().padStart(4, '0')}`
                           : (currentLang === 'pt-br' ? '(clique/shift-clique no hexa)' : '(click/shift-click in hex)')}
-                        {(disasmData.length || disasmCode.length) ? ` · ${disasmData.length}D/${disasmCode.length}C` : ''}
+                        {(disasmData.length || disasmCode.length || disasmCvec.length || disasmDvec.length) ? ` · ${disasmData.length}D/${disasmCode.length}C/${disasmCvec.length}cv/${disasmDvec.length}dv` : ''}
                       </span>
                     </div>
                     <div ref={disasmPreRef} className="flex-1 min-h-0 overflow-auto p-2 text-[11px] font-mono leading-tight select-text" style={{ color: 'var(--text-secondary)' }}>
@@ -3910,8 +3937,8 @@ export default function App() {
                         );
                       })()}
                       {currentLang === 'pt-br'
-                        ? 'Somente leitura. Labels L#### nos alvos de desvio; registradores de hardware nomeados (ex.: MAPRAM=$FFDF). Em "Seguir fluxo", o que não é código vira dados/strings (FCB/FCC) — confira a coluna ASCII do hexa.'
-                        : 'Read-only. L#### labels at branch targets; hardware registers named (e.g. MAPRAM=$FFDF). In "Follow flow", non-code becomes data/strings (FCB/FCC) — cross-check the hex ASCII column.'}
+                        ? 'Somente leitura. Labels L#### nos desvios e ponteiros (LDX #tab); registradores nomeados (MAPRAM=$FFDF); <$xx resolvido pelo DP (LDA #/TFR ..,DP). Marque tabelas com C-vetor (código) / D-vetor (dados) → FDB rotulado.'
+                        : 'Read-only. L#### labels on branches and pointers (LDX #tab); named registers (MAPRAM=$FFDF); <$xx resolved via DP (LDA #/TFR ..,DP). Mark tables with C-vetor (code) / D-vetor (data) → labeled FDB.'}
                     </div>
                   </div>
                 );

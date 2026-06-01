@@ -171,7 +171,13 @@ export interface DisasmLine {
   label?: string;   // se preenchido com bytes vazios, a linha é um marcador de label "NOME:"
   run?: number;     // linha de dados colapsada — nº de repetições (a coluna de bytes vira "N×…")
   period?: number;  // bytes por unidade repetida (1 = byte idêntico; 2-4 = tile periódico de gráfico)
+  imm?: number;     // valor imediato (#$xx / #$xxxx) — usado p/ rastrear DP e ponteiros
+  dir?: number;     // byte do operando direto (<$xx) — usado p/ resolver com o DP corrente
 }
+
+// Mnemônicos cujo imediato de 16 bits costuma ser um PONTEIRO (endereço), não constante.
+// Ex.: LDX #tabela / CMPX #fim. Heurística: rotula o alvo se cair no buffer ou num símbolo.
+const PTR_IMM = new Set(['LDX', 'LDY', 'LDU', 'LDS', 'LDD', 'CMPX', 'CMPY', 'CMPU', 'CMPS']);
 
 // Decodifica o operando indexado (postbyte em p[i]); retorna [texto, bytesConsumidos, offsetPCR?].
 // offsetPCR (com sinal) só vem nos modos ,PCR — o chamador soma ao PC pra achar o alvo absoluto.
@@ -227,12 +233,14 @@ function decodeOne(p: Uint8Array, i: number, base: number): [DisasmLine, number]
   let operand = '';
   let target: number | undefined;  // alvo absoluto p/ ext e relativos (vira label/símbolo no operando)
   let ref: number | undefined;     // alvo absoluto p/ ,PCR (vira comentário "; →NOME")
+  let imm: number | undefined;     // valor imediato (p/ rastreio de DP e ponteiros)
+  let dir: number | undefined;     // byte do operando direto (p/ resolver com o DP)
   let j = i2;
   switch (op.mode) {
     case 'inh': break;
-    case 'imm8': operand = `#$${hx2(p[j])}`; j += 1; break;
-    case 'imm16': operand = `#$${hx4((p[j] << 8) | p[j + 1])}`; j += 2; break;
-    case 'dir': operand = `<$${hx2(p[j])}`; j += 1; break;  // dir depende do DP → não vira label
+    case 'imm8': operand = `#$${hx2(p[j])}`; imm = p[j]; j += 1; break;
+    case 'imm16': { const v = ((p[j] << 8) | p[j + 1]) & 0xFFFF; operand = `#$${hx4(v)}`; imm = v; if (PTR_IMM.has(op.m)) target = v; j += 2; break; }
+    case 'dir': operand = `<$${hx2(p[j])}`; dir = p[j]; j += 1; break;  // resolvido depois via DP
     case 'ext': { const a = ((p[j] << 8) | p[j + 1]) & 0xFFFF; operand = `$${hx4(a)}`; target = a; j += 2; break; }
     case 'idx': {
       const [t, n, pcrOff] = decodeIndexed(p, j); operand = t;
@@ -249,7 +257,30 @@ function decodeOne(p: Uint8Array, i: number, base: number): [DisasmLine, number]
   const bytes: number[] = [];
   for (let k = start; k < j; k++) bytes.push(p[k]);
   const text = operand ? `${op.m.padEnd(5)} ${operand}` : op.m;
-  return [{ addr, bytes, text, target, ref }, j];
+  return [{ addr, bytes, text, target, ref, imm, dir }, j];
+}
+
+// Rastreia o registrador DP pelo idioma comum "LDA #$xx ; TFR A,DP" (idem com B). Resolve cada
+// operando direto <$xx para o endereço CHEIO (DP*256+xx) e o anota como comentário "; →NOME"
+// (via `ref`), que o annotate transforma em símbolo de hardware/label se aplicável. DP desconhecido
+// (nenhum TFR ..,DP visto ainda) → não resolve (conservador). Roda na ordem de endereço.
+function trackDP(out: DisasmLine[], dp0?: number) {
+  let dp: number | null = dp0 != null ? dp0 & 0xFF : null;
+  let pend: { reg: string; val: number } | null = null;
+  for (const l of out) {
+    if (l.bytes.length === 0) continue; // marcador de label
+    const mnem = l.text.split(/\s+/)[0];
+    if ((mnem === 'LDA' || mnem === 'LDB') && l.imm != null && l.imm <= 0xFF) {
+      pend = { reg: mnem === 'LDA' ? 'A' : 'B', val: l.imm & 0xFF }; continue;
+    }
+    if (mnem === 'TFR' && /,DP\b/.test(l.text)) {
+      const src = l.text.replace(/^\S+\s+/, '').split(',')[0].trim();
+      if (pend && pend.reg === src) dp = pend.val;
+      pend = null; continue;
+    }
+    if (l.dir != null && dp != null && l.ref == null && l.target == null) l.ref = ((dp << 8) | l.dir) & 0xFFFF;
+    pend = null; // qualquer outra instrução quebra o idioma adjacente
+  }
 }
 
 // Pós-processo: nomeia operandos absolutos. Endereços de hardware viram símbolos (SYMBOLS);
@@ -298,6 +329,7 @@ export function disassemble(buf: Uint8Array, base = 0): DisasmLine[] {
     }
     if (i <= before) i = before + 1; // nunca trava
   }
+  trackDP(out);
   return annotate(out);
 }
 
@@ -422,6 +454,12 @@ function emitLinear(buf: Uint8Array, from: number, to: number, base: number, out
     if (tile.len) { pushTile(buf, i, tile.len, tile.period, base, out); i += tile.len; continue; }
     const r = printRun(buf, i, to);
     if (r >= 5) { emitStringRun(buf, i, r, to, base, out); i += r; continue; } // limiar maior p/ não comer código
+    if (buf[i] === 0x00) { // $00 curto = quase sempre dado (terminador/coordenada), não "NEG <$00"
+      let z = i; while (z < to && buf[z] === 0x00 && z - i < 6) z++;
+      const bytes: number[] = []; for (let k = i; k < z; k++) bytes.push(0);
+      out.push({ addr: base + i, bytes, text: `FCB   ${bytes.map(() => '$00').join(',')}` });
+      i = z; continue;
+    }
     try {
       const [line, next] = decodeOne(buf, i, base);
       // Guarda anti-engolir: se a instrução cruzaria o início de uma string clara logo à frente,
@@ -446,6 +484,9 @@ function emitLinear(buf: Uint8Array, from: number, to: number, base: number, out
 export interface DisasmOpts {
   dataRanges?: Array<[number, number]>; // intervalos de OFFSET forçados como dados (marcação manual)
   codeOffsets?: number[];               // OFFSETs extras forçados como início de código (entradas manuais)
+  cvecRanges?: Array<[number, number]>; // tabelas de endereços de CÓDIGO (FDB): cada entrada vira entrada de fluxo + label no destino
+  dvecRanges?: Array<[number, number]>; // tabelas de endereços de DADOS (FDB): cada entrada vira label (sem seguir como código)
+  dp?: number;                          // valor inicial do DP (opcional) p/ resolver operandos diretos <$xx
 }
 
 export function disassembleSmart(buf: Uint8Array, base = 0, entries: number[] = [], opts: DisasmOpts = {}): DisasmLine[] {
@@ -458,10 +499,22 @@ export function disassembleSmart(buf: Uint8Array, base = 0, entries: number[] = 
     const a = Math.max(0, Math.min(s, e)); const b = Math.min(n - 1, Math.max(s, e));
     for (let k = a; k <= b; k++) forced[k] = 1;
   }
+  // Tabelas de vetores (cvector/dvector): são DADOS (FDB de 2 bytes), nunca código.
+  const vec = new Uint8Array(n); // 1 = cvector, 2 = dvector
+  const markVec = (ranges: Array<[number, number]> | undefined, val: number) => {
+    for (const [s, e] of ranges || []) { const a = Math.max(0, Math.min(s, e)), b = Math.min(n - 1, Math.max(s, e)); for (let k = a; k <= b; k++) { vec[k] = val; forced[k] = 1; } }
+  };
+  markVec(opts.cvecRanges, 1); markVec(opts.dvecRanges, 2);
+
   const stack: number[] = [];
   const push = (off: number) => { if (off >= 0 && off < n && !seen[off] && !forced[off]) stack.push(off); };
   for (const e of entries) push(e - base);
   for (const o of opts.codeOffsets || []) push(o); // entradas de código marcadas pelo usuário
+  // cvector: cada endereço de 2 bytes na tabela é um ponto de entrada de código.
+  for (const [s, e] of opts.cvecRanges || []) {
+    const a = Math.max(0, Math.min(s, e)), b = Math.min(n - 1, Math.max(s, e));
+    for (let k = a; k + 1 <= b; k += 2) push((((buf[k] << 8) | buf[k + 1]) & 0xFFFF) - base);
+  }
   push(0); // .BIN normalmente começa com código
   let guard = 0;
   while (stack.length && guard++ < 500000) {
@@ -486,11 +539,16 @@ export function disassembleSmart(buf: Uint8Array, base = 0, entries: number[] = 
     if (codeStart.has(i)) {
       const [line, next] = decodeOne(buf, i, base);
       out.push(line); i = next > i ? next : i + 1;
+    } else if (vec[i]) {
+      // Tabela de vetores: emite uma entrada FDB de 2 bytes (o annotate resolve p/ label/símbolo).
+      if (i + 1 < n) { const a = ((buf[i] << 8) | buf[i + 1]) & 0xFFFF; out.push({ addr: base + i, bytes: [buf[i], buf[i + 1]], text: `FDB   $${hx4(a)}`, target: a }); i += 2; }
+      else { out.push({ addr: base + i, bytes: [buf[i]], text: `FCB   $${hx2(buf[i])}` }); i += 1; }
     } else {
-      let j = i; while (j < n && !codeStart.has(j)) j++;
+      let j = i; while (j < n && !codeStart.has(j) && !vec[j]) j++;
       (sparse ? emitLinear : emitData)(buf, i, j, base, out); i = j;
     }
   }
+  trackDP(out, opts.dp);
   const res = annotate(out) as DisasmLine[] & { coverage: number; sparse: boolean };
   res.coverage = coverage; res.sparse = sparse;
   return res;
