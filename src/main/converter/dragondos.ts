@@ -210,6 +210,24 @@ export function dragonTypeFromExt(ext: string): { fileType: number; fileTypeName
 }
 
 /**
+ * Determine a Dragon file's REAL type from its content, not just the extension. Dragon DOS files
+ * saved by BASIC carry a 9-byte load header `55 [type] [load:2] [len:2] [exec:2] AA` where
+ * type 1 = tokenised BASIC and type 2 = machine code/binary. Files with no such header (raw
+ * sequential data) fall back to the extension hint. `raw` is the de-headered disk image.
+ */
+export function dragonFileKind(raw: Buffer, sectors: number[], ext: string): { fileType: number; fileTypeName: string } {
+  if (sectors.length) {
+    const o = lsnOffset(sectors[0]);
+    if (o + 9 <= raw.length && raw[o] === 0x55 && raw[o + 8] === 0xAA) {
+      const t = raw[o + 1];
+      if (t === 1) return { fileType: 0, fileTypeName: 'BASIC' };
+      if (t === 2) return { fileType: 2, fileTypeName: 'Machine Code' };
+    }
+  }
+  return dragonTypeFromExt(ext); // sem cabeçalho (dados sequenciais) → palpite por extensão
+}
+
+/**
  * Normalized read-only directory result for a Dragon (or VDK-wrapped Dragon) image, shaped
  * to mirror the RS-DOS `readDskDirectory` result so the existing UI consumes it with minimal
  * branching. Returns null when `buf` is not a Dragon disk (caller falls back to RS-DOS).
@@ -220,7 +238,7 @@ export function readDragonDirectory(buf: Buffer): any | null {
   if (!isDragonDosDisk(raw)) return null;
   const p = parseDragonDos(raw);
   const files = p.files.map((f) => {
-    const k = dragonTypeFromExt(f.ext);
+    const k = dragonFileKind(raw, f.sectors, f.ext); // tipo pelo cabeçalho do arquivo (fallback: extensão)
     return {
       name: f.name, ext: f.ext, fullName: f.fullName,
       fileType: k.fileType, fileTypeName: k.fileTypeName,
@@ -280,7 +298,173 @@ export function encodeDragonBlank(tracks = 40, sectorsPerTrack = 18): Buffer {
 
   // Mark directory entry 0 as End-of-Directory so an empty disk scans cleanly.
   img[entryOffset(img, sectorsPerTrack, 0)] = 0x08;
-  return img;
+
+  // Wrap in a minimal valid VDK container ("dk" + 12-byte header) so the new disk is a proper
+  // .vdk — loadable in XRoar and other Dragon tools (a raw image named .vdk would be rejected).
+  const vdkHeader = Buffer.from([0x64, 0x6b, 0x0c, 0x00, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+  return Buffer.concat([vdkHeader, img]);
+}
+
+// ── Write support (single-sided Dragon DOS) ───────────────────────────────────
+// All write helpers assume the standard SS layout (format/bitmap at Track 20 = LSN 360/361,
+// 18 sectors/track). DS images aren't detected as Dragon by isDragonDosDisk, so they never
+// reach these paths.
+
+const BMP1 = lsnOffset(DIR_TRACK * 18);       // Track 20 Sector 1 (bitmap part 1) = 0x16800
+const BMP2 = lsnOffset(DIR_TRACK * 18 + 1);   // Track 20 Sector 2 (bitmap part 2)
+
+function bmpLoc(lsn: number): [number, number] {
+  if (lsn <= 0x59f) return [BMP1 + (lsn >> 3), lsn & 7];
+  const r = lsn - 0x5a0; return [BMP2 + (r >> 3), r & 7];
+}
+function bmpIsFree(raw: Buffer, lsn: number): boolean {
+  const [o, b] = bmpLoc(lsn); return ((raw[o] >> b) & 1) === 1;
+}
+function bmpSet(raw: Buffer, lsn: number, used: boolean): void {
+  const [o, b] = bmpLoc(lsn);
+  if (used) raw[o] &= ~(1 << b) & 0xff; else raw[o] |= (1 << b);
+}
+
+/** Set of directory entry numbers currently in use (non-deleted headers + their continuations). */
+function occupiedEntries(raw: Buffer, spt: number): Set<number> {
+  const used = new Set<number>();
+  for (let n = 0; n < 160; n++) {
+    const off = entryOffset(raw, spt, n);
+    const flag = raw[off];
+    if (flag & 0x08) break;       // end of directory
+    if (flag & 0x80) continue;    // deleted → free
+    if (flag & 0x01) continue;    // continuation → counted via its header
+    used.add(n);
+    let o = off, f = flag, guard = 0;
+    const seen = new Set([n]);
+    while ((f & 0x20) && guard++ < 170) {
+      const nx = raw[o + 0x18];
+      if (seen.has(nx) || nx >= 160) break;
+      seen.add(nx); used.add(nx);
+      o = entryOffset(raw, spt, nx); f = raw[o];
+    }
+  }
+  return used;
+}
+
+/**
+ * Add a file to a Dragon DOS disk (SS). Allocates free sectors from the bitmap (largest runs
+ * first to minimise allocation blocks), writes a header (+continuation) directory entry, and
+ * updates the bitmap. Preserves a VDK header if present. Returns the new image.
+ */
+export function addDragonFile(raw0: Buffer, name: string, ext: string, data: Buffer): Buffer {
+  const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
+  const raw = Buffer.from(stripVdk(raw0));   // mutable copy of the disk image
+  if (!isDragonDosDisk(raw)) throw new Error('Not a Dragon DOS disk');
+  const fo = lsnOffset(DIR_TRACK * 18);
+  const tracks = raw[fo + 0xfc], spt = raw[fo + 0xfd];
+  if (spt !== 18) throw new Error('Dragon write supports single-sided (18 sec/track) only');
+  const totalSectors = tracks * spt;
+
+  const nm = (name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const ex = (ext || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
+  if (!nm) throw new Error('Invalid Dragon file name');
+  if (parseDragonDos(raw).files.some(f => f.name === nm && f.ext === ex))
+    throw new Error(`File "${nm}${ex ? '.' + ex : ''}" already exists on the disk`);
+
+  const sectorsNeeded = Math.max(1, Math.ceil(data.length / SEC));
+
+  // Build the list of free contiguous runs (skip the directory track / out-of-range, which are
+  // marked used in the bitmap), largest first.
+  const runs: Array<{ lsn: number; len: number }> = [];
+  for (let lsn = 0; lsn < totalSectors;) {
+    if (!bmpIsFree(raw, lsn)) { lsn++; continue; }
+    let len = 0; while (lsn + len < totalSectors && bmpIsFree(raw, lsn + len)) len++;
+    runs.push({ lsn, len }); lsn += len;
+  }
+  runs.sort((a, b) => b.len - a.len);
+  const totalFree = runs.reduce((a, r) => a + r.len, 0);
+  if (totalFree < sectorsNeeded) throw new Error(`Disk full: need ${sectorsNeeded} sectors, ${totalFree} free`);
+
+  // Allocate, preferring a single run that fits (1 block); otherwise greedily largest-first.
+  const sabs: Array<{ lsn: number; count: number }> = [];
+  let remaining = sectorsNeeded;
+  const exact = runs.find(r => r.len >= remaining);
+  if (exact) { sabs.push({ lsn: exact.lsn, count: remaining }); remaining = 0; }
+  else for (const r of runs) {
+    if (remaining <= 0) break;
+    const take = Math.min(r.len, remaining);
+    sabs.push({ lsn: r.lsn, count: take }); remaining -= take;
+  }
+  if (remaining > 0) throw new Error('Allocation failed');
+
+  // Directory slots: 1 header (4 SABs) + continuation entries (7 SABs each).
+  const nCont = sabs.length <= 4 ? 0 : Math.ceil((sabs.length - 4) / 7);
+  const occupied = occupiedEntries(raw, spt);
+  const free: number[] = [];
+  for (let n = 0; n < 160 && free.length < 1 + nCont; n++) if (!occupied.has(n)) free.push(n);
+  if (free.length < 1 + nCont) throw new Error('Directory full');
+  const headerSlot = free[0];
+  const contSlots = free.slice(1, 1 + nCont);
+
+  // Write the file data into the allocated sectors, in SAB order.
+  let dpos = 0;
+  for (const s of sabs) for (let k = 0; k < s.count; k++) {
+    const off = lsnOffset(s.lsn + k);
+    const n = Math.min(SEC, data.length - dpos);
+    if (n > 0) data.copy(raw, off, dpos, dpos + n);
+    for (let z = n; z < SEC; z++) raw[off + z] = 0; // pad tail of last sector
+    dpos += SEC;
+    bmpSet(raw, s.lsn + k, true);
+  }
+  const bytesInLast = data.length % SEC; // 0 ⇒ full 256-byte last sector
+
+  // Header directory entry.
+  const hOff = entryOffset(raw, spt, headerSlot);
+  for (let i = 0; i < 25; i++) raw[hOff + i] = 0;
+  raw[hOff] = nCont > 0 ? 0x20 : 0x00; // Continued? else simple header
+  for (let i = 0; i < 8; i++) raw[hOff + 1 + i] = i < nm.length ? nm.charCodeAt(i) : 0;
+  for (let i = 0; i < 3; i++) raw[hOff + 9 + i] = i < ex.length ? ex.charCodeAt(i) : 0;
+  const writeSab = (base: number, slot: number, idx: number) => {
+    const s = sabs[idx];
+    raw[base + slot * 3] = (s.lsn >> 8) & 0xff;
+    raw[base + slot * 3 + 1] = s.lsn & 0xff;
+    raw[base + slot * 3 + 2] = s.count & 0xff;
+  };
+  let sabIdx = 0;
+  for (let slot = 0; slot < 4 && sabIdx < sabs.length; slot++, sabIdx++) writeSab(hOff + 0x0c, slot, sabIdx);
+  raw[hOff + 0x18] = nCont > 0 ? contSlots[0] : bytesInLast;
+
+  // Continuation entries.
+  for (let c = 0; c < nCont; c++) {
+    const cOff = entryOffset(raw, spt, contSlots[c]);
+    for (let i = 0; i < 25; i++) raw[cOff + i] = 0;
+    const more = c < nCont - 1;
+    raw[cOff] = 0x01 | (more ? 0x20 : 0x00); // continuation block (+continued if more)
+    for (let slot = 0; slot < 7 && sabIdx < sabs.length; slot++, sabIdx++) writeSab(cOff + 0x01, slot, sabIdx);
+    raw[cOff + 0x18] = more ? contSlots[c + 1] : bytesInLast;
+  }
+
+  // Maintain the End-of-Directory marker just past the highest used entry.
+  const maxIdx = Math.max(headerSlot, ...contSlots, ...occupied);
+  if (maxIdx + 1 < 160) raw[entryOffset(raw, spt, maxIdx + 1)] = 0x08;
+
+  return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
+}
+
+/** Delete a file from a Dragon DOS disk: mark its directory entries deleted and free its sectors. */
+export function deleteDragonFile(raw0: Buffer, entry: { index: number; sectors?: number[] }): Buffer {
+  const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
+  const raw = Buffer.from(stripVdk(raw0));
+  if (!isDragonDosDisk(raw)) throw new Error('Not a Dragon DOS disk');
+  const spt = raw[lsnOffset(DIR_TRACK * 18) + 0xfd];
+  for (const lsn of entry.sectors || []) bmpSet(raw, lsn, false); // free data sectors
+  // Mark the header and any continuation entries deleted.
+  let o = entryOffset(raw, spt, entry.index);
+  let f = raw[o], guard = 0;
+  const seen = new Set([entry.index]);
+  raw[o] |= 0x80;
+  while ((f & 0x20) && guard++ < 170) {
+    const nx = raw[o + 0x18];
+    if (seen.has(nx) || nx >= 160) break;
+    seen.add(nx); o = entryOffset(raw, spt, nx); f = raw[o]; raw[o] |= 0x80;
+  }
+  return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
 }
 
 /** Extract a Dragon file's raw bytes (read-only) following its sector list. */

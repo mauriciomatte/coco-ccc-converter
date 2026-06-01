@@ -36,12 +36,15 @@ import {
   MonitorPlay,
   FileCode2,
   Eraser,
-  FileInput
+  FileInput,
+  Download,
+  GitCompare
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
-import DiskMap from './components/DiskMap';
+import DiskMap, { DiskLegend } from './components/DiskMap';
+import FileCompareModal from './components/FileCompareModal';
 import { detokenizeBasic } from './basicDetokenize';
 import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
 
@@ -467,7 +470,7 @@ export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
   const [activeTab, setActiveTab] = useState<'dsk' | 'xroar' | 'gw' | 'basic' | 'eprom'>('dsk');
-  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string } | null>(null);
+  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean } | null>(null);
   // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
   const [xroarType, setXroarType] = useState<{ text: string; key: number; reset?: boolean } | null>(null);
   // Editor BASIC: conteúdo e nome do arquivo persistem mesmo ao trocar de aba.
@@ -506,6 +509,8 @@ export default function App() {
   const [gwPane, setGwPane] = useState<'A' | 'B'>('A'); // painel-alvo da leitura GW (e usado na gravação)
   const [gwReadConfirm, setGwReadConfirm] = useState<boolean>(false); // modal: sobrescrever painel ao ler
   const [dskGwConfirm, setDskGwConfirm] = useState<boolean>(false); // modal: confirmar gravação no GW a partir da aba DSK
+  const [xroarTestConfirm, setXroarTestConfirm] = useState<boolean>(false); // modal: avisar que o XRoar será resetado ao testar o painel
+  const [compareData, setCompareData] = useState<{ nameA: string; dataA: Uint8Array; nameB: string; dataB: Uint8Array } | null>(null); // modal comparador de arquivos
   const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
   const [gwBusy, setGwBusy] = useState<boolean>(false);
   const [gwOp, setGwOp] = useState<'' | 'info' | 'read' | 'write'>('');
@@ -1314,12 +1319,12 @@ export default function App() {
 
   const STD_DISK = 161280; // disco RS-DOS padrão (35 trilhas)
 
-  // Discos Dragon DOS (.vdk) são SOMENTE LEITURA nesta versão (listar/extrair/mapa). Qualquer
-  // operação que modifique a imagem é bloqueada com aviso. Retorna true se deve abortar.
-  const dragonReadOnlyGuard = (which: 'A' | 'B'): boolean => {
+  // Discos Dragon DOS suportam adicionar/excluir/salvar, mas ORDENAR e DESFRAGMENTAR ainda não.
+  // Este guard bloqueia apenas essas operações ainda-não-suportadas. Retorna true se deve abortar.
+  const dragonUnsupportedGuard = (which: 'A' | 'B'): boolean => {
     if (getPane(which)?.format === 'dragon') {
-      addLog('Discos Dragon DOS (.vdk) são somente leitura nesta versão — edição não suportada.',
-        'Dragon DOS (.vdk) disks are read-only in this version — editing is not supported.', 'info');
+      addLog('Ordenar/Desfragmentar ainda não está disponível para discos Dragon (em breve).',
+        'Sort/Defragment is not available yet for Dragon disks (coming soon).', 'info');
       return true;
     }
     return false;
@@ -1496,7 +1501,7 @@ export default function App() {
   // em memória — a cada passo fica válida (suporta parar no meio, mantendo o que já foi feito).
   const isChainFrag = (c: number[]) => { for (let i = 1; i < (c || []).length; i++) if (c[i] !== c[i - 1] + 1) return true; return false; };
   const startDefragAnimation = async (which: 'A' | 'B', order: 'dir' | 'alpha' | 'size') => {
-    if (dragonReadOnlyGuard(which)) return;
+    if (dragonUnsupportedGuard(which)) return;
     const pane = getPane(which);
     if (!pane || !pane.files.length) return;
     const diskName = pane.fileName || which;
@@ -1576,7 +1581,7 @@ export default function App() {
   // Desfragmenta APENAS o arquivo selecionado (realoca num trecho contíguo). Se não couber num vão
   // contíguo (espaço livre fragmentado), avisa e sugere a desfragmentação total.
   const handleDefragFile = async (which: 'A' | 'B', entry: any) => {
-    if (dragonReadOnlyGuard(which)) return;
+    if (dragonUnsupportedGuard(which)) return;
     const pane = getPane(which);
     if (!pane || !entry) return;
     try {
@@ -1598,7 +1603,6 @@ export default function App() {
 
   const beginAddBatch = (which: 'A' | 'B', files: any[]) => {
     if (!files.length) return;
-    if (dragonReadOnlyGuard(which)) return;
     const pane = getPane(which);
     // Painel de destino vazio → doAddBatch cria uma imagem nova e adiciona (sem colisões).
     if (!pane) { doAddBatch(which, files, 'add'); return; }
@@ -1692,7 +1696,6 @@ export default function App() {
 
   const handleDskDelete = async () => {
     if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione arquivo(s) para excluir.', 'Select file(s) to delete.', 'warn'); return; }
-    if (dragonReadOnlyGuard(selectedDsk.pane)) return;
     const pane = getPane(selectedDsk.pane);
     if (!pane) return;
     pushDskUndo();
@@ -1727,7 +1730,7 @@ export default function App() {
 
   // Ordena alfabeticamente (A→Z) o diretório da imagem no painel ativo
   const handleDskSort = async () => {
-    if (dragonReadOnlyGuard(activePane)) return;
+    if (dragonUnsupportedGuard(activePane)) return;
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     if (!pane.files.length) { addLog('Não há arquivos para ordenar.', 'No files to sort.', 'warn'); return; }
@@ -1747,7 +1750,7 @@ export default function App() {
 
   // Ordena alfabeticamente TODOS os discos de um contêiner multi-disco no painel ativo
   const handleDskSortAll = async () => {
-    if (dragonReadOnlyGuard(activePane)) return;
+    if (dragonUnsupportedGuard(activePane)) return;
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     if (!pane.container) { addLog('Esta imagem não é um contêiner multi-disco.', 'This image is not a multi-disk container.', 'warn'); return; }
@@ -1857,22 +1860,37 @@ export default function App() {
   // Em contêiner (DriveWire/MiniIDE/CoCoSDC) o pane.fileName é um rótulo de disco
   // (sem .dsk, às vezes com espaços/":"), o que faz o XRoar não reconhecer o disco -> erro de I/O.
   // Normaliza para um nome .dsk válido (o buffer já é o disco único de 160 KB).
-  const toXroarDiskName = (fn?: string): string => {
-    const base = (fn || 'disk')
+  // Nome + extensão do disco para o XRoar conforme o CONTEÚDO do painel. O XRoar escolhe o leitor
+  // pela EXTENSÃO: um VDK Dragon (header "dk") precisa ir como ".vdk"; nomeá-lo ".dsk" faria o XRoar
+  // ler o header VDK como dados do disco e falhar. Discos crus (RS-DOS ou Dragon sem header) vão ".dsk".
+  const xroarDiskFor = (pane: any): { name: string; ext: 'dsk' | 'vdk' } => {
+    const buf = pane?.buffer;
+    const isVdk = !!buf && buf.length > 2 && buf[0] === 0x64 && buf[1] === 0x6b; // "dk"
+    const ext: 'dsk' | 'vdk' = isVdk ? 'vdk' : 'dsk';
+    const base = (pane?.fileName || 'disk')
       .replace(/\.(dsk|vdk|jvc|dmk)$/i, '')
       .replace(/[^A-Za-z0-9._-]+/g, '_')
       .replace(/^_+|_+$/g, '')
       .slice(0, 24) || 'disk';
-    return `${base}.dsk`;
+    return { name: `${base}.${ext}`, ext };
   };
 
   // Envia o disco do painel ativo para o emulador XRoar (drive 0) e abre a aba
   const handleTestInXroar = () => {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
-    setXroarLoad({ name: toXroarDiskName(pane.fileName), ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0 });
+    setXroarTestConfirm(true); // avisa que o XRoar será resetado antes de testar
+  };
+  // Confirmado: RESETA o XRoar (hard reset → boot limpo) e monta o disco do painel no drive 0,
+  // garantindo um teste limpo da imagem (sem resíduo do que estava rodando).
+  const proceedTestInXroar = () => {
+    setXroarTestConfirm(false);
+    const pane = getPane(activePane);
+    if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    const d = xroarDiskFor(pane);
+    setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, reset: true });
     setActiveTab('xroar');
-    addLog(`Enviando "${pane.fileName}" para o XRoar (drive 0).`, `Sending "${pane.fileName}" to XRoar (drive 0).`, 'info');
+    addLog(`XRoar resetado e recebendo "${d.name}" (drive 0).`, `XRoar reset and loading "${d.name}" (drive 0).`, 'info');
   };
 
   // Duplo-clique num arquivo: monta o disco do painel no XRoar (drive 0) e AUTO-RODA o arquivo
@@ -1882,11 +1900,11 @@ export default function App() {
     if (!pane) return;
     const cmd = f.fileType === 0 ? `RUN"${f.name}"\r` : `LOADM"${f.name}":EXEC\r`;
     setActivePane(which);
-    const diskName = toXroarDiskName(pane.fileName);
-    setXroarLoad({ name: diskName, ext: 'dsk', data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
+    const d = xroarDiskFor(pane);
+    setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
     setActiveTab('xroar');
-    // Diagnóstico: tamanho do disco (deve ser 161280), tipo do arquivo e comando exato enviado.
-    const dbg = `disco=${diskName} ${pane.buffer.length}B${pane.container ? ` (contêiner ${pane.container.kind} #${pane.container.index})` : ''} | ${f.fullName} type=${f.fileType} | cmd=${cmd.replace(/\r/g, '\\r')}`;
+    // Diagnóstico: tamanho do disco, tipo do arquivo e comando exato enviado.
+    const dbg = `disco=${d.name} ${pane.buffer.length}B${pane.container ? ` (contêiner ${pane.container.kind} #${pane.container.index})` : ''} | ${f.fullName} type=${f.fileType} | cmd=${cmd.replace(/\r/g, '\\r')}`;
     addLog(`Rodando "${f.fullName}" no XRoar (drive 0)… [${dbg}]`, `Running "${f.fullName}" in XRoar (drive 0)… [${dbg}]`, 'info');
   };
 
@@ -1914,7 +1932,7 @@ export default function App() {
   };
 
   // Lê bytes de um arquivo .BAS e devolve o texto editável. Tokenizado (binário) não é suportado.
-  const decodeBasToText = (bytes: Uint8Array, asciiFlag?: number): { text: string; tokenized: boolean } => {
+  const decodeBasToText = (bytes: Uint8Array, asciiFlag?: number, dialect: 'coco' | 'dragon' = 'coco'): { text: string; tokenized: boolean } => {
     let printable = 0, total = 0;
     for (let i = 0; i < bytes.length; i++) {
       const b = bytes[i];
@@ -1925,8 +1943,8 @@ export default function App() {
     const ratio = total ? printable / total : 1;
     const tokenized = (asciiFlag === 0 && ratio < 0.95) || ratio < 0.85;
     if (tokenized) {
-      // Tokenizado → tenta detokenizar (Color/Extended/Disk BASIC). Se conseguir, vira texto editável.
-      const d = detokenizeBasic(bytes);
+      // Tokenizado → tenta detokenizar (CoCo ou Dragon, conforme o dialeto). Se conseguir, vira texto editável.
+      const d = detokenizeBasic(bytes, dialect);
       if (d.ok) return { text: d.text.toUpperCase(), tokenized: false };
       return { text: '', tokenized: true };
     }
@@ -2044,7 +2062,8 @@ export default function App() {
     try {
       const f = await window.cocoApi.selectFile();
       if (!f) return;
-      const { text, tokenized } = decodeBasToText(new Uint8Array(f.buffer), 0xFF);
+      // Import avulso: usa a plataforma-alvo (CoCo/Dragon) como dica do dialeto de tokens.
+      const { text, tokenized } = decodeBasToText(new Uint8Array(f.buffer), 0xFF, platform === 'dragon' ? 'dragon' : 'coco');
       if (tokenized) { addLog(`"${f.fileName}" não parece texto (.bas tokenizado/binário). Abra um .BAS em ASCII.`, `"${f.fileName}" is not text (tokenized/binary .bas). Open an ASCII .BAS.`, 'warn'); return; }
       // Arquivo do sistema de arquivos não tem origem em DSK → sem "Salvar" in-place.
       requestLoadBasic(text, f.fileName || 'arquivo.bas', null);
@@ -2061,7 +2080,7 @@ export default function App() {
     try {
       const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
       if (!res.success) { addLog(`Editar BAS: ${res.error}`, `Edit BAS: ${res.error}`, 'error'); return; }
-      const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag);
+      const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag, pane.format === 'dragon' ? 'dragon' : 'coco');
       if (tokenized) {
         addLog(`"${entry.fullName}" está em formato TOKENIZADO — o editor abre apenas .BAS em ASCII/texto por enquanto. No CoCo, salve como ASCII (SAVE"NOME",A) e tente de novo.`,
                `"${entry.fullName}" is TOKENIZED — the editor only opens ASCII/text .BAS for now. On the CoCo, save it as ASCII (SAVE"NAME",A) and retry.`, 'warn');
@@ -2069,6 +2088,44 @@ export default function App() {
       }
       requestLoadBasic(text, entry.fullName, { pane: selectedDsk.pane, entry, diskName: pane.fileName, containerIndex: pane.container?.index });
     } catch (err: any) { addLog(`Editar BAS: ${err.message}`, `Edit BAS: ${err.message}`, 'error'); }
+  };
+
+  // Extrai o(s) arquivo(s) selecionado(s) de dentro da imagem para uma pasta do Windows (Salvar como).
+  // Grava os BYTES CRUS do arquivo (inclui o cabeçalho de carga RS-DOS/Dragon), tal como no disco.
+  const handleDskExtractToPc = async () => {
+    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo para extrair.', 'Select a file to extract.', 'warn'); return; }
+    const pane = getPane(selectedDsk.pane);
+    if (!pane) return;
+    for (const entry of selectedDsk.entries) {
+      try {
+        const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
+        if (!res.success) { addLog(`Extrair: ${res.error}`, `Extract: ${res.error}`, 'error'); continue; }
+        const ext = (entry.ext || 'bin').toLowerCase();
+        const save = await window.cocoApi.saveCartridgeFile(
+          res.data, entry.fullName,
+          currentLang === 'pt-br' ? `Salvar "${entry.fullName}" em…` : `Save "${entry.fullName}" to…`,
+          [{ name: `Arquivo .${ext}`, extensions: [ext] }, { name: 'All Files', extensions: ['*'] }]
+        );
+        if (save?.success) addLog(`"${entry.fullName}" extraído para: ${save.filePath}`, `"${entry.fullName}" extracted to: ${save.filePath}`, 'success');
+        else if (save?.error) addLog(`Extrair: ${save.error}`, `Extract: ${save.error}`, 'error');
+      } catch (err: any) { addLog(`Extrair: ${err.message}`, `Extract: ${err.message}`, 'error'); }
+    }
+  };
+
+  // Comparador: compara o arquivo SELECIONADO na imagem (lado A) com um arquivo do PC (lado B),
+  // escolhido por diálogo. Abre o modal de diff hexadecimal. Útil p/ medir transformações CoCo↔Dragon.
+  const handleDskCompare = async () => {
+    if (!selectedDsk || selectedDsk.entries.length !== 1) { addLog('Selecione UM arquivo na imagem para comparar.', 'Select ONE file in the image to compare.', 'warn'); return; }
+    const pane = getPane(selectedDsk.pane);
+    if (!pane) return;
+    const entry = selectedDsk.entries[0];
+    try {
+      const ex = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
+      if (!ex.success) { addLog(`Comparar: ${ex.error}`, `Compare: ${ex.error}`, 'error'); return; }
+      const f = await window.cocoApi.selectFile();
+      if (!f) return;
+      setCompareData({ nameA: entry.fullName, dataA: new Uint8Array(ex.data), nameB: f.fileName || 'arquivo', dataB: new Uint8Array(f.buffer) });
+    } catch (err: any) { addLog(`Comparar: ${err.message}`, `Compare: ${err.message}`, 'error'); }
   };
 
   // Limpa um painel (volta ao estado de app recém-aberto para aquele painel).
@@ -2698,7 +2755,6 @@ export default function App() {
   };
 
   // Perfil GW pelo tamanho do buffer RS-DOS: 184320 = 40 trilhas, 161280 = 35 (auto-seleção na gravação).
-  const paneGwFormat = (len: number): string | null => (len === 184320 ? 'coco.decb.40t' : len === 161280 ? 'coco.decb' : null);
 
   const doGwWrite = async (image: Uint8Array, formatOverride?: string) => {
     const fmt = formatOverride || gwFormat;
@@ -2712,21 +2768,20 @@ export default function App() {
     setGwBusy(false); setGwOp('');
   };
 
-  // Auto-seleciona o perfil GW pela geometria do painel (RS-DOS 35/40T) e avisa no log.
-  const autoFmtForPane = (buf: Uint8Array): string | undefined => {
-    const fmt = paneGwFormat(buf.length);
-    if (fmt && fmt !== gwFormat) {
+  // Auto-seleção do perfil GW ciente do FORMATO do painel (RS-DOS x Dragon, 35/40/80T, 1/2 lados).
+  const autoFmtForPaneObj = (pane: any): string => {
+    const fmt = gwFormatForDisk(pane);
+    if (fmt !== gwFormat) {
       setGwFormat(fmt);
-      const t = buf.length === 184320 ? '40' : '35';
-      addLog(`Geometria do disco: ${t} trilhas → perfil ${fmt} (auto).`, `Disk geometry: ${t} tracks → profile ${fmt} (auto).`, 'info');
+      addLog(`Perfil GW ajustado para o disco: ${fmt} (auto).`, `GW profile set for the disk: ${fmt} (auto).`, 'info');
     }
-    return fmt || undefined;
+    return fmt;
   };
 
   const handleGwWritePane = () => {
     const pane = getPane(gwPane);
     if (!pane) { addLog(`Painel ${gwPane} sem imagem.`, `Pane ${gwPane} has no image.`, 'warn'); return; }
-    doGwWrite(pane.buffer, autoFmtForPane(pane.buffer));
+    doGwWrite(pane.buffer, autoFmtForPaneObj(pane));
   };
 
   // Botão "Gravar GW" da aba DSK: confirma antes de gravar (a gravação respeita as configurações da aba GW).
@@ -2743,7 +2798,7 @@ export default function App() {
     setGwPane(activePane);
     setActiveTab('gw');
     addLog(`Gravando Painel ${activePane} no disco físico via Greaseweazle…`, `Writing Pane ${activePane} to the physical disk via Greaseweazle…`, 'info');
-    doGwWrite(pane.buffer, autoFmtForPane(pane.buffer));
+    doGwWrite(pane.buffer, autoFmtForPaneObj(pane));
   };
   const handleGwWriteFile = async () => {
     try {
@@ -2957,9 +3012,9 @@ export default function App() {
                   <span
                     className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded self-start"
                     style={{ color: '#000', background: '#22d3ee', boxShadow: '0 0 8px rgba(34,211,238,0.6)' }}
-                    title={currentLang === 'pt-br' ? 'Imagem Dragon DOS (VDK). Esta versão abre Dragon em SOMENTE LEITURA: listar, extrair e ver o mapa.' : 'Dragon DOS image (VDK). This version opens Dragon READ-ONLY: list, extract and view the map.'}
+                    title={currentLang === 'pt-br' ? 'Imagem Dragon DOS. Adicionar, excluir e salvar funcionam; ordenar/desfragmentar ainda não.' : 'Dragon DOS image. Add, delete and save work; sort/defragment not yet.'}
                   >
-                    Dragon · {currentLang === 'pt-br' ? 'somente leitura' : 'read-only'}
+                    Dragon DOS
                   </span>
                 )}
                 {pane.container && (
@@ -3049,6 +3104,7 @@ export default function App() {
                 mode={isDragon ? 'dragon' : 'rsdos'}
                 tracks={pane.geom?.tracks} sectorsPerTrack={pane.geom?.sectorsPerTrack} dirTrack={pane.geom?.dirTrack}
                 usedSectors={pane.usedSectors} totalSectors={pane.totalSectors}
+                hideLegend
               />
               {(() => {
                 const sel = selectedDsk?.pane === which && selectedDsk.entries.length === 1 ? selectedDsk.entries[0] : null;
@@ -3073,13 +3129,21 @@ export default function App() {
             </div>
           )}
         </div>
-        {/* Status bar */}
-        <div className="dsk-statusbar">
-          {pane
-            ? (isDragon
-              ? `Dragon DOS · ${pane.files.length} ${t('dskFilesWord')} · ${t('dskUsedWord')} ${usedKB} KB (${pane.usedSectors}s · ${usedPct}%) · ${t('dskFreeWord')} ${freeKB} KB (${pane.freeSectors}s) · Frag ${fragPct}%`
-              : `${pane.files.length} ${t('dskFilesWord')} · ${t('dskUsedWord')} ${usedKB} KB (${usedGran}g · ${usedPct}%) · ${t('dskFreeWord')} ${freeKB} KB (${pane.freeGranules}g) · ${currentLang === 'pt-br' ? 'Frag' : 'Frag'} ${fragPct}%`)
-            : t('dskNoImage')}
+        {/* Status bar — dividida: stats à esquerda; à direita (alinhada sob a coluna do disco, 240px)
+            a legenda do mapa. Tirar a legenda de dentro do disco libera espaço e o disco fica maior. */}
+        <div className="dsk-statusbar" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {pane
+              ? (isDragon
+                ? `Dragon DOS · ${pane.files.length} ${t('dskFilesWord')} · ${t('dskUsedWord')} ${usedKB} KB (${pane.usedSectors}s · ${usedPct}%) · ${t('dskFreeWord')} ${freeKB} KB (${pane.freeSectors}s) · Frag ${fragPct}%`
+                : `${pane.files.length} ${t('dskFilesWord')} · ${t('dskUsedWord')} ${usedKB} KB (${usedGran}g · ${usedPct}%) · ${t('dskFreeWord')} ${freeKB} KB (${pane.freeGranules}g) · ${currentLang === 'pt-br' ? 'Frag' : 'Frag'} ${fragPct}%`)
+              : t('dskNoImage')}
+          </div>
+          {pane && (
+            <div style={{ width: 240, flexShrink: 0, display: 'flex', justifyContent: 'center', borderLeft: '1px solid var(--border)', paddingLeft: 8 }}>
+              <DiskLegend lang={currentLang} />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -3789,12 +3853,12 @@ export default function App() {
                 foi reduzido p/ anel fino (CSS .dsk-pane-active) para não vazar e "colar" na barra. */}
             <div className="flex items-center gap-1.5 mb-3 flex-wrap flex-shrink-0">
               <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
-              <button onClick={handleDskInject} disabled={getPane(activePane)?.format === 'dragon'} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FileInput size={15} /></button>
+              <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FileInput size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={() => handleDskCopy(false)} disabled={!selectedDsk?.entries.length} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
-              <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length || getPane(selectedDsk?.pane)?.format === 'dragon'} title={t('dskToolCut')} aria-label={t('dskToolCut')} className="dsk-tool"><Scissors size={15} /></button>
-              <button onClick={handleDskPaste} disabled={!dskClipboard || getPane(activePane)?.format === 'dragon'} title={t('dskToolPaste')} aria-label={t('dskToolPaste')} className="dsk-tool"><Clipboard size={15} /></button>
-              <button onClick={handleDskDelete} disabled={!selectedDsk?.entries.length || getPane(selectedDsk?.pane)?.format === 'dragon'} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
+              <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length} title={t('dskToolCut')} aria-label={t('dskToolCut')} className="dsk-tool"><Scissors size={15} /></button>
+              <button onClick={handleDskPaste} disabled={!dskClipboard} title={t('dskToolPaste')} aria-label={t('dskToolPaste')} className="dsk-tool"><Clipboard size={15} /></button>
+              <button onClick={handleDskDelete} disabled={!selectedDsk?.entries.length} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
               <button
                 onClick={handleDskEditBas}
                 disabled={!(selectedDsk?.entries.length && (selectedDsk.entries[0].ext || '').toUpperCase() === 'BAS')}
@@ -3803,6 +3867,24 @@ export default function App() {
                 className="dsk-tool"
               >
                 <FileCode2 size={15} /> {t('Editar', 'Edit')}
+              </button>
+              <button
+                onClick={handleDskExtractToPc}
+                disabled={!selectedDsk?.entries.length}
+                title={currentLang === 'pt-br' ? 'Extrair o(s) arquivo(s) selecionado(s) para uma pasta do Windows' : 'Extract the selected file(s) to a Windows folder'}
+                aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'}
+                className="dsk-tool"
+              >
+                <Download size={15} /> {currentLang === 'pt-br' ? 'Extrair' : 'Extract'}
+              </button>
+              <button
+                onClick={handleDskCompare}
+                disabled={selectedDsk?.entries.length !== 1}
+                title={currentLang === 'pt-br' ? 'Comparar o arquivo selecionado com um arquivo do PC (diff hexadecimal)' : 'Compare the selected file with a file from the PC (hex diff)'}
+                aria-label={currentLang === 'pt-br' ? 'Comparar' : 'Compare'}
+                className="dsk-tool"
+              >
+                <GitCompare size={15} /> {currentLang === 'pt-br' ? 'Comparar' : 'Compare'}
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleCopyPaneAToB} disabled={!paneA} title={t('dskToolCopyAtoB')} aria-label={t('dskToolCopyAtoB')} className="dsk-tool"><ArrowRight size={15} /></button>
@@ -4166,6 +4248,34 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Testar Painel no XRoar: avisa que o emulador será RESETADO (boot limpo) antes de montar o disco */}
+      {xroarTestConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setXroarTestConfirm(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 430, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Testar no XRoar?' : 'Test in XRoar?'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? 'O XRoar será REINICIADO (reset total) e o disco do painel ativo será montado no drive 0, para você testar a imagem em um estado limpo. Qualquer programa em execução ou conteúdo não salvo no emulador será perdido.'
+                : 'XRoar will be RESET (hard reset) and the active pane\'s disk mounted in drive 0, so you can test the image from a clean state. Anything currently running or unsaved in the emulator will be lost.'}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setXroarTestConfirm(false)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={proceedTestInXroar} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+                <MonitorPlay size={13} /> {currentLang === 'pt-br' ? 'Resetar e testar' : 'Reset and test'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Comparador de arquivos (imagem ↔ PC) */}
+      {compareData && (
+        <FileCompareModal lang={currentLang} nameA={compareData.nameA} dataA={compareData.dataA} nameB={compareData.nameB} dataB={compareData.dataB} onClose={() => setCompareData(null)} />
       )}
 
       {/* BASIC "Salvar" in-place: arquivo de origem sumiu / disco trocado — confirma antes de gravar */}

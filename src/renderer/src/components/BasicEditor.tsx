@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useLayoutEffect } from 'react';
 import { Scissors, Copy, Clipboard, Search, Replace, Play, RotateCcw, Save, FolderOpen, Disc, FileCode2 } from 'lucide-react';
 import { X } from 'lucide-react';
 
@@ -53,6 +53,13 @@ export default function BasicEditor({
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  // Posição do cursor a restaurar após uma mudança de valor (uppercase/colar). Sem isto, a
+  // textarea CONTROLADA reposiciona o cursor no FIM ao reaplicar o value (bug: pulava p/ última linha).
+  const caretToRestore = useRef<{ s: number; e: number } | null>(null);
+  useLayoutEffect(() => {
+    const ta = taRef.current; const c = caretToRestore.current;
+    if (ta && c) { ta.selectionStart = c.s; ta.selectionEnd = c.e; caretToRestore.current = null; }
+  });
 
   const [findOpen, setFindOpen] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
@@ -72,8 +79,8 @@ export default function BasicEditor({
     if (!ta) { setUpper(text + up); return; }
     const s = ta.selectionStart, e = ta.selectionEnd;
     const next = (text.slice(0, s) + up + text.slice(e)).toUpperCase();
+    caretToRestore.current = { s: s + up.length, e: s + up.length };
     onTextChange(next);
-    requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + up.length; });
   };
 
   const doCut = () => { focusTA(); document.execCommand('cut'); };
@@ -234,7 +241,11 @@ export default function BasicEditor({
       <textarea
         ref={taRef}
         value={text}
-        onChange={e => setUpper(e.target.value)}
+        onChange={e => {
+          const ta = e.currentTarget;
+          caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; // preserva o cursor após o uppercase
+          onTextChange(ta.value.toUpperCase());
+        }}
         spellCheck={false}
         autoCapitalize="characters"
         placeholder={'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}

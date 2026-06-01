@@ -34,7 +34,7 @@ const JOY_OPTIONS = [
   { v: 5, pt: 'Teclado: QAOP + Espaço', en: 'Keyboard: QAOP + Space' },
 ];
 
-interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; }
+interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; }
 interface PendingType { text: string; key: number; reset?: boolean; }
 
 interface Props {
@@ -154,6 +154,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       const cmd = pendingLoad.runCmd;
       setTimeout(() => sendCmd('hard_reset'), 900);                                  // disco montou → reseta
       setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: 60 }); focusEmu(); }, 3400); // boot pronto → digita
+    } else if (pendingLoad.reset) {
+      // "Testar Painel": monta o disco e dá HARD RESET → boot limpo com o disco no drive 0
+      // (sem auto-digitar; o usuário testa com DIR/RUN/LOADM no prompt).
+      setTimeout(() => { sendCmd('hard_reset'); focusEmu(); }, 900);
     }
   }, [pendingLoad, ready]);
 

@@ -10,6 +10,58 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.9 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO (Edição/gravação Dragon DOS)
+  • Discos Dragon agora são EDITÁVEIS: adicionar arquivo (injetar/colar/arrastar),
+    excluir e salvar. A alocação usa o bitmap do Dragon DOS (blocos SAB de setores
+    contíguos, com entradas de continuação quando precisa) e o diretório da trilha
+    20. Preserva o header VDK quando presente.
+  • Os IPCs de adicionar/excluir detectam o formato do disco automaticamente
+    (RS-DOS x Dragon) — o mesmo botão funciona nos dois.
+  • Gravação Greaseweazle ciente do formato: painel Dragon grava com perfil
+    dragon.40ss/40ds/80ss/80ds (antes só RS-DOS por tamanho).
+  • Selo do painel passou de "somente leitura" para "Dragon DOS" (editável).
+ADICIONADO (Editor BASIC — dialeto Dragon)
+  • O editor agora destokeniza BASIC do DRAGON corretamente (tabelas de tokens do
+    Dragon, que diferem das do CoCo) — antes vinha "lixo" (POKE→CONT, CLS→SOUND,
+    THEN→SCREEN…). O dialeto é escolhido pelo formato do disco (disco Dragon →
+    tokens Dragon) ou pela plataforma-alvo no import avulso.
+  • Detecção automática do início do programa: tolera o cabeçalho de 9 bytes do
+    Dragon DOS e o 0xFF do CoCo (corrige o desalinhamento das primeiras linhas).
+  • Validado contra a listagem real do XRoar (AIR-RUN.BAS reproduz exatamente).
+ADICIONADO (Aba DSK — extrair e comparar)
+  • Botão EXTRAIR: salva o(s) arquivo(s) de dentro da imagem para uma pasta do
+    Windows ("Salvar como"), com os bytes crus exatos (RS-DOS e Dragon).
+  • Botão COMPARAR: compara o arquivo selecionado na imagem com um arquivo do PC
+    num diff hexadecimal lado a lado (diferenças em vermelho, trechos idênticos
+    colapsados, resumo de bytes diferentes/prefixo/sufixo). Base p/ medir as
+    transformações CoCo↔Dragon.
+ADICIONADO (XRoar — Testar Painel)
+  • "Testar Painel" agora RESETA o emulador (hard reset → boot limpo) antes de
+    montar o disco, com um MODAL de aviso (o conteúdo do XRoar será perdido).
+    Vale p/ CoCo e Dragon.
+MELHORADO (tipos de arquivo Dragon + VDK)
+  • Tipo de arquivo Dragon (BASIC/Máquina/Dados) agora lido pelo CABEÇALHO do
+    arquivo (55 [tipo] ... AA), não só pela extensão — corrige .TXT/.GFX/.GRN/.BLK
+    que são máquina aparecendo como "dados". (No CoCo o tipo já vem do diretório.)
+  • Filtro do "Abrir imagem" passou a listar .vdk/.jvc/.dmk.
+  • "Testar Painel" envia VDK como .vdk (antes forçava .dsk, e o XRoar lia o header
+    VDK como dados → falhava).
+MELHORADO (Layout da aba DSK)
+  • A legenda do mapa passou para a BARRA DE STATUS (à direita, sob a coluna do
+    disco), liberando espaço e deixando o disco gráfico MAIOR (painéis A e B).
+    Rótulos encurtados p/ uma linha: "USO · FRAG. · LIVRE · DIR · SEL.".
+CORRIGIDO (Editor BASIC)
+  • Cursor pulava para a última linha ao digitar/colar no meio (textarea controlada
+    reposicionava o cursor no fim após o uppercase). Agora a posição é preservada.
+NOTAS
+  • Ordenar (A-Z) e Desfragmentar ainda NÃO estão disponíveis para Dragon (em breve).
+  • Validado: 17 testes de round-trip (add/excluir/reuso/bitmap + .vdk real) e
+    end-to-end no app (IPC + UI: criar disco Dragon, injetar, listar, extrair,
+    excluir, extrair p/ PC, comparar, reset+testar no XRoar, cursor do editor).
+
+--------------------------------------------------------------------------------
 v1.0.8 — 2026-06-01
 --------------------------------------------------------------------------------
 ADICIONADO (multi-formato — Dragon DOS / VDK, SOMENTE LEITURA)

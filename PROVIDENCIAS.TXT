@@ -30,9 +30,18 @@ DRAGON / VDK (multi-formato)
 [FEITO] Toggle de plataforma CoCo/Dragon persistente (cabeçalho): define padrão de
     Novo disco + máquina XRoar + formato GW; GW também casa com o disco ao carregar.
     Criação de disco Dragon novo (40T SS em branco) implementada.
-[EM ANDAMENTO] Suporte Dragon COMPLETO: adicionar/excluir/defrag/gravar arquivos
-    num disco Dragon (o disco novo nasce somente-leitura até isto). Falta também
-    discriminador de formato (RS-DOS x Dragon x OS-9) genérico e gravação GW Dragon.
+[FEITO v1.0.9] Edição/gravação Dragon: adicionar/excluir/salvar + gravação GW
+    ciente do formato (dragon.40ss/...). Engine com bitmap+SAB+continuação, validado.
+[ ] Dragon: ORDENAR (A-Z) e DESFRAGMENTAR (ainda bloqueados na UI).
+[ ] Dragon DS (2 lados / 80T): hoje só single-sided (18 sec/trilha) é detectado/escrito.
+[ ] Arrastar arquivo do painel PARA o Explorer (drag-out nativo, Electron
+    startDrag) — "opção 2", pausada a pedido do usuário. (Explorer→painel já
+    funciona; e há o botão Extrair p/ salvar em pasta.)
+[ ] Conversão Dragon <-> CoCo via COMPARAÇÃO de pares (mesmo programa nas 2
+    plataformas): o botão COMPARAR (v1.0.9) é a ferramenta de medição. Plano:
+    diff dos ~10 pares → ver se são "port por patch" (alinhável) ou recompilação
+    → montar tabela de substituições padronizada → "Aplicar patch" + testar no
+    XRoar sem salvar → salvar se funcionar. (Discutido com o usuário.)
 [PARCIAL] XRoar: o toggle já define a MÁQUINA padrão (CoCo 3 / Dragon 64). Falta a
     troca AUTOMÁTICA ao CARREGAR uma imagem Dragon (hoje é via toggle manual).
     Quando o usuário abrir/rodar uma imagem .vdk/Dragon, configurar o XRoar para a

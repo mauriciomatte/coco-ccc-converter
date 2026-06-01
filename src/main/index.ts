@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
-import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank } from './converter/dragondos';
+import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
@@ -165,7 +165,10 @@ ipcMain.handle('dsk-extract-raw', async (_, dskUint8Array: Uint8Array, entry: an
 // 2c. Add raw bytes as a file into a .dsk image (paste / drop)
 ipcMain.handle('dsk-add-bytes', async (_, dskUint8Array: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, dataUint8Array: Uint8Array) => {
   try {
-    const img = addDskFile(Buffer.from(dskUint8Array), name, ext, fileType, asciiFlag, Buffer.from(dataUint8Array));
+    const buf = Buffer.from(dskUint8Array);
+    const img = looksDragon(buf)
+      ? addDragonFile(buf, name, ext, Buffer.from(dataUint8Array))
+      : addDskFile(buf, name, ext, fileType, asciiFlag, Buffer.from(dataUint8Array));
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -302,9 +305,12 @@ ipcMain.handle('dsk-add-file', async (_, dskUint8Array: Uint8Array) => {
 });
 
 // 3c. Delete a file from a .dsk image
-ipcMain.handle('dsk-delete-file', async (_, dskUint8Array: Uint8Array, entry: DskFileEntry) => {
+ipcMain.handle('dsk-delete-file', async (_, dskUint8Array: Uint8Array, entry: any) => {
   try {
-    const img = deleteDskFile(Buffer.from(dskUint8Array), entry);
+    const buf = Buffer.from(dskUint8Array);
+    const img = (looksDragon(buf) || entry?.format === 'dragon')
+      ? deleteDragonFile(buf, entry)
+      : deleteDskFile(buf, entry as DskFileEntry);
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -353,10 +359,10 @@ ipcMain.handle('xroar-pick-file', async () => {
 ipcMain.handle('image-analyze', async () => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Abrir imagem (MiniIDE / CoCoSDC / .dsk)',
+    title: 'Abrir imagem (MiniIDE / CoCoSDC / .dsk / .vdk)',
     properties: ['openFile'],
     filters: [
-      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'ima', 'bin', 'raw', 'vhd'] },
+      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'vdk', 'jvc', 'dmk', 'ima', 'bin', 'raw', 'vhd'] },
       { name: 'All Files', extensions: ['*'] },
     ],
   });

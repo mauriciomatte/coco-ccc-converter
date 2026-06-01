@@ -42,6 +42,25 @@ const C = {
   dir: 'rgba(168,85,247,0.55)', sel: '#ff8c1a', grid: 'rgba(2,6,12,0.85)', hub: '#0b1220', hubRing: 'rgba(148,163,184,0.35)',
 };
 
+// Legenda do mapa do disco — reutilizável (pode ser renderizada fora do componente, ex.: na
+// barra de status, para liberar espaço vertical e deixar o disco maior).
+export function DiskLegend({ lang }: { lang: 'pt-br' | 'en-us' }) {
+  const L = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
+  const items: Array<[string, string, string]> = [
+    ['used', C.used, L('USO', 'USED')], ['frag', C.frag, 'FRAG.'],
+    ['free', C.free, L('LIVRE', 'FREE')], ['dir', C.dir, 'DIR'], ['sel', C.sel, 'SEL.'],
+  ];
+  return (
+    <div style={{ display: 'flex', gap: 9, fontSize: 9, color: '#94a3b8', flexWrap: 'wrap', alignItems: 'center' }}>
+      {items.map(([k, c, lbl]) => (
+        <span key={k} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <span style={{ width: 8, height: 8, background: c, borderRadius: 1, display: 'inline-block' }} />{lbl}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 interface DiskFile { fullName: string; name?: string; ext?: string; granuleChain?: number[]; totalSize?: number; sectors?: number[]; fragmented?: boolean }
 interface Props {
   files: DiskFile[]; totalGranules?: number; selectedNames?: Set<string>;
@@ -51,9 +70,12 @@ interface Props {
   mode?: 'rsdos' | 'dragon';
   tracks?: number; sectorsPerTrack?: number; dirTrack?: number;
   usedSectors?: number; totalSectors?: number;
+  // Oculta a legenda interna (ela passa a ser renderizada fora, ex.: na barra de status) — assim
+  // o disco aproveita TODO o espaço vertical e fica maior.
+  hideLegend?: boolean;
 }
 
-export default function DiskMap({ files, totalGranules, selectedNames, lang, onSelectFile, mode, tracks, sectorsPerTrack, dirTrack, usedSectors, totalSectors }: Props) {
+export default function DiskMap({ files, totalGranules, selectedNames, lang, onSelectFile, mode, tracks, sectorsPerTrack, dirTrack, usedSectors, totalSectors, hideLegend }: Props) {
   const DRAGON = mode === 'dragon';
   const SECT = DRAGON ? (sectorsPerTrack || 18) : SECTORS;       // setores por trilha
   const DIRT = DRAGON ? (dirTrack ?? 20) : DIR_TRACK;            // trilha do diretório
@@ -75,7 +97,7 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
     return () => ro.disconnect();
   }, []);
 
-  const LEGEND_H = 30; // reserva vertical para a legenda abaixo do disco
+  const LEGEND_H = hideLegend ? 0 : 30; // reserva vertical p/ a legenda (0 quando ela vai p/ fora)
   const S = Math.max(120, Math.min(box.w, box.h - LEGEND_H));
   const cx = S / 2, cy = S / 2;
   const rOut = S / 2 - 3, rIn = rOut * 0.18, ring = (rOut - rIn) / TRACKS;
@@ -198,14 +220,16 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
         <text x={cx} y={cy + rIn * 0.45} textAnchor="middle" fontSize={rIn * 0.28} fill="#94a3b8">{L('cheio', 'full')}</text>
       </svg>
 
-      {/* legenda (abaixo da mídia) */}
-      <div style={{ display: 'flex', gap: 9, fontSize: 9, color: '#94a3b8', flexWrap: 'wrap', justifyContent: 'center', flexShrink: 0 }}>
-        {[['used', C.used, L('ocupado', 'used')], ['frag', C.frag, L('fragment.', 'fragm.')], ['free', C.free, L('livre', 'free')], ['dir', C.dir, 'DIR'], ['sel', C.sel, L('sel.', 'sel.')]].map(([k, c, lbl]) => (
-          <span key={k as string} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-            <span style={{ width: 8, height: 8, background: c as string, borderRadius: 1, display: 'inline-block' }} />{lbl}
-          </span>
-        ))}
-      </div>
+      {/* legenda (abaixo da mídia) — ocultável; quando oculta vai para a barra de status */}
+      {!hideLegend && (
+        <div style={{ display: 'flex', gap: 9, fontSize: 9, color: '#94a3b8', flexWrap: 'wrap', justifyContent: 'center', flexShrink: 0 }}>
+          {[['used', C.used, L('USO', 'USED')], ['frag', C.frag, 'FRAG.'], ['free', C.free, L('LIVRE', 'FREE')], ['dir', C.dir, 'DIR'], ['sel', C.sel, 'SEL.']].map(([k, c, lbl]) => (
+            <span key={k as string} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <span style={{ width: 8, height: 8, background: c as string, borderRadius: 1, display: 'inline-block' }} />{lbl}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* tooltip do arquivo sob o cursor */}
       {hf && (
