@@ -2630,21 +2630,36 @@ export default function App() {
     setGwBusy(false); setGwOp('');
   };
 
-  const doGwWrite = async (image: Uint8Array) => {
+  // Perfil GW pelo tamanho do buffer RS-DOS: 184320 = 40 trilhas, 161280 = 35 (auto-seleção na gravação).
+  const paneGwFormat = (len: number): string | null => (len === 184320 ? 'coco.decb.40t' : len === 161280 ? 'coco.decb' : null);
+
+  const doGwWrite = async (image: Uint8Array, formatOverride?: string) => {
+    const fmt = formatOverride || gwFormat;
     setGwBusy(true); setGwOp('write'); setGwDone(new Set());
-    addLog(`Greaseweazle: gravando disco (${gwFormat})…`, `Greaseweazle: writing disk (${gwFormat})…`, 'info');
+    addLog(`Greaseweazle: gravando disco (${fmt})…`, `Greaseweazle: writing disk (${fmt})…`, 'info');
     try {
-      const res = await window.cocoApi.gwWrite(gwOpts(), image);
+      const res = await window.cocoApi.gwWrite({ ...gwOpts(), format: fmt }, image);
       if (res.success) addLog('Gravação concluída com sucesso.', 'Write completed successfully.', 'success');
       else addLog(`Falha na gravação (código ${res.code}).`, `Write failed (code ${res.code}).`, 'error');
     } catch (err: any) { addLog(`gw write: ${err.message}`, `gw write: ${err.message}`, 'error'); }
     setGwBusy(false); setGwOp('');
   };
 
+  // Auto-seleciona o perfil GW pela geometria do painel (RS-DOS 35/40T) e avisa no log.
+  const autoFmtForPane = (buf: Uint8Array): string | undefined => {
+    const fmt = paneGwFormat(buf.length);
+    if (fmt && fmt !== gwFormat) {
+      setGwFormat(fmt);
+      const t = buf.length === 184320 ? '40' : '35';
+      addLog(`Geometria do disco: ${t} trilhas → perfil ${fmt} (auto).`, `Disk geometry: ${t} tracks → profile ${fmt} (auto).`, 'info');
+    }
+    return fmt || undefined;
+  };
+
   const handleGwWritePane = () => {
     const pane = getPane(gwPane);
     if (!pane) { addLog(`Painel ${gwPane} sem imagem.`, `Pane ${gwPane} has no image.`, 'warn'); return; }
-    doGwWrite(pane.buffer);
+    doGwWrite(pane.buffer, autoFmtForPane(pane.buffer));
   };
 
   // Botão "Gravar GW" da aba DSK: confirma antes de gravar (a gravação respeita as configurações da aba GW).
@@ -2661,7 +2676,7 @@ export default function App() {
     setGwPane(activePane);
     setActiveTab('gw');
     addLog(`Gravando Painel ${activePane} no disco físico via Greaseweazle…`, `Writing Pane ${activePane} to the physical disk via Greaseweazle…`, 'info');
-    doGwWrite(pane.buffer);
+    doGwWrite(pane.buffer, autoFmtForPane(pane.buffer));
   };
   const handleGwWriteFile = async () => {
     try {

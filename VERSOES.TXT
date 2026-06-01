@@ -10,6 +10,16 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.7 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO (Greaseweazle)
+  • Auto-seleção do perfil de gravação pela GEOMETRIA do disco: ao gravar um
+    painel no disco físico (botão "Gravar GW" da aba DSK, ou "Gravar Painel" na
+    aba GW), o app detecta 35T (161.280 bytes → coco.decb) ou 40T (184.320 →
+    coco.decb.40t) e seleciona o perfil sozinho, avisando no log. (A lista de
+    formatos já incluía coco.decb, coco.decb.40t e os OS-9 40/80.)
+
+--------------------------------------------------------------------------------
 v1.0.6 — 2026-06-01
 --------------------------------------------------------------------------------
 ADICIONADO
