@@ -43,9 +43,10 @@ interface Props {
   pendingLoad?: PendingLoad | null;
   pendingType?: PendingType | null;
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
+  platform?: 'coco' | 'dragon';
 }
 
-export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onLog }: Props) {
+export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onLog, platform }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [machine, setMachine] = useState('coco3');
@@ -65,6 +66,14 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const lastLoadKey = useRef(0);
   const lastTypeKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
+
+  // A plataforma-alvo (toggle CoCo/Dragon do app) define a MÁQUINA padrão: CoCo 3 (NTSC) ou
+  // Dragon 64. Ao trocar a plataforma, a máquina acompanha; o usuário ainda pode escolher outra
+  // máquina manualmente no seletor abaixo (vale até a próxima troca de plataforma).
+  useEffect(() => {
+    if (!platform) return;
+    setMachine(platform === 'dragon' ? 'dragon64' : 'coco3');
+  }, [platform]);
 
   // Toda a config visual vai no boot (URL). Trocar máquina ou saída de vídeo reinicia (rápido
   // e mostra a tela corretamente); brilho/contraste/cor são ao vivo (set_float ao arrastar).

@@ -5,6 +5,7 @@ import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
+import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
@@ -137,17 +138,24 @@ ipcMain.handle('select-file', async () => {
 ipcMain.handle('read-dsk-directory', async (_, dskUint8Array: Uint8Array) => {
   try {
     const buffer = Buffer.from(dskUint8Array);
+    // Dragon DOS / VDK images are read in a distinct format (directory on track 20, sector
+    // bitmap). Detect them first; otherwise fall back to the standard RS-DOS parser.
+    const dragon = readDragonDirectory(buffer);
+    if (dragon) return dragon;
     const parsed = parseDsk(buffer);
-    return { success: true, files: parsed.files, freeGranules: parsed.freeGranules, totalGranules: parsed.totalGranules };
+    return { success: true, format: 'rsdos', files: parsed.files, freeGranules: parsed.freeGranules, totalGranules: parsed.totalGranules };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
 });
 
 // 2b. Extract the RAW stored bytes of a .dsk file (for copy/cut between images)
-ipcMain.handle('dsk-extract-raw', async (_, dskUint8Array: Uint8Array, entry: DskFileEntry) => {
+ipcMain.handle('dsk-extract-raw', async (_, dskUint8Array: Uint8Array, entry: any) => {
   try {
-    const raw = extractDskFile(Buffer.from(dskUint8Array), entry);
+    const buf = Buffer.from(dskUint8Array);
+    const raw = entry?.format === 'dragon'
+      ? extractDragonFile(stripVdk(buf), entry)
+      : extractDskFile(buf, entry as DskFileEntry);
     return { success: true, data: new Uint8Array(raw) };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -178,6 +186,16 @@ ipcMain.handle('dsk-defrag-file', async (_, dskUint8Array: Uint8Array, entry: Ds
 ipcMain.handle('dsk-new-blank', async () => {
   try {
     const img = encodeDsk([]);
+    return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2d2. Create a fresh blank Dragon DOS image (40-track single-sided, raw)
+ipcMain.handle('dsk-new-blank-dragon', async () => {
+  try {
+    const img = encodeDragonBlank();
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -220,10 +238,12 @@ ipcMain.handle('gw-pick-exe', async () => {
 });
 
 // 3. Extract DSK program and parse details
-ipcMain.handle('extract-dsk-program', async (_, dskUint8Array: Uint8Array, fileEntry: DskFileEntry) => {
+ipcMain.handle('extract-dsk-program', async (_, dskUint8Array: Uint8Array, fileEntry: any) => {
   try {
     const dskBuffer = Buffer.from(dskUint8Array);
-    const rawFileContent = extractDskFile(dskBuffer, fileEntry);
+    const rawFileContent = fileEntry?.format === 'dragon'
+      ? extractDragonFile(stripVdk(dskBuffer), fileEntry)
+      : extractDskFile(dskBuffer, fileEntry as DskFileEntry);
     
     // Attempt to parse segment block properties if it is a machine code payload
     let loadAddr = 0x1000;
@@ -449,10 +469,12 @@ ipcMain.handle('dsk-sort-directory', async (_, dskUint8Array: Uint8Array) => {
 ipcMain.handle('open-dsk-pane', async () => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open .DSK image',
+    title: 'Open .DSK / .VDK image',
     properties: ['openFile'],
     filters: [
+      { name: 'Disk Images (RS-DOS / Dragon)', extensions: ['dsk', 'vdk'] },
       { name: 'RS-DOS Disk Image', extensions: ['dsk'] },
+      { name: 'Dragon VDK Image', extensions: ['vdk'] },
       { name: 'All Files', extensions: ['*'] }
     ]
   });
@@ -460,9 +482,15 @@ ipcMain.handle('open-dsk-pane', async () => {
   try {
     const fp = result.filePaths[0];
     const buf = fs.readFileSync(fp);
+    // Dragon DOS / VDK first; otherwise standard RS-DOS.
+    const dragon = readDragonDirectory(buf);
+    if (dragon) {
+      return { ...dragon, buffer: new Uint8Array(buf), fileName: path.basename(fp), filePath: fp, size: buf.length };
+    }
     const parsed = parseDsk(buf);
     return {
       success: true,
+      format: 'rsdos',
       buffer: new Uint8Array(buf),
       fileName: path.basename(fp),
       filePath: fp,

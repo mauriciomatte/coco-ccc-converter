@@ -20,6 +20,32 @@ GREASEWEAZLE (GW)
 
 
 --------------------------------------------------------------------------------
+DRAGON / VDK (multi-formato)
+--------------------------------------------------------------------------------
+[FEITO v1.0.8] Abrir imagens Dragon em modo LEITURA:
+    • Reconhece VDK (header "dk") + parser Dragon DOS (diretório trilha 20, alocação
+      por SAB = LSN big-endian 2B + contagem 1B, bitmap trilha 20 setores 1-2).
+      Lista/extrai arquivos + mapa visual 40T. Validado em 1100+ .vdk e E2E no app.
+    • src/main/converter/dragondos.ts; discriminador em read-dsk-directory/open-dsk-pane.
+[FEITO] Toggle de plataforma CoCo/Dragon persistente (cabeçalho): define padrão de
+    Novo disco + máquina XRoar + formato GW; GW também casa com o disco ao carregar.
+    Criação de disco Dragon novo (40T SS em branco) implementada.
+[EM ANDAMENTO] Suporte Dragon COMPLETO: adicionar/excluir/defrag/gravar arquivos
+    num disco Dragon (o disco novo nasce somente-leitura até isto). Falta também
+    discriminador de formato (RS-DOS x Dragon x OS-9) genérico e gravação GW Dragon.
+[PARCIAL] XRoar: o toggle já define a MÁQUINA padrão (CoCo 3 / Dragon 64). Falta a
+    troca AUTOMÁTICA ao CARREGAR uma imagem Dragon (hoje é via toggle manual).
+    Quando o usuário abrir/rodar uma imagem .vdk/Dragon, configurar o XRoar para a
+    máquina Dragon (Dragon 32/64) automaticamente; ao abrir uma imagem CoCo, voltar
+    para CoCo. Como a máquina do XRoar é um campo PERSISTENTE, o usuário de Dragon
+    já encontra o XRoar pronto p/ Dragon e o de CoCo pronto p/ CoCo, sem ajuste manual.
+    ROMs disponíveis (fornecidas pelo usuário 2026-06-01) p/ rodar Dragon no XRoar
+    e/ou validar o formato:
+      • G:\...\CoCoDragonCartDSK_Trucco\Dragon\dragondos.rom (DragonDOS cartucho)
+      • G:\...\MatteFDC\CoCo MFDC\ROMs para MFDC\5dragontrs.rom (versão com patch)
+
+
+--------------------------------------------------------------------------------
 DISCOS 40 TRILHAS (JDOS / CODIMEX)
 --------------------------------------------------------------------------------
 [ ] Validar o formato real JDOS/CODIMEX com um .dsk de verdade.

@@ -51,6 +51,9 @@ const api = {
   dskNewBlank: () =>
     ipcRenderer.invoke('dsk-new-blank'),
 
+  dskNewBlankDragon: () =>
+    ipcRenderer.invoke('dsk-new-blank-dragon'),
+
   dskDefragFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-defrag-file', dskBuffer, fileEntry),
 

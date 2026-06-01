@@ -11,6 +11,7 @@ import { Buffer } from 'buffer';
 import { decodeWav } from '../main/converter/wav';
 import { parseCas } from '../main/converter/cas';
 import { parseDsk, extractDskFile, sortDskDirectory, isRsDosDisk } from '../main/converter/dsk';
+import { readDragonDirectory, stripVdk, extractDragonFile } from '../main/converter/dragondos';
 import { parseBin } from '../main/converter/bin';
 import { compileBootstrap } from '../main/converter/bootstrap';
 
@@ -49,8 +50,22 @@ if (!(window as any).cocoApi) {
     readDskDirectory: async (dskUint8Array: Uint8Array) => {
       try {
         const buffer = Buffer.from(dskUint8Array);
+        const dragon = readDragonDirectory(buffer);
+        if (dragon) return dragon;
         const parsed = parseDsk(buffer);
-        return { success: true, files: parsed.files };
+        return { success: true, format: 'rsdos', files: parsed.files, freeGranules: parsed.freeGranules, totalGranules: parsed.totalGranules };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    },
+
+    dskExtractRaw: async (dskUint8Array: Uint8Array, fileEntry: any) => {
+      try {
+        const buf = Buffer.from(dskUint8Array);
+        const raw = fileEntry?.format === 'dragon'
+          ? extractDragonFile(stripVdk(buf), fileEntry)
+          : extractDskFile(buf, fileEntry);
+        return { success: true, data: new Uint8Array(raw) };
       } catch (error: any) {
         return { success: false, error: error.message };
       }
@@ -86,8 +101,10 @@ if (!(window as any).cocoApi) {
     extractDskProgram: async (dskUint8Array: Uint8Array, fileEntry: any) => {
       try {
         const dskBuffer = Buffer.from(dskUint8Array);
-        const rawFileContent = extractDskFile(dskBuffer, fileEntry);
-        
+        const rawFileContent = fileEntry?.format === 'dragon'
+          ? extractDragonFile(stripVdk(dskBuffer), fileEntry)
+          : extractDskFile(dskBuffer, fileEntry);
+
         let loadAddr = 0x1000;
         let execAddr = 0x1000;
         let payload = rawFileContent;

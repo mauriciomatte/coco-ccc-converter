@@ -42,16 +42,26 @@ const C = {
   dir: 'rgba(168,85,247,0.55)', sel: '#ff8c1a', grid: 'rgba(2,6,12,0.85)', hub: '#0b1220', hubRing: 'rgba(148,163,184,0.35)',
 };
 
-interface DiskFile { fullName: string; name?: string; ext?: string; granuleChain?: number[]; totalSize?: number }
+interface DiskFile { fullName: string; name?: string; ext?: string; granuleChain?: number[]; totalSize?: number; sectors?: number[]; fragmented?: boolean }
 interface Props {
   files: DiskFile[]; totalGranules?: number; selectedNames?: Set<string>;
   lang: 'pt-br' | 'en-us'; onSelectFile?: (f: DiskFile) => void;
+  // Dragon DOS mode: per-SECTOR allocation, directory on a different track (20), variable
+  // geometry. When mode==='dragon' the granule math is bypassed in favour of file.sectors (LSNs).
+  mode?: 'rsdos' | 'dragon';
+  tracks?: number; sectorsPerTrack?: number; dirTrack?: number;
+  usedSectors?: number; totalSectors?: number;
 }
 
-export default function DiskMap({ files, totalGranules, selectedNames, lang, onSelectFile }: Props) {
-  // Nº de trilhas pela GEOMETRIA: 68 granules = 35T (padrão); 78 = 40T (JSON DOS / CODIMEX). O
-  // diretório fica sempre na trilha 17 (granuleTrack pula o granule 34 = trilha 17, válido p/ N trilhas).
-  const TRACKS = totalGranules && totalGranules > 0 ? Math.round(totalGranules / 2) + 1 : STD_TRACKS;
+export default function DiskMap({ files, totalGranules, selectedNames, lang, onSelectFile, mode, tracks, sectorsPerTrack, dirTrack, usedSectors, totalSectors }: Props) {
+  const DRAGON = mode === 'dragon';
+  const SECT = DRAGON ? (sectorsPerTrack || 18) : SECTORS;       // setores por trilha
+  const DIRT = DRAGON ? (dirTrack ?? 20) : DIR_TRACK;            // trilha do diretório
+  // Nº de trilhas pela GEOMETRIA. RS-DOS: 68 granules = 35T; 78 = 40T (diretório na trilha 17).
+  // Dragon: trilhas vêm do formato (40 SS / 80 DS), diretório na trilha 20.
+  const TRACKS = DRAGON
+    ? (tracks || 40)
+    : (totalGranules && totalGranules > 0 ? Math.round(totalGranules / 2) + 1 : STD_TRACKS);
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ fi: number; x: number; y: number } | null>(null);
@@ -69,7 +79,7 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
   const S = Math.max(120, Math.min(box.w, box.h - LEGEND_H));
   const cx = S / 2, cy = S / 2;
   const rOut = S / 2 - 3, rIn = rOut * 0.18, ring = (rOut - rIn) / TRACKS;
-  const sectAng = (2 * Math.PI) / SECTORS, ang0 = -Math.PI / 2;
+  const sectAng = (2 * Math.PI) / SECT, ang0 = -Math.PI / 2;
 
   // Assinatura estável dos nomes selecionados: evita reconstruir a base (630 arcos) quando o
   // chamador passa um Set novo com o MESMO conteúdo a cada render (ex.: na animação de defrag).
@@ -82,25 +92,37 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
 
   const fragIdx = useMemo(() => {
     const set = new Set<number>();
-    files.forEach((f, i) => { if (isFragmented(f.granuleChain || [])) set.add(i); });
+    files.forEach((f, i) => { if (DRAGON ? !!f.fragmented : isFragmented(f.granuleChain || [])) set.add(i); });
     return set;
-  }, [files]);
+  }, [files, DRAGON]);
 
-  // Grade célula → dono: -1 livre, -2 diretório, ≥0 índice do arquivo. Última granule = parcial real.
+  // Grade célula → dono: -1 livre, -2 diretório, ≥0 índice do arquivo.
   const owner = useMemo(() => {
-    const g: number[][] = Array.from({ length: TRACKS }, () => new Array(SECTORS).fill(-1));
-    for (let s = 0; s < SECTORS; s++) g[DIR_TRACK][s] = -2;
-    files.forEach((f, fi) => {
-      const chain = f.granuleChain || []; if (!chain.length) return;
-      const lastSecs = Math.max(1, Math.min(9, Math.ceil(((f.totalSize || 0) - (chain.length - 1) * GRAN_BYTES) / 256) || 1));
-      chain.forEach((gr, k) => {
-        const t = granuleTrack(gr); if (t < 0 || t >= TRACKS || t === DIR_TRACK) return;
-        const base = (gr % 2) * 9, used = k === chain.length - 1 ? lastSecs : 9;
-        for (let s = 0; s < used && base + s < SECTORS; s++) if (g[t][base + s] !== -2) g[t][base + s] = fi;
+    const g: number[][] = Array.from({ length: TRACKS }, () => new Array(SECT).fill(-1));
+    if (DIRT >= 0 && DIRT < TRACKS) for (let s = 0; s < SECT; s++) g[DIRT][s] = -2;
+    if (DRAGON) {
+      // Dragon: alocação por SETOR. LSN → trilha = ⌊LSN/SECT⌋, setor = LSN mod SECT.
+      files.forEach((f, fi) => {
+        (f.sectors || []).forEach((lsn) => {
+          const t = Math.floor(lsn / SECT), s = lsn % SECT;
+          if (t < 0 || t >= TRACKS) return;
+          if (g[t][s] !== -2) g[t][s] = fi;
+        });
       });
-    });
+    } else {
+      // RS-DOS: alocação por GRÂNULO; última granule = preenchimento parcial real.
+      files.forEach((f, fi) => {
+        const chain = f.granuleChain || []; if (!chain.length) return;
+        const lastSecs = Math.max(1, Math.min(9, Math.ceil(((f.totalSize || 0) - (chain.length - 1) * GRAN_BYTES) / 256) || 1));
+        chain.forEach((gr, k) => {
+          const t = granuleTrack(gr); if (t < 0 || t >= TRACKS || t === DIR_TRACK) return;
+          const base = (gr % 2) * 9, used = k === chain.length - 1 ? lastSecs : 9;
+          for (let s = 0; s < used && base + s < SECT; s++) if (g[t][base + s] !== -2) g[t][base + s] = fi;
+        });
+      });
+    }
     return g;
-  }, [files]);
+  }, [files, DRAGON, TRACKS, SECT, DIRT]);
 
   const rOf = (t: number) => [rOut - (t + 1) * ring, rOut - t * ring] as const;
   const aOf = (s: number) => [ang0 + s * sectAng, ang0 + (s + 1) * sectAng] as const;
@@ -110,7 +132,7 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
     const cells: React.ReactNode[] = [];
     for (let t = 0; t < TRACKS; t++) {
       const [ri, ro] = rOf(t);
-      for (let s = 0; s < SECTORS; s++) {
+      for (let s = 0; s < SECT; s++) {
         const o = owner[t][s];
         const fill = o === -2 ? C.dir
           : o >= 0 ? (selIdx.has(o) ? C.sel : fragIdx.has(o) ? C.frag : C.used)
@@ -125,7 +147,7 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
   const overlay = useMemo(() => {
     if (!hover) return null;
     const cells: React.ReactNode[] = [];
-    for (let t = 0; t < TRACKS; t++) for (let s = 0; s < SECTORS; s++) {
+    for (let t = 0; t < TRACKS; t++) for (let s = 0; s < SECT; s++) {
       if (owner[t][s] !== hover.fi) continue;
       const [ri, ro] = rOf(t), [a0, a1] = aOf(s);
       cells.push(<path key={`h-${t}-${s}`} d={arcPath(cx, cy, ri, ro, a0, a1)} fill="rgba(255,255,255,0.32)" stroke="#fff" strokeWidth={0.9} />);
@@ -142,7 +164,7 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
     if (d > rOut || d < rIn) return -1;
     const t = Math.min(TRACKS - 1, Math.max(0, Math.floor((rOut - d) / ring)));
     let a = Math.atan2(py, px) - ang0; a = ((a % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
-    const s = Math.min(SECTORS - 1, Math.floor(a / sectAng));
+    const s = Math.min(SECT - 1, Math.floor(a / sectAng));
     return owner[t]?.[s] ?? -1;
   };
 
@@ -153,9 +175,11 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
   };
   const onClick = (e: React.MouseEvent) => { const o = fileAt(e); if (o >= 0 && onSelectFile) onSelectFile(files[o]); };
 
-  const usedGran = files.reduce((a, f) => a + (f.granuleChain?.length || 0), 0);
-  const total = totalGranules || 68;
-  const pct = total ? Math.round((usedGran / total) * 100) : 0;
+  const usedCells = DRAGON
+    ? (usedSectors ?? files.reduce((a, f) => a + (f.sectors?.length || 0), 0))
+    : files.reduce((a, f) => a + (f.granuleChain?.length || 0), 0);
+  const total = DRAGON ? (totalSectors || TRACKS * SECT) : (totalGranules || 68);
+  const pct = total ? Math.round((usedCells / total) * 100) : 0;
   const hf = hover ? files[hover.fi] : null;
   const L = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
 
@@ -195,7 +219,9 @@ export default function DiskMap({ files, totalGranules, selectedNames, lang, onS
             {hf.fullName}{fragIdx.has(hover!.fi) ? ' ⚠' : ''}
           </div>
           <div style={{ color: '#94a3b8' }}>
-            {L('trilhas', 'tracks')} {ranges((hf.granuleChain || []).map(granuleTrack))} · {(hf.granuleChain?.length || 0)}g · {hf.totalSize ?? 0} B
+            {DRAGON
+              ? <>{L('trilhas', 'tracks')} {ranges((hf.sectors || []).map((l) => Math.floor(l / SECT)))} · {(hf.sectors?.length || 0)}s · {hf.totalSize ?? 0} B</>
+              : <>{L('trilhas', 'tracks')} {ranges((hf.granuleChain || []).map(granuleTrack))} · {(hf.granuleChain?.length || 0)}g · {hf.totalSize ?? 0} B</>}
             {fragIdx.has(hover!.fi) ? ` · ${L('fragmentado', 'fragmented')}` : ''}
           </div>
         </div>

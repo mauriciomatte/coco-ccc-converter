@@ -10,6 +10,33 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.8 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO (multi-formato — Dragon DOS / VDK, SOMENTE LEITURA)
+  • A aba DSK agora ABRE imagens Dragon: reconhece o container .VDK (header "dk")
+    e o disco Dragon DOS (diretório na TRILHA 20, alocação por setor via bitmap).
+  • Lista de arquivos, tamanhos e fragmentação; EXTRAÇÃO de arquivos; e o MAPA
+    visual do disco com geometria Dragon (40 trilhas, diretório na trilha 20,
+    ocupação por setor). Distingue automaticamente RS-DOS × Dragon ao abrir.
+  • Selo "Dragon · somente leitura" no painel; operações de edição (adicionar,
+    excluir, ordenar, desfragmentar, colar) ficam desabilitadas para discos Dragon
+    nesta versão.
+ADICIONADO (Plataforma-alvo CoCo/Dragon — persistente)
+  • Toggle CoCo/Dragon no cabeçalho (persistido na config). Define o PADRÃO de:
+    "Novo disco" (RS-DOS 35T × Dragon DOS 40T), máquina do XRoar (CoCo 3 × Dragon
+    64) e formato do Greaseweazle (coco.decb × dragon.40ss). Cada disco aberto
+    continua respeitando o seu formato real.
+  • Ao CARREGAR uma imagem, o formato do GW é ajustado para casar com a geometria
+    do disco (RS-DOS 35/40T, Dragon 40/80T, 1/2 lados).
+  • Criação de disco Dragon novo (40T SS, em branco) — base para a edição Dragon.
+NOTAS
+  • Perícia: os discos Dragon do acervo são .vdk avulsos (40T SS); NÃO há discos
+    Dragon dentro da .img do MiniIDE (que contém RS-DOS 35T + partição OS-9).
+  • Validado em 1100+ .vdk reais e end-to-end no app (parser, extração e UI).
+  • Pendente (futuro): edição/gravação Dragon, criar disco Dragon novo, e troca
+    automática de máquina do XRoar para Dragon ao carregar imagem Dragon.
+
+--------------------------------------------------------------------------------
 v1.0.7 — 2026-06-01
 --------------------------------------------------------------------------------
 ADICIONADO (Greaseweazle)
