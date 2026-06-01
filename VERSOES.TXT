@@ -1,0 +1,122 @@
+================================================================================
+  CoCo DSK & CCC Utility  —  HISTÓRICO DE VERSÕES
+  Manipulador de imagens .DSK e conversor de arquivos para .CCC (CoCoEPROMpak)
+  Autor: Mauricio Matte (c) 2026
+================================================================================
+
+Como ler este arquivo: as versões mais NOVAS ficam no TOPO. A cada release,
+acrescente uma nova seção no início, com a data e um descritivo do que foi
+alterado/adicionado/corrigido.
+
+
+--------------------------------------------------------------------------------
+v1.0.6 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO
+  • Suporte a discos de 40 TRILHAS (JDOS / CODIMEX) no mapa visual do disco:
+    o número de anéis passou a ser DINÂMICO conforme a geometria do disco
+    (68 grânulos = 35 trilhas padrão; 78 grânulos = 40 trilhas). O diretório
+    permanece sempre na trilha 17.
+NOTAS
+  • O conversor (parse/gravar/extrair/defrag) já era agnóstico à geometria —
+    ler, editar, copiar, desfragmentar e visualizar discos de 40T já funciona.
+  • Pendente: criar disco NOVO de 40T (a criação ainda gera 35T).
+
+
+--------------------------------------------------------------------------------
+v1.0.5 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO (Disassembler 6809)
+  • Rótulo de ponteiro imediato: LDX/LDY/LDU/LDS/LDD/CMPX/CMPY/CMPU/CMPS #$xxxx
+    → #L#### (ou nome de símbolo) com marcador no destino, quando o alvo cai
+    no buffer ou num registrador de hardware conhecido.
+  • Rastreamento do registrador DP: reconhece o idioma "LDA #$xx ; TFR A,DP"
+    (idem com B) e resolve operandos diretos <$xx para o endereço completo
+    (ex.: STA <$22 → "; →PIA1DB" quando DP=$FF).
+  • Tabelas de vetores: botões C-VETOR (tabela de endereços de código) e
+    D-VETOR (tabela de endereços de dados) — emitem FDB rotulado; o C-vetor
+    ainda segue cada endereço como código. Persistidas por arquivo.
+MELHORADO
+  • Menos ruído: runs curtos de $00 viram FCB em vez de "NEG <$00" nas regiões
+    de dados.
+
+
+--------------------------------------------------------------------------------
+v1.0.4 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO (aba DSK)
+  • Mapa visual do disquete (SVG concêntrico) à direita de cada painel:
+    ocupação por trilha/setor, arquivos fragmentados em vermelho, tooltip ao
+    passar o mouse, clique seleciona o arquivo, % de ocupação e de fragmentação
+    na barra de status.
+  • Desfragmentador com animação nostálgica (estilo Defrag): anéis + arquivo
+    atual + barra de progresso + delays imitando um disquete físico. In-place
+    arquivo-por-arquivo; opções de ordem (manter / alfabética / por tamanho);
+    cancelar com confirmação (finalizar o arquivo atual x cancelar tudo).
+    Botões DEFRAG e DEFRAG ARQ. Se o disco não está fragmentado, avisa.
+  • Busca por NOME DE ARQUIVO no "Buscar disco" de imagens contêiner (além de
+    nome/número do disco), com indexação em segundo plano e cache.
+CORRIGIDO (aba XRoar)
+  • "Tela preta" do CoCo 3 PAL: faltava o ROM coco3p.rom (BASIC inválido) —
+    adicionado (cópia idêntica do coco3.rom) e registrado na lista de ROMs do
+    harness. Confirmado ao vivo (boota no prompt OK).
+  • Montagem do iframe mais robusta (evita tela preta / travar em "iniciando").
+DIVERSOS
+  • Padrão de nome do instalador: "CoCoDSK&CCCUtility_Setup <versão>.exe".
+  • A barra de atividade de disco do XRoar foi tentada e REMOVIDA: o build WASM
+    atual não expõe a posição da cabeça (trilha/setor) ao vivo — adiado.
+
+
+--------------------------------------------------------------------------------
+v1.0.3 — 2026-05-31
+--------------------------------------------------------------------------------
+MELHORADO (Disassembler 6809 — passo de qualidade)
+  • Labels simbólicos (L####) e referências cruzadas nos alvos de desvio/chamada.
+  • Tabela de símbolos de hardware: PIA0/PIA1, SAM (MAPROM/MAPRAM), GIME do
+    CoCo 3 (INIT/IRQ/timer/vídeo, MMU0–15, paleta), vetores do 6809.
+  • Modo adaptativo: quando o fluxo alcança pouco do arquivo (loader que
+    remapeia), o resto é desmontado linearmente em vez de virar um "mar de FCB".
+  • Detecção de dados: colapso de runs idênticos e de tiles periódicos de
+    gráfico; detecção de strings com descascamento de prefixo e guarda
+    anti-engolir; resolução de alvos ,PCR; coluna de bytes de largura fixa.
+  • Marcas de código/dados PERSISTEM por arquivo.
+
+
+--------------------------------------------------------------------------------
+v1.0.2 — 2026-05-31
+--------------------------------------------------------------------------------
+ADICIONADO
+  • Disassembler 6809 (somente leitura) ao lado do editor hexadecimal:
+    recursive-descent (segue o fluxo) + marcação manual de código/dados.
+  • Esquemas de cores para o editor BASIC.
+CORRIGIDO
+  • Diversas correções gerais.
+
+
+--------------------------------------------------------------------------------
+v1.0.1 — 2026-05-30
+--------------------------------------------------------------------------------
+ADICIONADO
+  • Editor BASIC + destokenizador de tokens do 6809 (Color BASIC).
+  • DSK: Salvar e Salvar Como.
+  • Greaseweazle: comando direto (substitui os argumentos construídos).
+
+
+--------------------------------------------------------------------------------
+v1.0.0 — base (2026-05-20 a 2026-05-30)
+--------------------------------------------------------------------------------
+NÚCLEO INICIAL
+  • Conversor EPROM: transforma programas CoCo (.wav/.cas/.dsk/.bin) em
+    cartuchos .CCC para o CoCoEPROMpak.
+  • Interface em 3 colunas, divisores ajustáveis, header com troca de idioma
+    (PT/EN) e botão Sair; drag-and-drop.
+  • Aba DSK: gerenciador de imagens RS-DOS de painel duplo (ordenar A-Z,
+    copiar painel A→B, barra de ferramentas com ícones).
+  • Aba Greaseweazle (GW): leitura/gravação de disquetes reais.
+  • Aba XRoar: emulador embarcado (WASM) para testar .dsk/.bin no app —
+    máquinas, vídeo/joystick em tempo real, 4 drives, persistência.
+  • Navegador de imagens contêiner: DriveWire, MiniIDE (HDBDOS) e CoCoSDC (FAT),
+    com barra de progresso e detecção de disco de boot.
+  • Importação de fitas .cas; empacotamento (instalador NSIS para Windows).
+
+================================================================================
