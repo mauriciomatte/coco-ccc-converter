@@ -1,0 +1,75 @@
+================================================================================
+  CoCo DSK & CCC Utility  —  PROVIDÊNCIAS FUTURAS (backlog)
+  Itens pendentes / ideias a implementar. Ao concluir um item, mova o resumo
+  para o VERSOES.TXT (na versão correspondente) e remova-o daqui.
+  Última atualização: 2026-06-01 (após v1.0.7)
+================================================================================
+
+
+--------------------------------------------------------------------------------
+GREASEWEAZLE (GW)
+--------------------------------------------------------------------------------
+[ ] Empacotar o gw.exe no instalador (DEIXADO PARA DEPOIS — 2026-06-01)
+    • Confirmado viável: gw.exe standalone v1.23 (sem Python), licença permissiva,
+      já traz o perfil coco.decb.40t.
+    • Plano: baixar greaseweazle-1.23-win64.zip → resources/gw/ → electron-builder
+      extraResources → gwPath padrão = gw.exe embarcado (process.resourcesPath em
+      produção; resources/gw/ em dev). Custo: +~15 MB no instalador.
+    • DECISÃO PENDENTE: commitar o binário (~15 MB no git) x script de download no
+      build x baixar na 1ª execução do app. Definir também win32 vs win64.
+
+
+--------------------------------------------------------------------------------
+DISCOS 40 TRILHAS (JDOS / CODIMEX)
+--------------------------------------------------------------------------------
+[ ] Validar o formato real JDOS/CODIMEX com um .dsk de verdade.
+    • O app JÁ lê/edita/defrag/visualiza 40T padrão RS-DOS (provado em teste).
+    • Falta confirmar 100% que JDOS/CODIMEX seguem o RS-DOS padrão (quase certo).
+    • Opções: (a) um .dsk real em amostras/ (ideal, via GW c/ coco.decb.40t ou
+      gerado); (b) rodar a ROM JDOS no XRoar e extrair um disco; (c) disassemblar
+      a ROM (4jdos111.ccc / 3codimex.Bin) p/ achar as constantes de formato.
+[ ] Criar disco NOVO de 40T no app (encodeDsk/dskNewBlank hoje só gera 35T).
+
+
+--------------------------------------------------------------------------------
+RELEASE / INSTALADOR
+--------------------------------------------------------------------------------
+[ ] Recompilar o instalador na hora de distribuir (o .exe em dist/ pode ficar
+    defasado em relação aos últimos commits).
+[ ] Ícone do .exe — adicionar um .ico 256×256 (hoje usa o ícone padrão do Electron).
+
+
+--------------------------------------------------------------------------------
+CONVERSOR EPROM / CARTUCHO (núcleo)
+--------------------------------------------------------------------------------
+[ ] Testar o loader two-stage all-RAM ($FFDE/$FFDF) em emulador (falta amostra
+    >=$8000 que caiba em 16K).
+[ ] Guard anti-lixo no parser p/ loaders proprietários + passthrough do .cas
+    original na exportação p/ emulador.
+[ ] Edge case "polaris" BIN ($1FFA vs $4000).
+[ ] Arkanoid multi-bank.
+
+
+--------------------------------------------------------------------------------
+SUPORTE A >16K (expansão)
+--------------------------------------------------------------------------------
+[ ] Alvo CocoFLASH — loader com bank-switching via $FF40 (verificar semântica).
+[ ] Alvo CoCo3 + GIME MMU ($FFA0-$FFAF, páginas de 8K).
+
+
+--------------------------------------------------------------------------------
+DISASSEMBLER 6809
+--------------------------------------------------------------------------------
+[ ] Debug ao vivo (step / breakpoints / registradores) → simulador de CPU 6809.
+[ ] (Opcional) Export de fonte montável + verificação por round-trip (re-montar).
+
+
+--------------------------------------------------------------------------------
+XROAR
+--------------------------------------------------------------------------------
+[ ] Barra de status VCC (trilha/setor ao vivo) — exige RECOMPILAR o XRoar WASM
+    expondo wasm_get_floppy_track/sector/head (ou callback por-acesso c/ setor).
+    Bloqueado: sem fonte C do XRoar local + sem Emscripten. Fonte oficial:
+    github.com/stahta01/xroar (GPL). O harness já tem o polling pronto.
+
+================================================================================
