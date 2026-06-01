@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 // Arquivo fragmentado (cadeia de granules não-contígua) aparece em VERMELHO.
 // O disco se AJUSTA ao espaço disponível na coluna (responsivo; nunca estoura o painel).
 
-const TRACKS = 35, SECTORS = 18, DIR_TRACK = 17, GRAN_BYTES = 9 * 256;
+const SECTORS = 18, DIR_TRACK = 17, GRAN_BYTES = 9 * 256, STD_TRACKS = 35;
 
 // Grânulo → trilha física (2 grânulos/trilha, pulando a trilha 17 do diretório).
 function granuleTrack(g: number): number { return Math.floor(g / 2) + (g >= 34 ? 1 : 0); }
@@ -49,6 +49,9 @@ interface Props {
 }
 
 export default function DiskMap({ files, totalGranules, selectedNames, lang, onSelectFile }: Props) {
+  // Nº de trilhas pela GEOMETRIA: 68 granules = 35T (padrão); 78 = 40T (JSON DOS / CODIMEX). O
+  // diretório fica sempre na trilha 17 (granuleTrack pula o granule 34 = trilha 17, válido p/ N trilhas).
+  const TRACKS = totalGranules && totalGranules > 0 ? Math.round(totalGranules / 2) + 1 : STD_TRACKS;
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [hover, setHover] = useState<{ fi: number; x: number; y: number } | null>(null);
