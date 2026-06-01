@@ -41,6 +41,7 @@ import {
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
+import DiskMap from './components/DiskMap';
 import { detokenizeBasic } from './basicDetokenize';
 import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
 
@@ -64,6 +65,13 @@ function saveDisasmMarks(key: string, data: Array<[number, number]>, code: numbe
     localStorage.setItem(DISASM_MARKS_KEY, JSON.stringify(all));
   } catch { /* armazenamento indisponível — segue sem persistir */ }
 }
+
+// Animação de desfragmentação: delays imitando um disquete físico (motor + seek + leitura/granule).
+// Acelerada para ~1/4 do tempo original (a pedido) — rápida, mantendo o apelo visual.
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const DEFRAG_SPINUP_MS = 200; // acionamento do motor
+const DEFRAG_SEEK_MS = 33;    // a cabeça "anda" até o arquivo
+const DEFRAG_GRAN_MS = 20;    // leitura de cada grânulo (9 setores ≈ meia volta)
 
 interface LogMessage {
   time: string;
@@ -507,6 +515,18 @@ export default function App() {
   const [dskRedo, setDskRedo] = useState<any[]>([]);
   const [dskTopHeight, setDskTopHeight] = useState<number>(266); // -5% para dar folga à barra de ferramentas do DSK
   const [diskPicker, setDiskPicker] = useState<{ which: 'A' | 'B' } | null>(null); // modal de busca/salto de disco do contêiner
+  const [defragModal, setDefragModal] = useState<{ which: 'A' | 'B' } | null>(null); // modal de desfragmentação total
+  const [defragOrder, setDefragOrder] = useState<'dir' | 'alpha' | 'size'>('dir'); // ordem dos arquivos na desfrag
+  // Estado da animação de desfragmentação (modal nostálgico estilo defrag).
+  const [defragRun, setDefragRun] = useState<{
+    which: 'A' | 'B'; diskName: string; files: any[]; totalGranules: number; currentName: string;
+    doneGranules: number; totalWork: number; status: 'spinup' | 'running' | 'confirm' | 'done' | 'cancelled';
+    startFrag: number; endFrag: number; processed: number; skipped: number;
+  } | null>(null);
+  const defragCtl = useRef<{ pause: boolean; decision: 'all' | 'current' | null }>({ pause: false, decision: null });
+  // Índice de nomes de arquivo por disco do contêiner (p/ a busca por arquivo no "Buscar disco").
+  const fileIndexRef = useRef<Record<string, Record<number, string[]>>>({});
+  const [fileIndex, setFileIndex] = useState<{ key: string; map: Record<number, string[]>; done: number; total: number; building: boolean } | null>(null);
   const [imageBusy, setImageBusy] = useState<boolean>(false);
   const [imageFilter, setImageFilter] = useState<string>('');
   const [imageProgress, setImageProgress] = useState<any>(null); // { phase, loaded, total }
@@ -1308,6 +1328,44 @@ export default function App() {
     clearDirty(which); // trocou para outro disco (limpo)
   };
 
+  const containerKey = (c: any) => `${c.kind}|${c.fileName || ''}|${c.count}`;
+
+  // Ao abrir o "Buscar disco", indexa em segundo plano os nomes de arquivo de cada disco do
+  // contêiner (lendo cada diretório sob demanda), permitindo pesquisar por nome de ARQUIVO além
+  // do nome/número do disco. Resultado fica em cache por contêiner; mostra progresso enquanto lê.
+  useEffect(() => {
+    if (!diskPicker) return;
+    const c = getPane(diskPicker.which)?.container;
+    if (!c || !c.entries?.length) { setFileIndex(null); return; }
+    const key = containerKey(c);
+    const cached = fileIndexRef.current[key];
+    if (cached) { setFileIndex({ key, map: cached, done: c.entries.length, total: c.entries.length, building: false }); return; }
+    let cancelled = false;
+    const map: Record<number, string[]> = {};
+    setFileIndex({ key, map, done: 0, total: c.entries.length, building: true });
+    (async () => {
+      for (let i = 0; i < c.entries.length; i++) {
+        if (cancelled) return;
+        const e = c.entries[i];
+        try {
+          let slice: Uint8Array | null = null;
+          if (c.source === 'file' && c.filePath) {
+            const ex = await window.cocoApi.imageExtract(c.filePath, e.locator);
+            if (ex.success) slice = new Uint8Array(ex.image);
+          } else if (c.full) {
+            slice = c.full.slice(e.id * STD_DISK, (e.id + 1) * STD_DISK);
+          }
+          if (slice) { const dir = await window.cocoApi.readDskDirectory(slice); if (dir.success) map[e.id] = dir.files.map((f: any) => f.fullName); }
+        } catch { /* disco ilegível: ignora */ }
+        if (!cancelled && (i % 4 === 0 || i === c.entries.length - 1)) {
+          setFileIndex({ key, map: { ...map }, done: i + 1, total: c.entries.length, building: i < c.entries.length - 1 });
+        }
+      }
+      if (!cancelled) { fileIndexRef.current[key] = map; setFileIndex({ key, map, done: c.entries.length, total: c.entries.length, building: false }); }
+    })();
+    return () => { cancelled = true; };
+  }, [diskPicker]);
+
   // Re-parse uma imagem modificada (mutação in-place); mantém e atualiza o contêiner, se houver
   const refreshPane = async (which: 'A' | 'B', image: Uint8Array, fileName?: string, size?: number) => {
     const res = await window.cocoApi.readDskDirectory(image);
@@ -1348,6 +1406,126 @@ export default function App() {
   };
 
   // Inicia a adição de uma LISTA de arquivos a um painel; pergunta se houver colisões
+  // % de fragmentação de uma lista de arquivos (transições não-contíguas / total).
+  const fragPercent = (files: any[]) => {
+    let bad = 0, tot = 0;
+    for (const f of files) { const c = f.granuleChain || []; for (let i = 1; i < c.length; i++) { tot++; if (c[i] !== c[i - 1] + 1) bad++; } }
+    return tot ? Math.round((bad / tot) * 100) : 0;
+  };
+
+  // Pausa a animação e espera a escolha do usuário (cancelar tudo x finalizar arquivo atual).
+  const waitForDefragDecision = async (): Promise<'all' | 'current'> => {
+    setDefragRun((s) => s && { ...s, status: 'confirm' });
+    while (defragCtl.current.decision === null) await sleep(80);
+    const d = defragCtl.current.decision;
+    defragCtl.current.pause = false; defragCtl.current.decision = null;
+    setDefragRun((s) => s && { ...s, status: 'running' });
+    return d as 'all' | 'current';
+  };
+
+  // Desfragmentação ANIMADA (nostálgica): processa arquivo-por-arquivo IN-PLACE (realoca cada um
+  // num trecho contíguo via defragFileInPlace), com delays imitando um disquete físico. A imagem é
+  // em memória — a cada passo fica válida (suporta parar no meio, mantendo o que já foi feito).
+  const isChainFrag = (c: number[]) => { for (let i = 1; i < (c || []).length; i++) if (c[i] !== c[i - 1] + 1) return true; return false; };
+  const startDefragAnimation = async (which: 'A' | 'B', order: 'dir' | 'alpha' | 'size') => {
+    const pane = getPane(which);
+    if (!pane || !pane.files.length) return;
+    const diskName = pane.fileName || which;
+    let working = new Uint8Array(pane.buffer);
+    let parsed = await window.cocoApi.readDskDirectory(working);
+    if (!parsed.success) { addLog(`DSK: ${parsed.error}`, `DSK: ${parsed.error}`, 'error'); return; }
+    if (typeof window.cocoApi.dskDefragFile !== 'function') {
+      addLog('Reinicie o app: a função de desfragmentação (preload) não está carregada.', 'Restart the app: the defrag function (preload) is not loaded.', 'error');
+      return;
+    }
+    const startFrag = fragPercent(parsed.files);
+    const ordered = [...parsed.files];
+    if (order === 'alpha') ordered.sort((a: any, b: any) => a.fullName.localeCompare(b.fullName));
+    else if (order === 'size') ordered.sort((a: any, b: any) => (b.totalSize || 0) - (a.totalSize || 0));
+    const totalWork = ordered.reduce((a: number, f: any) => a + (f.granuleChain?.length || 0), 0) || 1;
+    defragCtl.current = { pause: false, decision: null };
+    pushDskUndo();
+    setImageBusy(true);
+    setDefragRun({ which, diskName, files: parsed.files, totalGranules: parsed.totalGranules, currentName: '', doneGranules: 0, totalWork, status: 'spinup', startFrag, endFrag: startFrag, processed: 0, skipped: 0 });
+    // Espera interrompível: dorme em fatias de 40ms e sai cedo se "Cancelar" for clicado.
+    const waitChunk = async (ms: number) => { let w = 0; while (w < ms && !defragCtl.current.pause) { const s = Math.min(40, ms - w); await sleep(s); w += s; } };
+    const pauseCheck = async (): Promise<'all' | 'current' | null> => (defragCtl.current.pause ? await waitForDefragDecision() : null);
+
+    let done = 0, processed = 0, skipped = 0, aborted = false, stopAfter = false;
+    try {
+      await waitChunk(DEFRAG_SPINUP_MS);
+      setDefragRun((s) => s && { ...s, status: 'running' });
+      { const d = await pauseCheck(); if (d === 'all') aborted = true; else if (d === 'current') stopAfter = true; }
+      for (const f of ordered) {
+        if (aborted || stopAfter) break;
+        const rp = await window.cocoApi.readDskDirectory(working); // posições podem ter mudado
+        const entry = rp.success ? rp.files.find((x: any) => x.fullName === f.fullName) : null;
+        if (!entry) continue;
+        const frag = isChainFrag(entry.granuleChain);
+        setDefragRun((s) => s && { ...s, currentName: entry.fullName });
+        await waitChunk(DEFRAG_SEEK_MS);
+        { const d = await pauseCheck(); if (d === 'all') { aborted = true; break; } if (d === 'current') stopAfter = true; }
+        if (!stopAfter) {
+          for (let g = 0; g < entry.granuleChain.length; g++) {
+            await waitChunk(DEFRAG_GRAN_MS);
+            done++;
+            setDefragRun((s) => s && { ...s, doneGranules: done });
+            const d = await pauseCheck();
+            if (d === 'all') { aborted = true; break; }
+            if (d === 'current') { stopAfter = true; break; }
+          }
+        }
+        if (aborted) break; // "cancelar tudo": arquivo atual NÃO realocado → descarta
+        if (frag) { // "finalizar arquivo atual" ainda conclui o arquivo em andamento
+          const res = await window.cocoApi.dskDefragFile(working, entry);
+          if (res.success) { working = res.image; processed++; const np = await window.cocoApi.readDskDirectory(working); if (np.success) setDefragRun((s) => s && { ...s, files: np.files, processed }); }
+          else { skipped++; setDefragRun((s) => s && { ...s, skipped }); }
+        }
+        if (stopAfter) break;
+      }
+      if (aborted) { // cancelar tudo: descarta (painel intacto)
+        setDefragRun((s) => s && { ...s, status: 'cancelled' });
+        addLog(`Desfragmentação do painel ${which} cancelada.`, `Pane ${which} defragmentation cancelled.`, 'info');
+        return;
+      }
+      if (order === 'alpha') { const sr = await window.cocoApi.dskSortDirectory(working); if (sr.success) working = sr.image; }
+      await refreshPane(which, working);
+      setSelectedDsk(null);
+      const fp = await window.cocoApi.readDskDirectory(working);
+      const endFrag = fp.success ? fragPercent(fp.files) : 0;
+      setDefragRun((s) => s && { ...s, files: fp.success ? fp.files : s.files, endFrag, status: 'done', currentName: '', processed, skipped });
+      addLog(`Painel ${which} desfragmentado: ${processed} arquivo(s) movido(s)${skipped ? `, ${skipped} sem espaço contíguo` : ''}, fragmentação ${startFrag}% → ${endFrag}%. Lembre-se de salvar.`,
+        `Pane ${which} defragmented: ${processed} file(s) moved${skipped ? `, ${skipped} without contiguous room` : ''}, fragmentation ${startFrag}% → ${endFrag}%. Remember to save.`, 'success');
+    } catch (err: any) {
+      addLog(`Erro na desfragmentação: ${err?.message || err}`, `Defragment error: ${err?.message || err}`, 'error');
+      setDefragRun((s) => s && { ...s, status: 'cancelled' }); // permite fechar com OK
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
+  // Desfragmenta APENAS o arquivo selecionado (realoca num trecho contíguo). Se não couber num vão
+  // contíguo (espaço livre fragmentado), avisa e sugere a desfragmentação total.
+  const handleDefragFile = async (which: 'A' | 'B', entry: any) => {
+    const pane = getPane(which);
+    if (!pane || !entry) return;
+    try {
+      setImageBusy(true);
+      pushDskUndo();
+      const res = await window.cocoApi.dskDefragFile(pane.buffer, entry);
+      if (!res.success) {
+        addLog(`Não foi possível desfragmentar "${entry.fullName}": sem vão livre contíguo. Use a desfragmentação total.`,
+          `Could not defragment "${entry.fullName}": no contiguous free run. Use full defragment.`, 'warn');
+        return;
+      }
+      await refreshPane(which, res.image);
+      addLog(`Arquivo "${entry.fullName}" desfragmentado no painel ${which}. Lembre-se de salvar.`,
+        `File "${entry.fullName}" defragmented in pane ${which}. Remember to save.`, 'success');
+    } catch (err: any) {
+      addLog(`Erro ao desfragmentar arquivo: ${err.message}`, `File defragment error: ${err.message}`, 'error');
+    } finally { setImageBusy(false); }
+  };
+
   const beginAddBatch = (which: 'A' | 'B', files: any[]) => {
     if (!files.length) return;
     const pane = getPane(which);
@@ -2620,6 +2798,13 @@ export default function App() {
     const usedGran = pane ? pane.totalGranules - pane.freeGranules : 0;
     const freeKB = pane ? ((pane.freeGranules * 2304) / 1024).toFixed(1) : '0';
     const usedKB = pane ? ((usedGran * 2304) / 1024).toFixed(1) : '0';
+    const usedPct = pane && pane.totalGranules ? Math.round((usedGran / pane.totalGranules) * 100) : 0;
+    // % de fragmentação = transições não-contíguas / total de transições nas cadeias de granules.
+    const fragPct = pane ? (() => {
+      let bad = 0, tot = 0;
+      for (const f of pane.files) { const c = f.granuleChain || []; for (let i = 1; i < c.length; i++) { tot++; if (c[i] !== c[i - 1] + 1) bad++; } }
+      return tot ? Math.round((bad / tot) * 100) : 0;
+    })() : 0;
     return (
       <div
         onClick={() => setActivePane(which)}
@@ -2629,7 +2814,7 @@ export default function App() {
       >
         <div className="flex-1 flex flex-row overflow-hidden" style={{ minHeight: 0 }}>
           {/* Left: open + image info */}
-          <div className="flex flex-col gap-2 p-3 border-r border-[var(--border)] flex-shrink-0" style={{ width: 200 }}>
+          <div className="flex flex-col gap-2 p-3 border-r border-[var(--border)] flex-shrink-0" style={{ width: 200, overflowY: 'auto', minHeight: 0 }}>
             <div className="flex items-center justify-center gap-2">
               {/* Badge PAINEL A/B — brilho laranja quando o painel está ativo (distingue ativo/inativo) */}
               <span
@@ -2659,7 +2844,9 @@ export default function App() {
             >
               <FolderOpen size={12} /> {t('openImageBtn')}
             </button>
-            <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>
+            {/* Legenda de formatos só quando vazio; ao carregar, o NOME da imagem sobe nesse lugar
+                (libera espaço vertical p/ os controles do contêiner — ex.: "Buscar disco"). */}
+            {!pane && <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>}
             {pane ? (
               <div className="flex flex-col gap-1 text-[11px] mt-1">
                 <div className="text-white font-mono break-all">{pane.fileName}</div>
@@ -2735,11 +2922,47 @@ export default function App() {
               <div className="h-full flex items-center justify-center text-[10px] text-[var(--text-muted)] p-4 text-center">{t('dskPaneEmpty')}</div>
             )}
           </div>
+          {/* Far right: mapa visual do disquete (ocupação por trilha/setor; hover mostra o arquivo;
+              clique seleciona; fragmentados em vermelho). Disco responsivo: ajusta-se à altura. */}
+          {pane && (
+            <div className="flex-shrink-0" style={{ width: 240, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: 10, borderLeft: '1px solid var(--border)', overflow: 'hidden', minHeight: 0 }}>
+              <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', fontWeight: 700, flexShrink: 0 }}>
+                {currentLang === 'pt-br' ? 'Mapa do disco' : 'Disk map'}
+              </span>
+              <DiskMap
+                files={pane.files}
+                totalGranules={pane.totalGranules}
+                selectedNames={selectedDsk?.pane === which ? new Set(selectedDsk.entries.map((e: any) => e.fullName)) : undefined}
+                lang={currentLang}
+                onSelectFile={(f: any) => handleSelectDskFile(which, f)}
+              />
+              {(() => {
+                const sel = selectedDsk?.pane === which && selectedDsk.entries.length === 1 ? selectedDsk.entries[0] : null;
+                const selFrag = !!sel && (() => { const c = sel.granuleChain || []; for (let i = 1; i < c.length; i++) if (c[i] !== c[i - 1] + 1) return true; return false; })();
+                return (
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', justifyContent: 'center', flexShrink: 0 }}>
+                    <button
+                      onClick={() => { setDefragOrder('dir'); setDefragModal({ which }); }}
+                      disabled={imageBusy || !pane.files.length}
+                      className="dsk-tool" style={{ padding: '3px 8px', fontSize: 10, whiteSpace: 'nowrap' }}
+                      title={currentLang === 'pt-br' ? 'Desfragmentar o disco inteiro (reescreve numa imagem nova, contígua)' : 'Defragment the whole disk (rewrite to a fresh contiguous image)'}
+                    >DEFRAG</button>
+                    <button
+                      onClick={() => sel && handleDefragFile(which, sel)}
+                      disabled={imageBusy || !selFrag}
+                      className="dsk-tool" style={{ padding: '3px 8px', fontSize: 10, whiteSpace: 'nowrap' }}
+                      title={currentLang === 'pt-br' ? 'Desfragmentar apenas o arquivo selecionado (precisa de um vão contíguo livre)' : 'Defragment only the selected file (needs a contiguous free run)'}
+                    >{currentLang === 'pt-br' ? 'DEFRAG ARQ.' : 'DEFRAG FILE'}</button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
         </div>
         {/* Status bar */}
         <div className="dsk-statusbar">
           {pane
-            ? `${pane.files.length} ${t('dskFilesWord')} · ${t('dskUsedWord')} ${usedKB} KB (${usedGran}g) · ${t('dskFreeWord')} ${freeKB} KB (${pane.freeGranules}g)`
+            ? `${pane.files.length} ${t('dskFilesWord')} · ${t('dskUsedWord')} ${usedKB} KB (${usedGran}g · ${usedPct}%) · ${t('dskFreeWord')} ${freeKB} KB (${pane.freeGranules}g) · ${currentLang === 'pt-br' ? 'Frag' : 'Frag'} ${fragPct}%`
             : t('dskNoImage')}
         </div>
       </div>
@@ -3918,13 +4141,150 @@ export default function App() {
       )}
 
       {/* Disk picker — search/jump within a navigable container (DriveWire / MiniIDE / CoCoSDC) */}
+      {/* Modal de desfragmentação total (out-of-place) com opções de ordem dos arquivos */}
+      {defragModal && (() => {
+        const pane = getPane(defragModal.which);
+        if (!pane) return null;
+        const frag = fragPercent(pane.files);
+        const opts: Array<{ id: 'dir' | 'alpha' | 'size'; pt: string; en: string }> = [
+          { id: 'dir', pt: 'Manter a ordem atual do diretório', en: 'Keep current directory order' },
+          { id: 'alpha', pt: 'Ordem alfabética (A→Z) — também ordena o diretório', en: 'Alphabetical (A→Z) — also sorts the directory' },
+          { id: 'size', pt: 'Por tamanho (maior → menor)', en: 'By size (largest → smallest)' },
+        ];
+        return (
+          <div className="glass-modal-overlay" onClick={() => !imageBusy && setDefragModal(null)}>
+            <div className="glass-panel flex flex-col" style={{ width: 470, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center gap-3 p-4 border-b border-[var(--border)]">
+                <div className="p-2 rounded-full bg-[var(--primary-glow)] text-[var(--primary)] flex-shrink-0"><Database size={18} /></div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Desfragmentar disco' : 'Defragment disk'}</h3>
+                  <div className="text-[11px] text-[var(--text-secondary)]">
+                    {currentLang === 'pt-br' ? 'Painel' : 'Pane'} {defragModal.which} · {pane.files.length} {currentLang === 'pt-br' ? 'arquivos' : 'files'} · {currentLang === 'pt-br' ? 'fragmentação' : 'fragmentation'} {frag}%
+                  </div>
+                </div>
+                <button onClick={() => !imageBusy && setDefragModal(null)} className="dsk-tool" style={{ padding: 6 }}><X size={15} /></button>
+              </div>
+              {frag === 0 ? (
+                <>
+                  <div className="p-5 flex flex-col gap-2 items-center text-center">
+                    <span style={{ fontSize: 30, color: 'var(--primary)', lineHeight: 1 }}>✓</span>
+                    <p className="text-sm text-white font-bold">{currentLang === 'pt-br' ? 'Disco não fragmentado' : 'Disk not fragmented'}</p>
+                    <p className="text-[11px] text-[var(--text-secondary)]">
+                      {currentLang === 'pt-br'
+                        ? 'Os arquivos já estão contíguos (0% de fragmentação) — não há nada a otimizar.'
+                        : 'Files are already contiguous (0% fragmentation) — nothing to optimize.'}
+                    </p>
+                  </div>
+                  <div className="flex justify-end p-3 border-t border-[var(--border)]">
+                    <button onClick={() => setDefragModal(null)} className="btn btn-primary py-1.5 px-6 text-xs font-bold uppercase">OK</button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="p-4 flex flex-col gap-3">
+                    <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                      {currentLang === 'pt-br'
+                        ? 'Reescreve numa imagem nova em branco, gravando os arquivos em sequência — fica 100% contíguo (otimiza a leitura em disco físico). Não-destrutivo: o painel fica marcado como não-salvo até você salvar.'
+                        : 'Rewrites to a fresh blank image, writing files sequentially — becomes 100% contiguous (optimizes physical-disk reads). Non-destructive: the pane is marked unsaved until you save.'}
+                    </p>
+                    <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-bold">{currentLang === 'pt-br' ? 'Ordem dos arquivos' : 'File order'}</span>
+                    <div className="flex flex-col gap-2">
+                      {opts.map((o) => (
+                        <label key={o.id} className="flex items-center gap-2 cursor-pointer text-xs text-white">
+                          <input type="radio" name="defragOrder" checked={defragOrder === o.id} onChange={() => setDefragOrder(o.id)} style={{ accentColor: 'var(--primary)' }} />
+                          {currentLang === 'pt-br' ? o.pt : o.en}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 p-3 border-t border-[var(--border)]">
+                    <button onClick={() => setDefragModal(null)} disabled={imageBusy} className="btn btn-secondary py-1.5 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+                    <button
+                      onClick={() => { const w = defragModal.which; const o = defragOrder; setDefragModal(null); startDefragAnimation(w, o); }}
+                      disabled={imageBusy}
+                      className="btn btn-primary py-1.5 px-5 text-xs font-bold uppercase shadow-[0_0_15px_rgba(20,250,200,0.15)]"
+                    >{currentLang === 'pt-br' ? 'Desfragmentar' : 'Defragment'}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Modal NOSTÁLGICO de desfragmentação animada (anéis + arquivo atual + progresso) */}
+      {defragRun && (() => {
+        const r = defragRun;
+        const pct = Math.min(100, Math.round((r.doneGranules / r.totalWork) * 100));
+        const Lx = (pt: string, en: string) => (currentLang === 'pt-br' ? pt : en);
+        return (
+          <div className="glass-modal-overlay">
+            <div className="glass-panel flex flex-col" style={{ width: 430, maxWidth: '94%', position: 'relative' }}>
+              <div className="p-3 border-b border-[var(--border)] text-center">
+                <div className="text-sm font-bold text-white uppercase tracking-wide">
+                  {r.status === 'done' ? Lx('Desfragmentação concluída', 'Defragmentation complete')
+                    : r.status === 'cancelled' ? Lx('Desfragmentação cancelada', 'Defragmentation cancelled')
+                      : Lx('Desfragmentando', 'Defragmenting')} — <span className="text-[var(--primary)] font-mono">{r.diskName}</span>
+                </div>
+              </div>
+              <div style={{ height: 300, display: 'flex', padding: 10 }}>
+                <DiskMap files={r.files} totalGranules={r.totalGranules} selectedNames={r.currentName ? new Set([r.currentName]) : undefined} lang={currentLang} />
+              </div>
+              <div className="px-4 pb-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between text-[11px]" style={{ minHeight: 16 }}>
+                  <span className="text-[var(--text-secondary)] truncate">
+                    {r.status === 'spinup' ? Lx('Acionando o motor…', 'Spinning up…')
+                      : r.status === 'done' ? Lx('Pronto.', 'Done.')
+                        : r.currentName ? <>{Lx('Lendo', 'Reading')}: <span className="font-mono text-white">{r.currentName}</span></> : ''}
+                  </span>
+                  <span className="font-mono text-[var(--text-muted)]">{pct}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-[var(--primary)] transition-all" style={{ width: `${pct}%` }} />
+                </div>
+                {r.status === 'done' && (
+                  <div className="text-[11px] text-[var(--text-secondary)] text-center">
+                    {Lx('Fragmentação', 'Fragmentation')} {r.startFrag}% → <strong style={{ color: r.endFrag === 0 ? '#34d399' : '#fbbf24' }}>{r.endFrag}%</strong>
+                    {' · '}{r.processed} {Lx('movido(s)', 'moved')}{r.skipped ? ` · ${r.skipped} ${Lx('sem espaço contíguo', 'no contiguous room')}` : ''}
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-3 p-3 border-t border-[var(--border)]">
+                {(r.status === 'running' || r.status === 'spinup') && (
+                  <button onClick={() => { defragCtl.current.pause = true; }} className="btn btn-secondary py-1.5 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+                )}
+                {(r.status === 'done' || r.status === 'cancelled') && (
+                  <button onClick={() => setDefragRun(null)} className="btn btn-primary py-1.5 px-6 text-xs font-bold uppercase">OK</button>
+                )}
+              </div>
+              {/* Confirmação de cancelamento (sobreposta) */}
+              {r.status === 'confirm' && (
+                <div className="absolute inset-0 flex items-center justify-center rounded-2xl" style={{ background: 'rgba(2,6,12,0.86)' }}>
+                  <div className="glass-panel p-4 flex flex-col gap-3" style={{ width: 330 }}>
+                    <div className="text-sm font-bold text-white text-center">{Lx('Cancelar a desfragmentação?', 'Cancel defragmentation?')}</div>
+                    <div className="text-[11px] text-[var(--text-secondary)] text-center">{Lx('A operação foi suspensa. O que deseja fazer?', 'The operation is paused. What do you want to do?')}</div>
+                    <div className="flex flex-col gap-2">
+                      <button onClick={() => { defragCtl.current.decision = 'current'; }} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase">{Lx('Finalizar o arquivo atual e parar', 'Finish current file and stop')}</button>
+                      <button onClick={() => { defragCtl.current.decision = 'all'; }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{Lx('Cancelar tudo (descartar)', 'Cancel all (discard)')}</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {diskPicker && (() => {
         const dp = getPane(diskPicker.which);
         const c = dp?.container;
         if (!c) return null;
         const entries = c.entries || [];
         const q = imageFilter.trim().toLowerCase();
-        const list = q ? entries.filter((e: any) => `${e.label} ${e.sub || ''}`.toLowerCase().includes(q)) : entries;
+        const idxMap = (fileIndex && fileIndex.key === containerKey(c)) ? fileIndex.map : {};
+        const fileMatch = (e: any): string | undefined => { const ns = idxMap[e.id]; return ns ? ns.find((n: string) => n.toLowerCase().includes(q)) : undefined; };
+        const list = q ? entries.filter((e: any) => `${e.label} ${e.sub || ''}`.toLowerCase().includes(q) || !!fileMatch(e)) : entries;
+        const indexing = fileIndex && fileIndex.key === containerKey(c) && fileIndex.building;
         const kindLabel = c.kind === 'cocosdc' ? 'CoCoSDC' : c.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
         return (
           <div className="glass-modal-overlay" onClick={() => !imageBusy && setDiskPicker(null)}>
@@ -3940,13 +4300,21 @@ export default function App() {
                 </div>
                 <button onClick={() => !imageBusy && setDiskPicker(null)} className="dsk-tool" style={{ padding: 6 }}><X size={15} /></button>
               </div>
-              <div className="px-4 pt-3 pb-2 flex items-center gap-2">
-                <div className="flex items-center gap-2 flex-1 bg-slate-950/50 border border-[var(--border)] rounded-lg px-2.5 py-1.5">
-                  <Search size={13} className="text-[var(--text-muted)]" />
-                  <input autoFocus value={imageFilter} onChange={(e) => setImageFilter(e.target.value)} placeholder={t('imgFilterPlaceholder')}
-                    className="bg-transparent outline-none text-xs text-white flex-1 placeholder:text-[var(--text-muted)]" />
+              <div className="px-4 pt-3 pb-2 flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-1 bg-slate-950/50 border border-[var(--border)] rounded-lg px-2.5 py-1.5">
+                    <Search size={13} className="text-[var(--text-muted)]" />
+                    <input autoFocus value={imageFilter} onChange={(e) => setImageFilter(e.target.value)}
+                      placeholder={currentLang === 'pt-br' ? 'Nome/nº do disco ou nome de arquivo…' : 'Disk name/number or file name…'}
+                      className="bg-transparent outline-none text-xs text-white flex-1 placeholder:text-[var(--text-muted)]" />
+                  </div>
+                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{list.length}/{entries.length}</span>
                 </div>
-                <span className="text-[10px] text-[var(--text-muted)] font-mono">{list.length}/{entries.length}</span>
+                {indexing && (
+                  <div className="text-[9px] text-[var(--primary)]">
+                    {currentLang === 'pt-br' ? 'Indexando arquivos' : 'Indexing files'} {fileIndex!.done}/{fileIndex!.total}…
+                  </div>
+                )}
               </div>
               <div className="flex-1 overflow-y-auto px-2 pb-2" style={{ minHeight: 120 }}>
                 {!list.length ? <div className="text-center text-[11px] text-[var(--text-muted)] p-6">{t('imgEmpty')}</div> :
@@ -3959,6 +4327,11 @@ export default function App() {
                         <div className="flex-1 min-w-0">
                           <div className="text-xs font-bold text-white font-mono truncate">{e.label}</div>
                           {e.sub && <div className="text-[10px] text-[var(--text-secondary)] truncate">{e.sub}</div>}
+                          {q && (() => {
+                            const fm = fileMatch(e);
+                            const inMeta = `${e.label} ${e.sub || ''}`.toLowerCase().includes(q);
+                            return fm && !inMeta ? <div className="text-[10px] text-[var(--primary)] font-mono truncate">↳ {fm}</div> : null;
+                          })()}
                         </div>
                         <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{e.info}</span>
                         <ArrowRight size={13} className="text-[var(--primary)] flex-shrink-0" />

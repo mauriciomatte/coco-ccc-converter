@@ -51,6 +51,9 @@ const api = {
   dskNewBlank: () =>
     ipcRenderer.invoke('dsk-new-blank'),
 
+  dskDefragFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
+    ipcRenderer.invoke('dsk-defrag-file', dskBuffer, fileEntry),
+
   pickCocoFile: () =>
     ipcRenderer.invoke('pick-coco-file'),
     

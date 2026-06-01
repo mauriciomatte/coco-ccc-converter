@@ -398,6 +398,50 @@ export function addDskFile(
 }
 
 /**
+ * Desfragmenta UM arquivo no lugar: realoca os granules dele para o menor trecho LIVRE CONTÍGUO
+ * (≥ tamanho do arquivo), reescrevendo os dados, a cadeia da FAT e o ponteiro de primeiro granule
+ * no diretório. O conteúdo e o tamanho do arquivo não mudam. Se não houver trecho contíguo grande
+ * o suficiente (espaço livre também fragmentado), lança erro — aí o caminho é a desfragmentação
+ * total. Retorna um NOVO buffer (a entrada não é mutada).
+ */
+export function defragFileInPlace(dskBuffer: Buffer, entry: DskFileEntry): Buffer {
+  const img = Buffer.from(dskBuffer); // cópia
+  const tracks = img.length / BYTES_PER_TRACK;
+  const totalGranules = (tracks - 1) * 2;
+  const fatOffset = 17 * BYTES_PER_TRACK + 256;
+  const chain = entry.granuleChain || [];
+  const need = chain.length;
+  if (need <= 1) return img; // 1 granule nunca fragmenta
+
+  // Já contíguo? Não mexe.
+  let contiguous = true;
+  for (let i = 1; i < chain.length; i++) if (chain[i] !== chain[i - 1] + 1) { contiguous = false; break; }
+  if (contiguous) return img;
+
+  const data = extractDskFile(img, entry); // captura os dados ANTES de liberar os granules
+  for (const g of chain) if (g >= 0 && g < totalGranules) img[fatOffset + g] = 0xFF; // libera os atuais
+
+  // Menor trecho contíguo de `need` granules livres (inclui os recém-liberados, se contíguos).
+  let runStart = -1;
+  for (let g = 0; g + need <= totalGranules; g++) {
+    let ok = true;
+    for (let k = 0; k < need; k++) if (img[fatOffset + g + k] !== 0xFF) { ok = false; break; }
+    if (ok) { runStart = g; break; }
+  }
+  if (runStart < 0) throw new Error(`No contiguous free run of ${need} granules for this file.`);
+
+  for (let i = 0; i < need; i++) {
+    const g = runStart + i;
+    const off = granuleToOffset(g);
+    img.fill(0x00, off, off + GRANULE_BYTES);
+    data.copy(img, off, i * GRANULE_BYTES, Math.min((i + 1) * GRANULE_BYTES, data.length));
+    img[fatOffset + g] = i < need - 1 ? g + 1 : (0xC0 + Math.max(1, entry.sectorsInLastGranule));
+  }
+  img[entry.dirOffset + 13] = runStart; // novo primeiro granule (bytesInLastSector não muda)
+  return img;
+}
+
+/**
  * Reorders the directory entries of an RS-DOS .dsk image alphabetically (A→Z, with
  * digits before letters per ASCII order) by file name then extension. Only the 32-byte
  * directory records in track 17 are rearranged — the file data and the FAT granule

@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
@@ -158,6 +158,16 @@ ipcMain.handle('dsk-extract-raw', async (_, dskUint8Array: Uint8Array, entry: Ds
 ipcMain.handle('dsk-add-bytes', async (_, dskUint8Array: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, dataUint8Array: Uint8Array) => {
   try {
     const img = addDskFile(Buffer.from(dskUint8Array), name, ext, fileType, asciiFlag, Buffer.from(dataUint8Array));
+    return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2c2. Defragment a single file in place (relocate to a contiguous free run)
+ipcMain.handle('dsk-defrag-file', async (_, dskUint8Array: Uint8Array, entry: DskFileEntry) => {
+  try {
+    const img = defragFileInPlace(Buffer.from(dskUint8Array), entry);
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };

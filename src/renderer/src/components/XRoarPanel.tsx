@@ -62,6 +62,9 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [loaded, setLoaded] = useState(false); // config carregada? (evita salvar antes da carga)
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
+  // Atividade do floppy (estilo VCC): trilha/setor/lado do acesso em tempo real. O build do XRoar
+  // dispara 'xroar-disk-activity' a cada acesso e 'xroar-disk-idle' ~500ms depois de parar.
+  const [diskAct, setDiskAct] = useState<{ drive: number; track: number; sector: number; head: number; active: boolean } | null>(null);
   const lastLoadKey = useRef(0);
   const lastTypeKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
@@ -127,6 +130,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       if (d.type === 'xroar-ready') { setReady(true); setPaused(false); setStatus(t('pronto', 'ready')); }
       else if (d.type === 'xroar-error') onLog?.(`XRoar: ${d.text}`, `XRoar: ${d.text}`, 'error');
       else if (d.type === 'xroar-status' && d.text) setStatus(String(d.text));
+      else if (d.type === 'xroar-disk-activity') setDiskAct({ drive: d.drive ?? 0, track: d.track ?? 0, sector: d.sector ?? 0, head: d.head ?? 0, active: true });
+      else if (d.type === 'xroar-disk-idle') setDiskAct((p) => (p ? { ...p, active: false } : null)); // mantém o último valor, apaga o LED
     };
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
@@ -187,9 +192,16 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     setVideo('saturation', colour);
   }, [ready]);
 
-  // Monta o iframe só QUANDO a aba fica visível pela 1ª vez (boot já visível → renderiza
-  // corretamente). Depois permanece montado (trocar de aba não reinicia o emulador).
-  useEffect(() => { if (active && loaded) setMounted(true); }, [active, loaded]);
+  // Monta o iframe quando a aba fica visível (1ª vez) e a config carregou. Se a tela 4:3 JÁ tem
+  // tamanho real, monta na hora (canvas do WASM inicia no tamanho certo → evita tela preta). Se
+  // ainda não, um fallback de 600ms monta de qualquer jeito — assim NUNCA trava em "iniciando…".
+  // Depois fica montado (trocar de aba não reinicia o emulador).
+  useEffect(() => {
+    if (!active || !loaded || mounted) return;
+    if (box.w > 0 && box.h > 0) { setMounted(true); return; }
+    const id = setTimeout(() => setMounted(true), 600);
+    return () => clearTimeout(id);
+  }, [active, loaded, mounted, box.w, box.h]);
 
   // Foco no canvas ao entrar na aba (ou ao ficar pronto estando ativo)
   useEffect(() => {
@@ -335,6 +347,22 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           <span className="ml-auto text-[9px] uppercase tracking-wider">
             {ready ? <span className="text-[var(--primary)] font-bold">● {status || 'ready'}</span> : <span className="text-[var(--text-muted)]">{t('iniciando…', 'booting…')}</span>}
           </span>
+        </div>
+
+        {/* Barra de atividade do floppy (estilo VCC): drive · trilha · setor · lado, em tempo real */}
+        <div className="glass-panel" style={{ padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'monospace', fontSize: 11 }}>
+          <span style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, background: diskAct?.active ? '#34d399' : '#334155', boxShadow: diskAct?.active ? '0 0 8px #34d399' : 'none', transition: 'background 80ms' }} />
+          <span style={{ fontSize: 8, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>{t('Disco', 'Disk')}</span>
+          {diskAct ? (
+            <span style={{ display: 'flex', gap: 10, marginLeft: 'auto', color: diskAct.active ? '#fff' : 'var(--text-secondary)' }}>
+              <span>D{diskAct.drive}</span>
+              <span>{t('TRL', 'TRK')} <strong style={{ color: diskAct.active ? 'var(--primary)' : 'inherit' }}>{String(diskAct.track).padStart(2, '0')}</strong></span>
+              <span>{t('SET', 'SEC')} <strong style={{ color: diskAct.active ? 'var(--primary)' : 'inherit' }}>{String(diskAct.sector).padStart(2, '0')}</strong></span>
+              <span>{t('LADO', 'SIDE')} {diskAct.head}</span>
+            </span>
+          ) : (
+            <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>—</span>
+          )}
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-2">
