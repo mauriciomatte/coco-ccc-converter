@@ -37,6 +37,11 @@ const JOY_OPTIONS = [
 interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; }
 interface PendingType { text: string; key: number; reset?: boolean; }
 
+// Atraso por tecla na injeção BASIC→XRoar. O xroar.html SEMPRE digita caractere-a-caractere (o envio
+// em bloco descartava a 1ª linha no CoCo). Para AUDITAR o transporte, suba para 3000 (3s/tecla, com
+// log por tecla no console de diagnóstico). 40ms é o uso normal (~1/3 mais rápido que os 60ms iniciais).
+const TYPE_DELAY_MS = 40;
+
 interface Props {
   lang: 'pt-br' | 'en-us';
   active?: boolean;
@@ -153,7 +158,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     if (pendingLoad.runCmd) {
       const cmd = pendingLoad.runCmd;
       setTimeout(() => sendCmd('hard_reset'), 900);                                  // disco montou → reseta
-      setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: 60 }); focusEmu(); }, 3400); // boot pronto → digita
+      setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: TYPE_DELAY_MS }); focusEmu(); }, 3400); // boot pronto → digita
     } else if (pendingLoad.reset) {
       // "Testar Painel": monta o disco e dá HARD RESET → boot limpo com o disco no drive 0
       // (sem auto-digitar; o usuário testa com DIR/RUN/LOADM no prompt).
@@ -169,23 +174,30 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     if (!pendingType || pendingType.key === lastTypeKey.current || !ready) return;
     lastTypeKey.current = pendingType.key;
     const { text, reset } = pendingType;
-    // "Prime" do 1º caractere: a primeira tecla é perdida quando o teclado emulado ainda não
-    // está pronto (emulador recém-visível/resetado). Um CR inicial NÃO resolve (o XRoar ignora
-    // CR à frente). Usamos um ESPAÇO imprimível: se for engolido, o "10" sobrevive; se não for,
-    // o BASIC ignora espaços antes do número da linha/comando. Preserva o "1" do "10".
-    const primed = ' ' + text;
+    // Prime depende da máquina:
+    //  • CoCo: nenhum — depois do reset (ou já no prompt) o cursor está pronto; manda o texto cru.
+    //    (A perda da 1ª linha no CoCo era do ENVIO EM BLOCO, já corrigido — o xroar.html agora digita
+    //    sempre caractere-a-caractere.) Em "Rodar com reset" o hard reset limpa a RAM, então o NEW nem
+    //    é incluído (ver BasicEditor.buildProgram).
+    //  • Dragon: a ROM pede "pressione uma tecla" no boot/reset → mandamos um ESPAÇO antes para
+    //    dispensar esse prompt. Se cair no prompt do BASIC, o espaço é ignorado (inócuo).
+    const isDragon = machine.startsWith('dragon');
+    const primed = isDragon ? ' ' + text : text;
     if (reset) {
       sendCmd('hard_reset');
-      setTimeout(() => { focusEmu(); sendCmd('type_string', { text: primed, delayMs: 60 }); }, 2800); // espera o boot
+      setTimeout(() => { focusEmu(); sendCmd('type_string', { text: primed, delayMs: TYPE_DELAY_MS }); }, 2800); // espera o boot
     } else {
       // Atraso curto para o canvas focar/processar antes de digitar (aba recém-exibida).
       focusEmu();
-      setTimeout(() => { sendCmd('type_string', { text: primed, delayMs: 60 }); }, 450);
+      setTimeout(() => { sendCmd('type_string', { text: primed, delayMs: TYPE_DELAY_MS }); }, 450);
     }
   }, [pendingType, ready]);
 
-  // Trocar máquina ou saída de vídeo reinicia o emulador → limpa as drives.
-  useEffect(() => { setDrives(['', '', '', '']); }, [machine, tvInput]);
+  // Trocar máquina ou saída de vídeo REMONTA o iframe (key={machine|tvInput}) → reboot. Limpa as
+  // drives e marca NÃO-pronto até o novo boot reportar 'xroar-ready'. Assim um disco empurrado logo
+  // após uma troca de máquina (ex.: "Testar Painel" de um disco Dragon com o XRoar em CoCo) ESPERA
+  // a máquina certa subir antes de montar.
+  useEffect(() => { setDrives(['', '', '', '']); if (mounted) setReady(false); }, [machine, tvInput]);
 
   // Aplica TODAS as configurações ao vivo quando o emulador (re)fica pronto — o boot
   // começa nos defaults, então empurramos o estado atual (vídeo, cor, ccr, joysticks).

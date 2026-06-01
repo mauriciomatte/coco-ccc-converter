@@ -296,12 +296,16 @@ export function encodeDragonBlank(tracks = 40, sectorsPerTrack = 18): Buffer {
   img[fo + 0xfe] = (~tracks) & 0xff;
   img[fo + 0xff] = (~sectorsPerTrack) & 0xff;
 
-  // Mark directory entry 0 as End-of-Directory so an empty disk scans cleanly.
-  img[entryOffset(img, sectorsPerTrack, 0)] = 0x08;
+  // Inicializa TODAS as 160 entradas de diretório como VAZIAS no padrão do Dragon DOS: flag 0x88
+  // (bit7 apagada + bit3 fim-de-diretório), como num disco formatado de verdade. Assim o DragonDOS
+  // para na 1ª entrada vazia (disco vazio → 0 arquivos; após adicionar, para logo depois do arquivo).
+  for (let n = 0; n < 160; n++) img[entryOffset(img, sectorsPerTrack, n)] = 0x88;
 
-  // Wrap in a minimal valid VDK container ("dk" + 12-byte header) so the new disk is a proper
-  // .vdk — loadable in XRoar and other Dragon tools (a raw image named .vdk would be rejected).
-  const vdkHeader = Buffer.from([0x64, 0x6b, 0x0c, 0x00, 0x10, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+  // Wrap in a valid VDK container ("dk" + 12-byte header). CRÍTICO: bytes 8 e 9 do header VDK são
+  // o nº de TRILHAS e de LADOS — o XRoar lê a geometria daí. Se ficarem 0, o XRoar não acha
+  // nenhum setor → "RF ERROR" e DIR vazio. (byte10=flags, byte11=compressão; ambos 0.)
+  const sides = sectorsPerTrack === 36 ? 2 : 1;
+  const vdkHeader = Buffer.from([0x64, 0x6b, 0x0c, 0x00, 0x10, 0x10, 0x00, 0x00, tracks & 0xff, sides & 0xff, 0x00, 0x00]);
   return Buffer.concat([vdkHeader, img]);
 }
 
@@ -440,9 +444,10 @@ export function addDragonFile(raw0: Buffer, name: string, ext: string, data: Buf
     raw[cOff + 0x18] = more ? contSlots[c + 1] : bytesInLast;
   }
 
-  // Maintain the End-of-Directory marker just past the highest used entry.
+  // Garante a entrada VAZIA logo após a maior entrada usada com o marcador padrão 0x88
+  // (apagada + fim-de-diretório), igual aos discos reais.
   const maxIdx = Math.max(headerSlot, ...contSlots, ...occupied);
-  if (maxIdx + 1 < 160) raw[entryOffset(raw, spt, maxIdx + 1)] = 0x08;
+  if (maxIdx + 1 < 160) raw[entryOffset(raw, spt, maxIdx + 1)] = 0x88;
 
   return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
 }
@@ -465,6 +470,55 @@ export function deleteDragonFile(raw0: Buffer, entry: { index: number; sectors?:
     seen.add(nx); o = entryOffset(raw, spt, nx); f = raw[o]; raw[o] |= 0x80;
   }
   return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
+}
+
+// ── CoCo → Dragon binary conversion (cases 1 & 2) ─────────────────────────────
+// A CoCo machine-code program (load/exec addr + payload) becomes a Dragon DOS binary file
+// (9-byte header 55 02 [load] [len] [exec] AA + body). Two modes, mirroring how the real
+// Dragon ports were made:
+//   'direct'  — load the code straight at the CoCo address (works when that address is free on
+//               the Dragon, e.g. high-loading games like MUDPIES @ $3E00).
+//   'reloc'   — load LOW ($0C00) with a 20-byte relocator stub that copies the payload UP to the
+//               CoCo address (backwards copy, safe for dest>src) and JMPs there (e.g. TRAPFALL).
+const DRAGON_LOW_LOAD = 0x0c00;
+
+function dragonBinHeader(load: number, len: number, exec: number): Buffer {
+  return Buffer.from([0x55, 0x02, (load >> 8) & 0xff, load & 0xff, (len >> 8) & 0xff, len & 0xff, (exec >> 8) & 0xff, exec & 0xff, 0xaa]);
+}
+
+export type DragonConvMode = 'direct' | 'reloc';
+
+/** Recommend a conversion mode from the CoCo load address (low loaders need relocation). */
+export function recommendDragonMode(cocoLoad: number): DragonConvMode {
+  return cocoLoad >= 0x3000 ? 'direct' : 'reloc';
+}
+
+/**
+ * Build a Dragon DOS binary file (full on-disk content, incl. the 9-byte header) from a CoCo
+ * program. `payload` is the raw code; `loadAddr`/`execAddr` are the CoCo load/exec addresses.
+ */
+export function cocoToDragonBin(loadAddr: number, execAddr: number, payload: Buffer, mode: DragonConvMode): Buffer {
+  const len = payload.length;
+  if (mode === 'direct') {
+    return Buffer.concat([dragonBinHeader(loadAddr, len, execAddr), payload]);
+  }
+  // reloc: stub (20 bytes) + payload, loaded at $0C00; stub copies payload → loadAddr, then JMP.
+  const STUB = 20;
+  const src = DRAGON_LOW_LOAD + STUB;     // onde o payload fica em memória após o load
+  const srcEnd = (src + len) & 0xffff;
+  const tgtEnd = (loadAddr + len) & 0xffff;
+  const stub = Buffer.from([
+    0x1a, 0x50,                                   // ORCC #$50  (desabilita interrupções)
+    0x8e, (srcEnd >> 8) & 0xff, srcEnd & 0xff,    // LDX #srcEnd
+    0xce, (tgtEnd >> 8) & 0xff, tgtEnd & 0xff,    // LDU #tgtEnd
+    0xa6, 0x82,                                   // loop: LDA ,-X
+    0xa7, 0xc2,                                   //       STA ,-U
+    0x8c, (src >> 8) & 0xff, src & 0xff,          //       CMPX #src
+    0x26, 0xf7,                                   //       BNE loop (-9)
+    0x7e, (loadAddr >> 8) & 0xff, loadAddr & 0xff,// JMP loadAddr
+  ]);
+  const body = Buffer.concat([stub, payload]);
+  return Buffer.concat([dragonBinHeader(DRAGON_LOW_LOAD, body.length, DRAGON_LOW_LOAD), body]);
 }
 
 /** Extract a Dragon file's raw bytes (read-only) following its sector list. */

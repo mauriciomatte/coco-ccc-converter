@@ -54,6 +54,9 @@ const api = {
   dskNewBlankDragon: () =>
     ipcRenderer.invoke('dsk-new-blank-dragon'),
 
+  buildDragonBin: (loadAddr: number, execAddr: number, payload: Uint8Array, mode: 'direct' | 'reloc') =>
+    ipcRenderer.invoke('build-dragon-bin', loadAddr, execAddr, payload, mode),
+
   dskDefragFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-defrag-file', dskBuffer, fileEntry),
 

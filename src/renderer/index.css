@@ -212,6 +212,12 @@ body {
   letter-spacing: 0.03em;
 }
 
+/* Editor VDG: a textarea de input é TRANSPARENTE (os glifos ficam na camada de baixo). Ao SELECIONAR,
+   o navegador tende a tornar o texto visível (a fonte do sistema apareceria SOBRE os glifos). Forçamos
+   o texto da seleção a continuar transparente — só o realce aparece. */
+.vdg-input::selection { color: transparent; background: rgba(255, 255, 255, 0.30); }
+.vdg-input::-moz-selection { color: transparent; background: rgba(255, 255, 255, 0.30); }
+
 /* Tab bar buttons */
 .tab-btn {
   display: inline-flex;

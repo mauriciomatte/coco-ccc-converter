@@ -10,6 +10,71 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.10 — 2026-06-01
+--------------------------------------------------------------------------------
+ADICIONADO (Conversor CoCo → Dragon, experimental)
+  • Converte um arquivo de MÁQUINA (.BIN) de um disco CoCo para Dragon, em 2 modos:
+    "Direto" (carrega no mesmo endereço do CoCo) e "Relocador" (carrega baixo em
+    0x0C00 e um stub de 20 bytes copia o código para o endereço do CoCo e executa).
+    O modo recomendado é sugerido pela geometria de carga.
+  • O resultado vai para um disco Dragon NOVO no outro painel → "Testar Painel"
+    (reset no XRoar) → se rodar, salvar. Jogos reescritos p/ Dragon não convertem.
+  • Base: análise de 7 pares CoCo/Dragon reais — ~30-43% são "ports preguiçosos"
+    (código idêntico, só relocado) e convertem; o restante foi reescrito.
+MELHORADO (Toolbar da aba DSK)
+  • Toolbar agora é SÓ ÍCONES (labels removidos; todos com tooltip), liberando
+    bastante espaço. Ícone distinto para "Salvar Como". (Menu "⋯ Mais" e
+    split-buttons ficaram no backlog para quando crescer mais.)
+ADICIONADO (Editor BASIC)
+  • Toggle "Maiúsculas auto": ligado = força MAIÚSCULAS (Color BASIC clássico);
+    desligado = permite MINÚSCULAS.
+  • Seletor "Tela" com 3 modos PERSISTENTES, todos EDITÁVEIS DIRETAMENTE:
+      - Normal: o editor de sempre, com temas de cor.
+      - VDG: aparência do VDG (fonte do sistema) — maiúscula/símbolo PRETO sobre
+        VERDE; minúscula em VÍDEO INVERSO (verde-claro sobre verde-escuro).
+      - VDG 6847 (autêntica): glifos PIXELADOS reais do MC6847 (char-ROM público do
+        chip, da datasheet/MAME — NÃO o CGS) desenhados num canvas, com o mesmo
+        inverso para minúsculas. Inclui a SETA-PARA-CIMA (↑) do CoCo: o '^'
+        (exponenciação) é mostrado como ↑, como na tela/teclado reais.
+    Edição via overlay (camada de render + textarea transparente alinhada). A
+    escolha do modo e o "Maiúsculas auto" ficam salvos (localStorage).
+  • Seta-pra-cima (↑) do CoCo: além do '^', há um BOTÃO ↑ na toolbar e o atalho
+    Alt+↑ (a tecla ↑ sozinha navega), ambos com tooltip explicando.
+MELHORADO (Injeção BASIC → XRoar)
+  • Transporte agora é SEMPRE caractere-a-caractere. O envio "em bloco" (string inteira de uma
+    vez) fazia o ROM do CoCo descartar a 1ª linha + o 1º caractere da 2ª — auditado a 3s/tecla, o
+    char-a-char não perde nada. (Dá para auditar de novo subindo TYPE_DELAY_MS para 3000: 3s/tecla
+    + log de cada tecla no console.)
+  • "Rodar com reset" NÃO injeta mais NEW (o hard reset já limpa a RAM → NEW é redundante).
+  • CoCo: sem espaço/prime antes de digitar (após o reset o cursor já está pronto).
+  • Dragon: manda um ESPAÇO antes de digitar para dispensar o "pressione uma tecla" da ROM.
+  • Hint do "NEW antes de injetar" explica que só vale em "Rodar no XRoar" (sem reset).
+MELHORADO (Editor BASIC — VDG 6847)
+  • "Negrito" fica desabilitado e desmarcado no modo VDG 6847 autêntico (a fonte é bitmap fixo do
+    MC6847 → negrito não se aplica).
+CORRIGIDO (Editor BASIC — modo VDG 6847)
+  • Minúsculas (vídeo inverso) sumiam na 1ª digitação: a célula do canvas era
+    medida tarde demais e o 1º desenho usava largura obsoleta. Agora a largura é
+    medida DENTRO do desenho → os glifos aparecem certos já na primeira tecla.
+  • Ao SELECIONAR texto, a fonte do sistema (da textarea transparente) aparecia
+    SOBRE os glifos autênticos e bagunçava a tela. Agora o texto da seleção
+    continua transparente (só o realce aparece), preservando os glifos do MC6847.
+CORRIGIDO (disco Dragon novo / convertido — não lia no XRoar)
+  • O cabeçalho VDK do disco Dragon NOVO vinha com nº de TRILHAS/LADOS = 0 (bytes
+    8 e 9), e o XRoar lê a geometria dali → "RF ERROR" e DIR vazio. Agora grava
+    40 trilhas / 1 lado, como os .vdk reais.
+  • As entradas de diretório VAZIAS agora usam o marcador padrão do Dragon DOS
+    (0x88 = apagada+fim-de-diretório), igual a discos formatados de verdade — o
+    DragonDOS lista os arquivos (DIR) corretamente.
+MELHORADO (fluxo de teste / XRoar)
+  • Após CONVERTER, o foco vai automático para o painel do RESULTADO (facilita o
+    "Testar Painel").
+  • "Testar Painel" (e duplo-clique para rodar) agora AJUSTA a máquina do XRoar
+    ao FORMATO do disco: disco Dragon → máquina Dragon (e o toggle CoCo/Dragon
+    passa a refletir o disco). O disco só monta DEPOIS de a máquina certa subir
+    (sem corrida de timing). Resolve o caso de testar um Dragon com o app em CoCo.
+
+--------------------------------------------------------------------------------
 v1.0.9 — 2026-06-01
 --------------------------------------------------------------------------------
 ADICIONADO (Edição/gravação Dragon DOS)

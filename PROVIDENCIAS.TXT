@@ -37,13 +37,18 @@ DRAGON / VDK (multi-formato)
 [ ] Arrastar arquivo do painel PARA o Explorer (drag-out nativo, Electron
     startDrag) — "opção 2", pausada a pedido do usuário. (Explorer→painel já
     funciona; e há o botão Extrair p/ salvar em pasta.)
-[ ] Conversão Dragon <-> CoCo via COMPARAÇÃO de pares (mesmo programa nas 2
-    plataformas): o botão COMPARAR (v1.0.9) é a ferramenta de medição. Plano:
-    diff dos ~10 pares → ver se são "port por patch" (alinhável) ou recompilação
-    → montar tabela de substituições padronizada → "Aplicar patch" + testar no
-    XRoar sem salvar → salvar se funcionar. (Discutido com o usuário.)
-[PARCIAL] XRoar: o toggle já define a MÁQUINA padrão (CoCo 3 / Dragon 64). Falta a
-    troca AUTOMÁTICA ao CARREGAR uma imagem Dragon (hoje é via toggle manual).
+[FEITO v1.0.10] Conversor CoCo→Dragon (casos 1 e 2: header-reformat / stub
+    relocador) + fluxo testar-antes-de-salvar. Validado: ~30-43% dos pares reais
+    ("ports preguiçosos") convertem; o resto foi reescrito.
+[ ] Conversor: validar EM EMULAÇÃO (rodar os convertidos no XRoar Dragon e medir
+    a taxa real de sucesso nos 7 pares); refinar o stub se preciso (o port real
+    fazia setup extra de ROM $B7CC/$FF48 — o nosso é mínimo).
+[ ] Conversão dos "reescritos" (maioria): exigiria disassembler-assistido
+    (relocar endereços absolutos / remapear ROM-I/O) — sem garantia. Avançado.
+[ ] Sentido Dragon→CoCo (inverso), se necessário.
+[FEITO v1.0.10] XRoar: o toggle define a máquina padrão E o "Testar Painel"/duplo-
+    clique ajustam a máquina ao FORMATO do disco (Dragon→Dragon 64), com o toggle
+    refletindo o disco e o disco montando só após o reboot da máquina certa.
     Quando o usuário abrir/rodar uma imagem .vdk/Dragon, configurar o XRoar para a
     máquina Dragon (Dragon 32/64) automaticamente; ao abrir uma imagem CoCo, voltar
     para CoCo. Como a máquina do XRoar é um campo PERSISTENTE, o usuário de Dragon
@@ -64,6 +69,19 @@ DISCOS 40 TRILHAS (JDOS / CODIMEX)
       gerado); (b) rodar a ROM JDOS no XRoar e extrair um disco; (c) disassemblar
       a ROM (4jdos111.ccc / 3codimex.Bin) p/ achar as constantes de formato.
 [ ] Criar disco NOVO de 40T no app (encodeDsk/dskNewBlank hoje só gera 35T).
+
+
+--------------------------------------------------------------------------------
+UI — TOOLBAR DA ABA DSK (tende a crescer)
+--------------------------------------------------------------------------------
+[FEITO] Só ícones (removidos os labels de texto; todos já têm tooltip) + ícone
+    distinto p/ "Salvar Como".
+[ ] Menu de excedente "⋯ Mais" (kebab, NÃO hambúrguer) para as ações menos usadas
+    (Ordenar, Ordenar Tudo, Extrair, Comparar, Editar, A→B, e o futuro Conversor),
+    deixando visíveis as frequentes (Novo, Copiar/Recortar/Colar/Excluir, Salvar,
+    Testar, GW). Idealmente overflow automático (só aparece quando falta espaço).
+[ ] Split-buttons/grupos: "Salvar ▾" (Salvar/Salvar Como) e "Destino ▾"
+    (Testar Painel/Gravar GW).
 
 
 --------------------------------------------------------------------------------
@@ -90,6 +108,18 @@ SUPORTE A >16K (expansão)
 --------------------------------------------------------------------------------
 [ ] Alvo CocoFLASH — loader com bank-switching via $FF40 (verificar semântica).
 [ ] Alvo CoCo3 + GIME MMU ($FFA0-$FFAF, páginas de 8K).
+
+
+--------------------------------------------------------------------------------
+EDITOR BASIC
+--------------------------------------------------------------------------------
+[FEITO v1.0.10] Editor BASIC: minúsculas (Maiúsculas auto) + seletor "Tela" 3 modos
+    PERSISTENTES (Normal/VDG/VDG 6847), todos EDITÁVEIS. O "VDG 6847" usa os glifos
+    PIXELADOS reais do MC6847 (char-ROM público em src/renderer/src/mc6847font.ts,
+    canvas) + seta-pra-cima (↑) para '^'. NÃO usa o CGS.
+[ ] (Opcional) Ajustar o tamanho/escala do canvas VDG 6847 se o usuário quiser
+    maior/menor; e avaliar quebra em 32 colunas (tela real do CoCo) — hoje é
+    sem-quebra com rolagem horizontal.
 
 
 --------------------------------------------------------------------------------

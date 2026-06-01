@@ -1,4 +1,5 @@
-import React, { useRef, useState, useLayoutEffect } from 'react';
+import React, { useRef, useState, useLayoutEffect, useEffect } from 'react';
+import { MC6847_FONT, mc6847Glyph } from '../mc6847font';
 import { Scissors, Copy, Clipboard, Search, Replace, Play, RotateCcw, Save, FolderOpen, Disc, FileCode2 } from 'lucide-react';
 import { X } from 'lucide-react';
 
@@ -69,18 +70,105 @@ export default function BasicEditor({
   const empty = !text.trim();
   const focusTA = () => taRef.current?.focus();
 
-  // Tudo em maiúsculas: o teclado do Color BASIC só produz maiúsculas no prompt.
-  const setUpper = (v: string) => onTextChange(v.toUpperCase());
+  // Auto-maiúsculas: ligado por padrão (o Color BASIC clássico só produz maiúsculas no prompt),
+  // mas pode ser DESLIGADO para permitir minúsculas (CoCo 3 / Disk BASIC aceitam). Persistido.
+  const [autoUpper, setAutoUpper] = useState(() => { try { return localStorage.getItem('basicUpper') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('basicUpper', autoUpper ? '1' : '0'); } catch { /* ignore */ } }, [autoUpper]);
+  const applyCase = (v: string) => (autoUpper ? v.toUpperCase() : v);
+  const setUpper = (v: string) => onTextChange(applyCase(v));
 
-  // Insere texto na posição do cursor (usado por colar e substituir), mantendo maiúsculas.
+  // ── Modo de tela do editor (persistido): 'normal' (editor de sempre, com temas de cor),
+  // 'vdg' (aparência VDG do CoCo com a fonte monospace do sistema) e 'vdg6847' (idem, com a fonte
+  // autêntica do MC6847 quando disponível). Nos modos VDG: maiúsculas/símbolos = letra PRETA sobre
+  // fundo VERDE; minúsculas = vídeo INVERSO (verde-claro sobre verde-escuro), pois o VDG não tem
+  // glifos minúsculos — mostra a maiúscula invertida. Edição DIRETA via overlay (textarea
+  // transparente sobre a camada de render; a camada está no fluxo e dá a altura → cursor alinha e
+  // o scroll acompanha sozinho).
+  const [display, setDisplay] = useState<'normal' | 'vdg' | 'vdg6847'>(() => { try { const d = localStorage.getItem('basicDisplay'); return d === 'vdg' || d === 'vdg6847' ? d : 'normal'; } catch { return 'normal'; } });
+  useEffect(() => { try { localStorage.setItem('basicDisplay', display); } catch { /* ignore */ } }, [display]);
+  const isVdg = display !== 'normal';
+  const VDG_GREEN = '#3fcf3f', VDG_DARK = '#06320a';
+  const vdgFontFamily = "'Courier New', monospace";
+  // No VDG, o '^' (exponenciação) é mostrado como a SETA PARA CIMA (↑), como no teclado/tela do CoCo.
+  const toVdgText = (s: string) => s.replace(/\^/g, '↑');
+  // Renderiza o texto (modo VDG-mono) agrupando trechos contíguos de mesma "caixa" (poucos spans).
+  const renderVdg = (s: string): React.ReactNode[] => {
+    const out: React.ReactNode[] = []; let k = 0;
+    const lines = s.length ? s.split('\n') : [''];
+    lines.forEach((line, li) => {
+      let i = 0;
+      while (i < line.length) {
+        const lower = line[i] >= 'a' && line[i] <= 'z';
+        let run = '';
+        while (i < line.length && ((line[i] >= 'a' && line[i] <= 'z') === lower)) { run += line[i]; i++; }
+        out.push(lower
+          ? <span key={k++} style={{ background: VDG_DARK, color: VDG_GREEN }}>{toVdgText(run.toUpperCase())}</span>
+          : <span key={k++} style={{ color: '#000' }}>{toVdgText(run)}</span>);
+      }
+      if (li < lines.length - 1) out.push('\n');
+    });
+    return out;
+  };
+
+  // ── Modo 'vdg6847': desenha os glifos PIXELADOS do MC6847 num canvas. A célula é a largura de
+  // avanço REAL do monospace (medida), e o canvas usa essa mesma célula → alinha com a textarea
+  // transparente (editável). Sem quebra de linha (cada linha do texto = 1 linha de tela; rola na
+  // horizontal). A seta-para-cima já vem do glifo 0x1E (mc6847Glyph mapeia '^' → ela).
+  const MEASURE_PX = 26;
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [cellW, setCellW] = useState(15.6);
+  const cellH = Math.round(cellW * 1.5);
+  useLayoutEffect(() => {
+    if (display !== 'vdg6847') return;
+    const canvas = canvasRef.current; if (!canvas) return;
+    // Mede o avanço REAL do monospace agora (evita usar uma célula obsoleta no 1º desenho, o que
+    // bagunçava os glifos/minúsculas). Usa A no desenho e sincroniza a textarea (line-height).
+    const span = measureRef.current;
+    let A = cellW;
+    if (span) { const w = span.getBoundingClientRect().width / 20; if (w > 4) A = w; }
+    if (Math.abs(A - cellW) > 0.05) setCellW(A);
+    const LH = Math.round(A * 1.5);
+    const lines = (text || '').split('\n');
+    const cols = Math.max(1, ...lines.map(l => l.length));
+    const W = Math.ceil(cols * A) + 2, H = Math.max(1, lines.length) * LH;
+    canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext('2d'); if (!ctx) return;
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = VDG_GREEN; ctx.fillRect(0, 0, W, H);
+    const dw = A / 8, dh = LH / 12;
+    for (let row = 0; row < lines.length; row++) {
+      const line = lines[row];
+      for (let col = 0; col < line.length; col++) {
+        const g = mc6847Glyph(line.charCodeAt(col));
+        const x0 = col * A, y0 = row * LH;
+        if (g.inverse) { ctx.fillStyle = VDG_DARK; ctx.fillRect(Math.floor(x0), y0, Math.ceil(A) + 1, LH); }
+        ctx.fillStyle = g.inverse ? VDG_GREEN : '#000';
+        const base = g.idx * 12;
+        for (let r = 0; r < 12; r++) { const b = MC6847_FONT[base + r]; if (!b) continue;
+          for (let c = 0; c < 8; c++) if ((b >> (7 - c)) & 1) ctx.fillRect(Math.floor(x0 + c * dw), Math.floor(y0 + r * dh), Math.ceil(dw), Math.ceil(dh)); }
+      }
+    }
+  }, [text, cellW, display]); // bitmap fixo do MC6847 → 'bold' não afeta o desenho
+
+  // Insere texto na posição do cursor (usado por colar e substituir), respeitando o auto-maiúsculas.
   const insertAtCursor = (ins: string) => {
     const ta = taRef.current;
-    const up = ins.toUpperCase();
+    const up = applyCase(ins);
     if (!ta) { setUpper(text + up); return; }
     const s = ta.selectionStart, e = ta.selectionEnd;
-    const next = (text.slice(0, s) + up + text.slice(e)).toUpperCase();
+    const next = applyCase(text.slice(0, s) + up + text.slice(e));
     caretToRestore.current = { s: s + up.length, e: s + up.length };
     onTextChange(next);
+  };
+
+  // Seta-pra-cima do CoCo (↑ = '^', exponenciação). A tecla ↑ navega, então oferecemos Alt+↑ e um botão.
+  const insertUpArrow = () => { focusTA(); insertAtCursor('^'); };
+  const handleEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'ArrowUp' || e.code === 'ArrowUp')) {
+      e.preventDefault();
+      insertAtCursor('^');
+    }
   };
 
   const doCut = () => { focusTA(); document.execCommand('cut'); };
@@ -129,9 +217,11 @@ export default function BasicEditor({
 
   // Monta o texto a injetar: NEW (opcional) + programa + RUN (opcional). O xroar.html
   // converte \n em \r (ENTER do CoCo) automaticamente.
-  const buildProgram = () => {
+  //   omitNew=true: usado pelo "Rodar com reset" — o hard reset já LIMPA a RAM, então o NEW é
+  //   redundante e é dispensado (vai só o programa + RUN opcional).
+  const buildProgram = (omitNew = false) => {
     let s = '';
-    if (addNew) s += 'NEW\n';
+    if (addNew && !omitNew) s += 'NEW\n';
     s += text;
     if (addRun) { if (s.length && !s.endsWith('\n')) s += '\n'; s += 'RUN\n'; }
     return s;
@@ -158,10 +248,13 @@ export default function BasicEditor({
         <button onClick={() => { setFindOpen(true); setShowReplace(false); }} title={t('Procurar', 'Find')} className={toolBtn}><Search size={15} /></button>
         <button onClick={() => { setFindOpen(true); setShowReplace(true); }} title={t('Procurar e substituir', 'Find & replace')} className={toolBtn}><Replace size={15} /></button>
         {sep}
+        {/* Seta-pra-cima do CoCo (↑ = '^', exponenciação). A tecla ↑ navega; aqui inserimos por botão ou Alt+↑. */}
+        <button onClick={insertUpArrow} title={t('Inserir ↑ (seta-pra-cima do CoCo = ^, exponenciação) — atalho: Alt+↑', 'Insert ↑ (CoCo up-arrow = ^, exponentiation) — shortcut: Alt+↑')} className={`${toolBtn} font-bold`} style={{ fontSize: 15, lineHeight: 1 }}>↑</button>
+        {sep}
         <button onClick={() => onRun(buildProgram(), false)} disabled={empty} className="btn btn-primary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Digita NEW + programa no XRoar (precisa estar no prompt OK)', 'Types NEW + program into XRoar (must be at the OK prompt)')}>
           <Play size={13} /> {t('Rodar no XRoar', 'Run in XRoar')}
         </button>
-        <button onClick={() => onRun(buildProgram(), true)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Reinicia o emulador (boot limpo) e então digita o programa', 'Resets the emulator (clean boot) then types the program')}>
+        <button onClick={() => onRun(buildProgram(true), true)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Reinicia o emulador (boot limpo, sem NEW — o reset já limpa a RAM) e então digita o programa', 'Resets the emulator (clean boot, no NEW — reset already clears RAM) then types the program')}>
           <RotateCcw size={13} /> {t('Rodar com reset', 'Run + reset')}
         </button>
         <div className="flex-1" />
@@ -237,25 +330,68 @@ export default function BasicEditor({
         </div>
       )}
 
-      {/* Textarea (digitação livre, sempre maiúscula; cores conforme o esquema selecionado) */}
-      <textarea
-        ref={taRef}
-        value={text}
-        onChange={e => {
-          const ta = e.currentTarget;
-          caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; // preserva o cursor após o uppercase
-          onTextChange(ta.value.toUpperCase());
-        }}
-        spellCheck={false}
-        autoCapitalize="characters"
-        placeholder={'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}
-        className="flex-1 w-full p-3 font-mono text-sm leading-relaxed resize-none outline-none rounded-lg"
-        style={{ minHeight: 0, color: schemeOf(screen).fg, fontWeight: bold ? 700 : 400, textTransform: 'uppercase', background: schemeOf(screen).bg, border: '2px solid rgba(0,0,0,0.35)', caretColor: schemeOf(screen).fg }}
-      />
+      {/* Área de edição. Modos VDG: EDITÁVEL via overlay — a camada de render fica NO FLUXO (define a
+          altura) e a textarea transparente é absoluta por cima (mesmo estilo/medida → cursor alinha;
+          o container rola e leva as duas juntas). Modo normal: a textarea de sempre. */}
+      {display === 'vdg' ? (
+        (() => {
+          const vdgFont: React.CSSProperties = { margin: 0, padding: 12, fontFamily: vdgFontFamily, fontSize: 14, lineHeight: 1.55, letterSpacing: '1px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontWeight: bold ? 700 : 400 };
+          return (
+            <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)' }}>
+              <div style={{ position: 'relative', minHeight: '100%' }}>
+                <div aria-hidden style={{ ...vdgFont, minHeight: '100%', pointerEvents: 'none' }}>
+                  {text ? renderVdg(text) : <span style={{ color: 'rgba(0,0,0,0.35)' }}>{'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}</span>}
+                  {'​'}
+                </div>
+                <textarea
+                  ref={taRef}
+                  className="vdg-input"
+                  value={text}
+                  onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCase(ta.value)); }}
+                  onKeyDown={handleEditorKeyDown}
+                  spellCheck={false}
+                  autoCapitalize="characters"
+                  style={{ ...vdgFont, position: 'absolute', inset: 0, color: 'transparent', caretColor: '#000', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden' }}
+                />
+              </div>
+            </div>
+          );
+        })()
+      ) : display === 'vdg6847' ? (
+        // Canvas pixelado (glifos reais do MC6847) + textarea transparente alinhada (editável).
+        <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)', position: 'relative' }}>
+          <div style={{ position: 'relative', width: 'max-content', minWidth: '100%', minHeight: '100%' }}>
+            <canvas ref={canvasRef} style={{ display: 'block', imageRendering: 'pixelated' }} />
+            <textarea
+              ref={taRef}
+              className="vdg-input"
+              value={text}
+              onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCase(ta.value)); }}
+              onKeyDown={handleEditorKeyDown}
+              spellCheck={false}
+              autoCapitalize="characters"
+              style={{ position: 'absolute', inset: 0, margin: 0, padding: 0, fontFamily: vdgFontFamily, fontSize: MEASURE_PX, lineHeight: `${cellH}px`, letterSpacing: 0, whiteSpace: 'pre', color: 'transparent', caretColor: '#000', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden' }}
+            />
+          </div>
+          <span ref={measureRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: 0, left: 0, fontFamily: vdgFontFamily, fontSize: MEASURE_PX, letterSpacing: 0, whiteSpace: 'pre' }}>00000000000000000000</span>
+        </div>
+      ) : (
+        <textarea
+          ref={taRef}
+          value={text}
+          onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCase(ta.value)); }}
+          onKeyDown={handleEditorKeyDown}
+          spellCheck={false}
+          autoCapitalize="characters"
+          placeholder={'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}
+          className="flex-1 w-full p-3 font-mono text-sm leading-relaxed resize-none outline-none rounded-lg"
+          style={{ minHeight: 0, color: schemeOf(screen).fg, fontWeight: bold ? 700 : 400, textTransform: autoUpper ? 'uppercase' : 'none', background: schemeOf(screen).bg, border: '2px solid rgba(0,0,0,0.35)', caretColor: schemeOf(screen).fg }}
+        />
+      )}
 
       {/* Footer: opções + esquema de cores + contadores */}
       <div className="flex items-center gap-4 mt-2 text-[10px] text-[var(--text-secondary)] flex-wrap flex-shrink-0">
-        <label className="flex items-center gap-1.5 cursor-pointer">
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Injeta NEW antes do programa (limpa a memória). Só vale em "Rodar no XRoar" (sem reset); em "Rodar com reset" o hard reset já limpa a RAM e o NEW é ignorado.', 'Injects NEW before the program (clears memory). Only applies to "Run in XRoar" (no reset); with "Run + reset" the hard reset already clears RAM, so NEW is ignored.')}>
           <input type="checkbox" checked={addNew} onChange={e => onAddNewChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('NEW antes de injetar', 'NEW before injecting')}
         </label>
@@ -263,15 +399,37 @@ export default function BasicEditor({
           <input type="checkbox" checked={addRun} onChange={e => onAddRunChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('RUN ao final', 'RUN at the end')}
         </label>
-        <label className="flex items-center gap-1.5">
-          <span className="font-semibold">{t('Cores', 'Colors')}:</span>
-          <select value={screen} onChange={e => onScreenChange(e.target.value)} className="input-select text-[11px] py-0.5">
-            {Object.keys(SCHEMES).map(k => <option key={k} value={k}>{t(SCHEMES[k].pt, SCHEMES[k].en)}</option>)}
+        {/* Modo de tela: Normal (com temas) / VDG (fonte do sistema) / VDG 6847 (fonte autêntica). */}
+        <label className="flex items-center gap-1.5" title={t('Aparência do editor. VDG = visual do CoCo (maiúscula preta no verde, minúscula em vídeo inverso). Editável nos 3 modos.', 'Editor look. VDG = CoCo screen (black uppercase on green, lowercase inverse video). Editable in all 3 modes.')}>
+          <span className="font-semibold">{t('Tela', 'Screen')}:</span>
+          <select value={display} onChange={e => setDisplay(e.target.value as 'normal' | 'vdg' | 'vdg6847')} className="input-select text-[11px] py-0.5">
+            <option value="normal">{t('Normal', 'Normal')}</option>
+            <option value="vdg">{t('VDG', 'VDG')}</option>
+            <option value="vdg6847">{t('VDG 6847 (autêntica)', 'VDG 6847 (authentic)')}</option>
           </select>
         </label>
-        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Texto em negrito', 'Bold text')}>
-          <input type="checkbox" checked={bold} onChange={e => onBoldChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+        {!isVdg && (
+          <label className="flex items-center gap-1.5">
+            <span className="font-semibold">{t('Cores', 'Colors')}:</span>
+            <select value={screen} onChange={e => onScreenChange(e.target.value)} className="input-select text-[11px] py-0.5">
+              {Object.keys(SCHEMES).map(k => <option key={k} value={k}>{t(SCHEMES[k].pt, SCHEMES[k].en)}</option>)}
+            </select>
+          </label>
+        )}
+        {/* No VDG 6847 autêntico a fonte é bitmap fixo do MC6847 → negrito não se aplica: desabilita e mostra desmarcado. */}
+        <label
+          className="flex items-center gap-1.5"
+          style={display === 'vdg6847' ? { opacity: 0.4, cursor: 'not-allowed' } : { cursor: 'pointer' }}
+          title={display === 'vdg6847'
+            ? t('A fonte VDG 6847 autêntica é bitmap fixo do MC6847 — negrito não se aplica.', 'The authentic VDG 6847 font is a fixed MC6847 bitmap — bold does not apply.')
+            : t('Texto em negrito', 'Bold text')}
+        >
+          <input type="checkbox" checked={display === 'vdg6847' ? false : bold} disabled={display === 'vdg6847'} onChange={e => onBoldChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('Negrito', 'Bold')}
+        </label>
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Converte tudo para MAIÚSCULAS (Color BASIC clássico). Desligue para permitir minúsculas.', 'Force UPPERCASE (classic Color BASIC). Turn off to allow lowercase.')}>
+          <input type="checkbox" checked={autoUpper} onChange={e => setAutoUpper(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+          {t('Maiúsculas auto', 'Auto uppercase')}
         </label>
         <div className="flex-1" />
         <span className="font-mono">{lineCount} {t('linhas', 'lines')} · {text.length} {t('chars', 'chars')}</span>

@@ -5,7 +5,7 @@ import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
-import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile } from './converter/dragondos';
+import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
@@ -200,6 +200,17 @@ ipcMain.handle('dsk-new-blank-dragon', async () => {
   try {
     const img = encodeDragonBlank();
     return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2d3. Build a Dragon DOS binary from a CoCo program (load/exec + payload). mode: 'direct'|'reloc'.
+ipcMain.handle('build-dragon-bin', async (_, loadAddr: number, execAddr: number, payload: Uint8Array, mode: 'direct' | 'reloc') => {
+  try {
+    const m = mode || recommendDragonMode(loadAddr);
+    const bin = cocoToDragonBin(loadAddr, execAddr, Buffer.from(payload), m);
+    return { success: true, data: new Uint8Array(bin), mode: m };
   } catch (error: any) {
     return { success: false, error: error.message };
   }

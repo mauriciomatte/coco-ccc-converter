@@ -1010,6 +1010,7 @@
         var _typeTimer = null;
         var _TYPE_DELAY_MS = 80;
         var _ENTER_EXTRA_MS = 300;
+        var _typeIdx = 0; // contador de auditoria (índice da tecla enviada)
 
         function _typeNextChar() {
             if (_typeQueue.length === 0) {
@@ -1024,6 +1025,8 @@
             }
             var ch = _typeQueue.shift();
             var isEnter = (ch === '\r');
+            // AUDITORIA (só em modo lento >500ms): loga cada tecla enviada (ordem e conteúdo exatos).
+            if (_TYPE_DELAY_MS > 500) _log('xroar-print', 'type char[' + _typeIdx++ + ']: ' + (isEnter ? '<CR>' : JSON.stringify(ch)));
             try {
                 // Try passing as string pointer first, as modern wasm_queue_basic often takes const char*
                 try {
@@ -1050,9 +1053,11 @@
             try {
                 resumeAudio();
 
-                if (typeof delayMs === 'number' && delayMs >= 10 && delayMs <= 500) {
+                // Clamp ampliado p/ permitir AUDITORIA lenta (até 5s/tecla). Acima de 500ms forçamos
+                // o modo caractere-a-caractere (abaixo), senão o XRoar digitaria tudo no ritmo dele.
+                if (typeof delayMs === 'number' && delayMs >= 10 && delayMs <= 5000) {
                     _TYPE_DELAY_MS = delayMs;
-                    _ENTER_EXTRA_MS = Math.max(200, delayMs * 3);
+                    _ENTER_EXTRA_MS = Math.max(200, Math.min(delayMs, 1500));
                 }
 
                 var converted = str
@@ -1069,6 +1074,7 @@
                     _typeTimer = null;
                 }
                 _typeQueue = [];
+                _typeIdx = 0;
 
                 for (var i = 0; i < converted.length; i++) {
                     _typeQueue.push(converted[i]);
@@ -1076,19 +1082,13 @@
 
                 if (_typeQueue.length === 0) return;
 
-                _log('xroar-print', 'type_string: ' + _typeQueue.length + ' chars queued');
+                _log('xroar-print', 'type_string: ' + _typeQueue.length + ' chars queued @ ' + _TYPE_DELAY_MS + 'ms/char');
 
-                // Try to pass the entire string at once if XRoar supports it!
-                try {
-                    Module.ccall('wasm_queue_basic', null, ['string'], [converted]);
-                    _log('xroar-print', 'type_string: sent entire string to emulator directly.');
-                    _typeQueue = []; // Clear queue since we submitted it all
-                    return;
-                } catch (eStr) {
-                    // If it fails or if the user wants character-by-character JS delay fallback
-                    if (Module.canvas) Module.canvas.focus();
-                    _typeNextChar();
-                }
+                // SEMPRE caractere-a-caractere. O envio em BLOCO (wasm_queue_basic com a string
+                // inteira) fazia o ROM do CoCo descartar a 1ª linha + 1 char; auditado a 3s/tecla,
+                // o char-a-char não perde nada. Mantido o caminho lento como ÚNICO (sem bulk).
+                if (Module.canvas) Module.canvas.focus();
+                _typeNextChar();
             } catch (e) {
                 _log('xroar-error', 'type_string error: ' + e.message);
             }

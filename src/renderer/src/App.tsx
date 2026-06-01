@@ -38,7 +38,9 @@ import {
   Eraser,
   FileInput,
   Download,
-  GitCompare
+  GitCompare,
+  SaveAll,
+  ArrowRightLeft
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
@@ -511,6 +513,7 @@ export default function App() {
   const [dskGwConfirm, setDskGwConfirm] = useState<boolean>(false); // modal: confirmar gravação no GW a partir da aba DSK
   const [xroarTestConfirm, setXroarTestConfirm] = useState<boolean>(false); // modal: avisar que o XRoar será resetado ao testar o painel
   const [compareData, setCompareData] = useState<{ nameA: string; dataA: Uint8Array; nameB: string; dataB: Uint8Array } | null>(null); // modal comparador de arquivos
+  const [convertModal, setConvertModal] = useState<{ srcPane: 'A' | 'B'; name: string; loadAddr: number; execAddr: number; payload: Uint8Array; mode: 'direct' | 'reloc' } | null>(null); // modal conversor CoCo→Dragon
   const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
   const [gwBusy, setGwBusy] = useState<boolean>(false);
   const [gwOp, setGwOp] = useState<'' | 'info' | 'read' | 'write'>('');
@@ -1887,6 +1890,10 @@ export default function App() {
     setXroarTestConfirm(false);
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    // A máquina do XRoar segue o FORMATO do disco: disco Dragon → máquina Dragon; CoCo → CoCo.
+    // (o toggle de plataforma passa a refletir o que está sendo testado).
+    const targetPlatform: 'coco' | 'dragon' = pane.format === 'dragon' ? 'dragon' : 'coco';
+    if (platform !== targetPlatform) { setPlatform(targetPlatform); addLog(`Plataforma do XRoar ajustada para ${targetPlatform === 'dragon' ? 'Dragon' : 'CoCo'} (formato do disco).`, `XRoar platform set to ${targetPlatform === 'dragon' ? 'Dragon' : 'CoCo'} (disk format).`, 'info'); }
     const d = xroarDiskFor(pane);
     setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, reset: true });
     setActiveTab('xroar');
@@ -1900,6 +1907,8 @@ export default function App() {
     if (!pane) return;
     const cmd = f.fileType === 0 ? `RUN"${f.name}"\r` : `LOADM"${f.name}":EXEC\r`;
     setActivePane(which);
+    const targetPlatform: 'coco' | 'dragon' = pane.format === 'dragon' ? 'dragon' : 'coco';
+    if (platform !== targetPlatform) setPlatform(targetPlatform); // máquina do XRoar segue o formato do disco
     const d = xroarDiskFor(pane);
     setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
     setActiveTab('xroar');
@@ -2126,6 +2135,48 @@ export default function App() {
       if (!f) return;
       setCompareData({ nameA: entry.fullName, dataA: new Uint8Array(ex.data), nameB: f.fileName || 'arquivo', dataB: new Uint8Array(f.buffer) });
     } catch (err: any) { addLog(`Comparar: ${err.message}`, `Compare: ${err.message}`, 'error'); }
+  };
+
+  // Modo recomendado pela geometria de carga (loaders baixos precisam de relocador).
+  const recommendForLoad = (loadAddr: number): 'direct' | 'reloc' => (loadAddr >= 0x3000 ? 'direct' : 'reloc');
+
+  // Conversor CoCo→Dragon: pega um arquivo de MÁQUINA (.BIN) de um disco CoCo, gera o binário
+  // Dragon (header direto OU stub relocador) e abre o modal para escolher o modo.
+  const handleConvertToDragon = async () => {
+    if (!selectedDsk || selectedDsk.entries.length !== 1) { addLog('Selecione UM arquivo de máquina (.BIN) de um disco CoCo.', 'Select ONE machine-code (.BIN) file from a CoCo disk.', 'warn'); return; }
+    const pane = getPane(selectedDsk.pane);
+    if (!pane) return;
+    if (pane.format === 'dragon') { addLog('A origem já é Dragon. Selecione um arquivo de um disco CoCo (RS-DOS).', 'Source is already Dragon. Select a file from a CoCo (RS-DOS) disk.', 'warn'); return; }
+    const entry = selectedDsk.entries[0];
+    if (entry.fileType !== 2) { addLog(`Conversão é só para arquivos de MÁQUINA (.BIN). Selecionado: ${entry.fileTypeName}.`, `Conversion is for MACHINE-code (.BIN) files only. Selected: ${entry.fileTypeName}.`, 'warn'); return; }
+    try {
+      const ex = await window.cocoApi.extractDskProgram(pane.buffer, entry);
+      if (!ex.success) { addLog(`Converter: ${ex.error}`, `Convert: ${ex.error}`, 'error'); return; }
+      const mode: 'direct' | 'reloc' = ex.loadAddr >= 0x3000 ? 'direct' : 'reloc';
+      setConvertModal({ srcPane: selectedDsk.pane, name: entry.name, loadAddr: ex.loadAddr, execAddr: ex.execAddr, payload: ex.payload, mode });
+    } catch (err: any) { addLog(`Converter: ${err.message}`, `Convert: ${err.message}`, 'error'); }
+  };
+  // Executa a conversão escolhida: gera o .BIN Dragon, cria um disco Dragon novo com ele e carrega
+  // no OUTRO painel — pronto para "Testar Painel" (reset) no XRoar e salvar se rodar.
+  const proceedConvert = async () => {
+    const cm = convertModal; if (!cm) return;
+    setConvertModal(null);
+    try {
+      const built = await window.cocoApi.buildDragonBin(cm.loadAddr, cm.execAddr, cm.payload, cm.mode);
+      if (!built.success) { addLog(`Converter: ${built.error}`, `Convert: ${built.error}`, 'error'); return; }
+      const blank = await window.cocoApi.dskNewBlankDragon();
+      if (!blank.success) { addLog(`Converter: ${blank.error}`, `Convert: ${blank.error}`, 'error'); return; }
+      const added = await window.cocoApi.dskAddBytes(new Uint8Array(blank.image), cm.name, 'BIN', 2, 0, new Uint8Array(built.data));
+      if (!added.success) { addLog(`Converter: ${added.error}`, `Convert: ${added.error}`, 'error'); return; }
+      const dest: 'A' | 'B' = cm.srcPane === 'A' ? 'B' : 'A';
+      await loadPaneFromBuffer(dest, new Uint8Array(added.image), `${cm.name}_DRG.VDK`);
+      markDirty(dest);
+      setActivePane(dest); // foco vai para o painel do resultado (facilita "Testar Painel")
+      addLog(
+        `Convertido "${cm.name}" (modo ${cm.mode === 'reloc' ? 'relocador' : 'direto'}) → disco Dragon no painel ${dest}. Selecione o painel ${dest} e use "Testar Painel" no XRoar; se rodar, salve.`,
+        `Converted "${cm.name}" (${cm.mode} mode) → Dragon disk in pane ${dest}. Select pane ${dest} and use "Test Panel" in XRoar; if it runs, save.`,
+        'success');
+    } catch (err: any) { addLog(`Converter: ${err.message}`, `Convert: ${err.message}`, 'error'); }
   };
 
   // Limpa um painel (volta ao estado de app recém-aberto para aquele painel).
@@ -3866,7 +3917,7 @@ export default function App() {
                 aria-label="Editar BAS"
                 className="dsk-tool"
               >
-                <FileCode2 size={15} /> {t('Editar', 'Edit')}
+                <FileCode2 size={15} />
               </button>
               <button
                 onClick={handleDskExtractToPc}
@@ -3875,7 +3926,7 @@ export default function App() {
                 aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'}
                 className="dsk-tool"
               >
-                <Download size={15} /> {currentLang === 'pt-br' ? 'Extrair' : 'Extract'}
+                <Download size={15} />
               </button>
               <button
                 onClick={handleDskCompare}
@@ -3884,7 +3935,17 @@ export default function App() {
                 aria-label={currentLang === 'pt-br' ? 'Comparar' : 'Compare'}
                 className="dsk-tool"
               >
-                <GitCompare size={15} /> {currentLang === 'pt-br' ? 'Comparar' : 'Compare'}
+                <GitCompare size={15} />
+              </button>
+              <button
+                onClick={handleConvertToDragon}
+                disabled={!(selectedDsk?.entries.length === 1 && selectedDsk.entries[0].fileType === 2 && getPane(selectedDsk.pane)?.format !== 'dragon')}
+                title={currentLang === 'pt-br' ? 'Converter o .BIN de máquina (CoCo) para Dragon — testa-se antes de salvar' : 'Convert the (CoCo) machine-code .BIN to Dragon — test before saving'}
+                aria-label={currentLang === 'pt-br' ? 'Converter para Dragon' : 'Convert to Dragon'}
+                className="dsk-tool"
+                style={{ color: '#22d3ee' }}
+              >
+                <ArrowRightLeft size={15} />
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleCopyPaneAToB} disabled={!paneA} title={t('dskToolCopyAtoB')} aria-label={t('dskToolCopyAtoB')} className="dsk-tool"><ArrowRight size={15} /></button>
@@ -3905,8 +3966,8 @@ export default function App() {
                 className="dsk-tool"
                 style={dskDirty[activePane] ? { color: 'hsl(45,95%,62%)', borderColor: 'hsl(45,90%,55%)', boxShadow: '0 0 9px hsla(45,90%,55%,0.65)' } : undefined}
               >
-                <Save size={15} /> {t('dskToolSave')}
-                {dskDirty[activePane] && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'hsl(45,95%,60%)', display: 'inline-block', marginLeft: 4, boxShadow: '0 0 5px hsl(45,95%,60%)' }} />}
+                <Save size={15} />
+                {dskDirty[activePane] && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'hsl(45,95%,60%)', display: 'inline-block', marginLeft: 3, boxShadow: '0 0 5px hsl(45,95%,60%)' }} />}
               </button>
               {/* Salvar Como = abre o diálogo "Salvar como" e grava numa nova imagem (preserva a anterior). */}
               <button
@@ -3916,11 +3977,11 @@ export default function App() {
                 aria-label={t('dskToolSaveAs')}
                 className="dsk-tool"
               >
-                <Download size={15} /> {t('dskToolSaveAs')}
+                <SaveAll size={15} />
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /> {t('dskToolXroarShort')}</button>
-              <button onClick={handleDskWriteToGw} disabled={!getPane(activePane)} title={t('dskToolGw')} aria-label={t('dskToolGw')} className="dsk-tool"><HardDrive size={15} /> {t('dskToolGwShort')}</button>
+              <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /></button>
+              <button onClick={handleDskWriteToGw} disabled={!getPane(activePane)} title={t('dskToolGw')} aria-label={t('dskToolGw')} className="dsk-tool"><HardDrive size={15} /></button>
               {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)] ml-2">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
               <span className="ml-auto flex items-center pl-4 pr-3 -mr-3 flex-shrink-0" style={{ borderLeft: '1px solid var(--border)' }}>
                 <span
@@ -4276,6 +4337,50 @@ export default function App() {
       {/* Comparador de arquivos (imagem ↔ PC) */}
       {compareData && (
         <FileCompareModal lang={currentLang} nameA={compareData.nameA} dataA={compareData.dataA} nameB={compareData.nameB} dataB={compareData.dataB} onClose={() => setCompareData(null)} />
+      )}
+
+      {/* Conversor CoCo → Dragon: escolher modo (direto x relocador) */}
+      {convertModal && (
+        <div className="glass-modal-overlay" onClick={() => setConvertModal(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 500, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full flex-shrink-0" style={{ background: 'rgba(34,211,238,0.12)', color: '#22d3ee' }}><ArrowRightLeft size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Converter CoCo → Dragon' : 'Convert CoCo → Dragon'}</h3>
+            </div>
+            <div className="text-[11px] font-mono text-[var(--text-secondary)]">
+              {convertModal.name}.BIN · {currentLang === 'pt-br' ? 'carga' : 'load'} 0x{convertModal.loadAddr.toString(16).toUpperCase()} · exec 0x{convertModal.execAddr.toString(16).toUpperCase()} · {convertModal.payload.length} bytes
+            </div>
+            <div className="flex flex-col gap-2">
+              {([
+                ['direct', currentLang === 'pt-br' ? 'Carga direta' : 'Direct load', currentLang === 'pt-br' ? `Carrega o código direto em 0x${convertModal.loadAddr.toString(16).toUpperCase()} (bom quando o endereço é alto/livre no Dragon).` : `Loads the code straight at 0x${convertModal.loadAddr.toString(16).toUpperCase()} (good when that address is high/free on the Dragon).`],
+                ['reloc', currentLang === 'pt-br' ? 'Com relocador' : 'With relocator', currentLang === 'pt-br' ? 'Carrega baixo (0x0C00) e um stub copia o código para o endereço do CoCo e executa (bom para loaders baixos).' : 'Loads low (0x0C00); a stub copies the code to the CoCo address and runs it (good for low loaders).'],
+              ] as const).map(([m, title, desc]) => (
+                <button key={m} onClick={() => setConvertModal({ ...convertModal, mode: m })}
+                  className="text-left rounded-md p-2.5 border transition-all"
+                  style={convertModal.mode === m
+                    ? { borderColor: '#22d3ee', background: 'rgba(34,211,238,0.10)' }
+                    : { borderColor: 'var(--border)', background: 'transparent' }}>
+                  <div className="text-xs font-bold text-white flex items-center gap-2">
+                    {convertModal.mode === m ? '●' : '○'} {title}
+                    {recommendForLoad(convertModal.loadAddr) === m && <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: '#22d3ee', color: '#000' }}>{currentLang === 'pt-br' ? 'recomendado' : 'recommended'}</span>}
+                  </div>
+                  <div className="text-[10px] text-[var(--text-secondary)] mt-0.5">{desc}</div>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-[var(--text-muted)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? 'O resultado vai para um disco Dragon novo no outro painel. Teste com "Testar Painel" (XRoar reseta) — se rodar, salve. Se não rodar, tente o outro modo; jogos reescritos para o Dragon não convertem por bytes.'
+                : 'The result goes to a new Dragon disk in the other pane. Test with "Test Panel" (XRoar resets) — if it runs, save. If not, try the other mode; games rewritten for the Dragon can\'t be byte-converted.'}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setConvertModal(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={proceedConvert} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+                <ArrowRightLeft size={13} /> {currentLang === 'pt-br' ? 'Converter' : 'Convert'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* BASIC "Salvar" in-place: arquivo de origem sumiu / disco trocado — confirma antes de gravar */}
