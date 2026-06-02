@@ -10,6 +10,16 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.15 — 2026-06-02
+--------------------------------------------------------------------------------
+INFRASTRUCTURE (multi-OS build via GitHub Actions)
+  • Added .github/workflows/build.yml: on a "v*" tag (or manual run), builds a WINDOWS + LINUX +
+    macOS matrix and publishes a Release with the installers attached (Windows NSIS .exe; Linux
+    .AppImage + .deb; macOS .dmg + .zip — unsigned).
+  • Solves AppImage/.deb (which failed on Windows due to symlinks) and enables macOS without a local
+    Mac. "mac" config added to package.json (unsigned: identity null).
+
+--------------------------------------------------------------------------------
 v1.0.14 — 2026-06-02
 --------------------------------------------------------------------------------
 FIXED / IMPROVED (image manager)

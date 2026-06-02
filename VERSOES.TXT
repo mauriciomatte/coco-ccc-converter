@@ -10,6 +10,16 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.15 — 2026-06-02
+--------------------------------------------------------------------------------
+INFRAESTRUTURA (build multi-SO via GitHub Actions)
+  • Adicionado workflow .github/workflows/build.yml: ao criar uma tag "v*" (ou rodar manualmente),
+    compila em matriz WINDOWS + LINUX + macOS e publica um Release com os instaladores anexados
+    (Windows .exe NSIS; Linux .AppImage + .deb; macOS .dmg + .zip — não assinado).
+  • Resolve o AppImage/.deb (que falhavam no Windows por symlink) e habilita o macOS sem precisar
+    de um Mac local. Config "mac" adicionada ao package.json (sem assinatura: identity null).
+
+--------------------------------------------------------------------------------
 v1.0.14 — 2026-06-02
 --------------------------------------------------------------------------------
 CORRIGIDO / MELHORADO (gerenciador de imagens)

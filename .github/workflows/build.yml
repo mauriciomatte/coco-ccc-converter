@@ -1,0 +1,78 @@
+name: Build installers (Win / Linux / macOS)
+
+# Dispara ao criar uma TAG de versão (ex.: v1.0.14) ou manualmente (Actions → Run workflow).
+# Em tag, além de gerar os artefatos, publica um GitHub Release com os instaladores anexados.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # necessário para o job de Release criar/anexar os instaladores
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            ebflag: '--win'
+          - os: ubuntu-latest
+            ebflag: '--linux'
+          - os: macos-latest
+            ebflag: '--mac'
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Build do app (electron-vite)
+        run: npm run build
+
+      - name: Empacotar (electron-builder)
+        run: npx electron-builder ${{ matrix.ebflag }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Build macOS NÃO assinado (sem certificados): evita o electron-builder tentar assinar/notarizar.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Subir instaladores como artefato
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.os }}
+          path: |
+            dist/*.exe
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: warn
+          retention-days: 30
+
+  release:
+    name: Publicar Release (somente em tag)
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar todos os artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Criar GitHub Release com os instaladores
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
+          generate_release_notes: true
