@@ -10,6 +10,26 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.14 — 2026-06-02
+--------------------------------------------------------------------------------
+CORRIGIDO / MELHORADO (gerenciador de imagens)
+  • Selo do painel: "CONTÊINER" genérico (MiniIDE/DriveWire/CoCoSDC) em vez de cravar o tipo
+    (que errava, ex.: VHD de CoCoSDC aparecia "MiniIDE"); o tipo detectado vai no hint.
+  • Navegação do contêiner: rótulo "DISCO" sem o número repetido (o nº fica só no < X/xx >).
+  • Aviso de FORMATO NÃO SUPORTADO: quando o contêiner vem com discos de nomes ilegíveis
+    (mapeamento diferente, ex.: VHD do CoCoSDC-no-VCC), avisa e BLOQUEIA o write-back (não corrompe).
+  • Navegação ROBUSTA a discos não-RS-DOS: ao chegar num disco OS-9/dupla-face/JVC (ex.: o de
+    737.282 B da RetroRewind), em vez de erro duro que travava, mostra "Disco em formato não
+    suportado" e segue navegável. (A imagem original NUNCA é alterada — CoCoSDC só salva .dsk avulso.)
+  • Distribuição harmônica da coluna do painel (controles no topo, info centralizada no espaço livre).
+CORRIGIDO (Editor BASIC)
+  • "Maiúsculas auto" agora PRESERVA as minúsculas já existentes — só maiusculiza o que é
+    digitado/colado a partir de então (antes convertia o texto inteiro a cada tecla).
+DOCUMENTAÇÃO
+  • Roadmaps de pesquisa: ROADMAP_OS9.md (suporte a OS-9/RBF + reanálise da MiniIDE) e
+    ROADMAP_FUJINET.md (ponte TNFS cliente/servidor). Backlog atualizado (JVC, FujiNet).
+
+--------------------------------------------------------------------------------
 v1.0.13 — 2026-06-02
 --------------------------------------------------------------------------------
 ADICIONADO (Redesenho do cabeçalho do painel + "?" com o changelog)

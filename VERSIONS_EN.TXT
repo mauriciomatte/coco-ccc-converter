@@ -10,6 +10,26 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.14 — 2026-06-02
+--------------------------------------------------------------------------------
+FIXED / IMPROVED (image manager)
+  • Pane badge: generic "CONTAINER" (MiniIDE/DriveWire/CoCoSDC) instead of asserting the kind
+    (which could be wrong, e.g. a CoCoSDC VHD shown as "MiniIDE"); detected kind goes in the hint.
+  • Container nav: "DISK" label without the repeated number (the number stays only in < X/xx >).
+  • UNSUPPORTED-FORMAT warning: when a container has disks with garbled names (different mapping,
+    e.g. the CoCoSDC-on-VCC VHD), it warns and BLOCKS write-back (won't corrupt).
+  • ROBUST navigation over non-RS-DOS disks: reaching an OS-9/double-sided/JVC disk (e.g. the
+    737,282-byte one in RetroRewind) now shows "Disk in an unsupported format" and keeps navigating,
+    instead of a hard error that got stuck. (The original image is NEVER modified — CoCoSDC only Save As.)
+  • Harmonious distribution of the pane's left column (controls on top, info centered in the free space).
+FIXED (BASIC editor)
+  • "Auto uppercase" now PRESERVES existing lowercase — it only uppercases what is typed/pasted from
+    then on (before it converted the whole text on every keystroke).
+DOCS
+  • Research roadmaps: ROADMAP_OS9.md (OS-9/RBF support + MiniIDE re-analysis) and ROADMAP_FUJINET.md
+    (TNFS client/server bridge). Backlog updated (JVC, FujiNet).
+
+--------------------------------------------------------------------------------
 v1.0.13 — 2026-06-02
 --------------------------------------------------------------------------------
 ADDED (Pane header redesign + "?" changelog)

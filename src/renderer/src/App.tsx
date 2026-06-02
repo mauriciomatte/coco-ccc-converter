@@ -1413,6 +1413,14 @@ export default function App() {
     return true;
   };
 
+  // Um diretório com muitos nomes ILEGÍVEIS (chars não-imprimíveis) indica que o disco NÃO é
+  // RS-DOS padrão (ex.: OS-9, dupla-face, .dsk com cabeçalho JVC) lido como RS-DOS → lixo.
+  const isGarbledDir = (files: any[]): boolean => {
+    if (!files || !files.length) return false;
+    const bad = files.filter((f: any) => /[^\x20-\x7E]/.test(f.fullName || '')).length;
+    return bad / files.length > 0.4;
+  };
+
   // Troca o disco ativo de um contêiner — em memória (DriveWire) fatia o buffer; em arquivo
   // (MiniIDE/CoCoSDC) lê só aquele disco do .img sob demanda (sem recarregar a imagem inteira).
   const handleSelectContainerDisk = async (which: 'A' | 'B', index: number) => {
@@ -1439,15 +1447,25 @@ export default function App() {
       }
     } catch (err: any) { addLog(`Trocar disco: ${err.message}`, `Switch disk: ${err.message}`, 'error'); return; }
     const res = await window.cocoApi.readDskDirectory(slice);
-    if (!res.success) { addLog(`DSK: ${res.error}`, `DSK: ${res.error}`, 'error'); return; }
+    // Disco ILEGÍVEL (formato não-RS-DOS: OS-9/JVC/dupla-face/etc.): NÃO trava a navegação nem mostra
+    // lixo — navega para ele com a lista vazia e um aviso claro. (Antes: erro duro travava no disco 316.)
+    const unreadable = !res.success || isGarbledDir(res.files || []);
     if (selectedDsk?.pane === which) setSelectedDsk(null);
     setPane(which, {
       ...pane, buffer: slice, size: slice.length, fileName: label,
-      files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
+      files: unreadable ? [] : res.files,
+      freeGranules: res.freeGranules || 0, totalGranules: res.totalGranules || 0,
       format: res.format, geom: res.geom, totalSectors: res.totalSectors, usedSectors: res.usedSectors, freeSectors: res.freeSectors,
+      diskUnreadable: unreadable,
+      diskUnreadableReason: !res.success ? (res.error || 'erro') : (unreadable ? 'garbled' : undefined),
       container: { ...c, index }
     });
     clearDirty(which); // trocou para outro disco (limpo)
+    if (unreadable) {
+      const why = !res.success ? res.error : (currentLang === 'pt-br' ? 'nomes ilegíveis (provável OS-9 / dupla-face / .dsk com cabeçalho)' : 'garbled names (likely OS-9 / double-sided / headered .dsk)');
+      addLog(`Disco ${index}: formato não suportado — ${why}. Navegação continua; este disco não é editável.`,
+             `Disk ${index}: unsupported format — ${why}. Navigation continues; this disk isn't editable.`, 'warn');
+    }
   };
 
   const containerKey = (c: any) => `${c.kind}|${c.fileName || ''}|${c.count}`;
@@ -1902,16 +1920,23 @@ export default function App() {
         buffer: buf, fileName: res.entries[0].label, size: buf.length,
         files: dir.files, freeGranules: dir.freeGranules, totalGranules: dir.totalGranules,
         format: dir.format, geom: dir.geom, totalSectors: dir.totalSectors, usedSectors: dir.usedSectors, freeSectors: dir.freeSectors,
-        container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0 },
+        container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0, suspect: !!res.suspect },
       });
       clearDirty(which);
       // O "Novo" do painel acompanha o formato dos discos do contêiner (MiniIDE/CoCoSDC = RS-DOS),
       // evitando que fique indicando, por engano, um formato diferente do que está aberto.
       setPaneNewFormat(p => ({ ...p, [which]: paneFormatKey(dir.format, buf.length) }));
       setActivePane(which);
-      const noun = res.kind === 'cocosdc' ? (currentLang === 'pt-br' ? '.dsk' : '.dsk') : (currentLang === 'pt-br' ? 'discos' : 'disks');
-      addLog(`${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'} "${res.fileName}": ${res.entries.length} ${noun}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
-             `${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'} "${res.fileName}": ${res.entries.length} ${noun}. Navigate with the pane ${which} selector (◀ ▶ or 🔍 Search).`, 'success');
+      const noun = res.kind === 'cocosdc' ? '.dsk' : (currentLang === 'pt-br' ? 'discos' : 'disks');
+      const kindLabel = res.kind === 'cocosdc' ? 'CoCoSDC' : res.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
+      addLog(`Contêiner (${kindLabel}) "${res.fileName}": ${res.entries.length} ${noun}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
+             `Container (${kindLabel}) "${res.fileName}": ${res.entries.length} ${noun}. Navigate with the pane ${which} selector (◀ ▶ or 🔍 Search).`, 'success');
+      // Aviso de formato NÃO totalmente suportado: a maioria dos discos veio com nomes ilegíveis →
+      // o layout não casa com o nosso leitor (ex.: imagem "VHD" do CoCoSDC-no-VCC). Não recomendado salvar.
+      if (res.suspect) {
+        addLog('⚠ Formato de imagem NÃO totalmente suportado: vários discos aparecem com nomes ilegíveis (o mapeamento de setores desta imagem é diferente). Use apenas para inspecionar; NÃO é recomendado salvar.',
+               '⚠ Image format NOT fully supported: several disks show garbled file names (this image\'s sector mapping differs). For inspection only; saving is NOT recommended.', 'warn');
+      }
     } catch (err: any) { addLog(`Imagem: ${err.message}`, `Image: ${err.message}`, 'error'); }
     finally { setImageBusy(false); setImageProgress(null); }
   };
@@ -2360,6 +2385,11 @@ export default function App() {
     const pane = getPane(which);
     const c = pane?.container;
     if (!(c && c.source === 'file' && c.kind === 'miniide')) return false;
+    if (c.suspect) {
+      addLog('Gravação BLOQUEADA: o formato desta imagem não é totalmente suportado (discos com nomes ilegíveis). Salvar de volta poderia corromper a imagem. Use "Salvar Como" para extrair o disco atual num .dsk avulso.',
+             'Write-back BLOCKED: this image format is not fully supported (garbled disk names). Saving back could corrupt the image. Use "Save As" to extract the current disk as a standalone .dsk.', 'error');
+      return true;
+    }
     if (typeof window.cocoApi.imageWriteSlot !== 'function') { addLog('Reinicie o app: a gravação na MiniIDE (preload) não está carregada.', 'Restart the app: MiniIDE write-back (preload) is not loaded.', 'error'); return true; }
     const offset = c.entries?.[c.index]?.locator?.offset;
     if (typeof offset !== 'number') { addLog('MiniIDE: offset do disco não encontrado.', 'MiniIDE: disk slot offset not found.', 'error'); return true; }
@@ -3176,18 +3206,28 @@ export default function App() {
     return base.slice(0, head) + '…' + ext;
   };
 
-  // Rótulo + cor do "LIDO:" (o que está ABERTO no painel): contêiner (MiniIDE/CoCoSDC/DriveWire),
-  // Dragon DOS (com geometria) ou CoCo DECB (35/40T). Distingue do "NOVO:" (o que o botão cria).
-  const readFormat = (p: any): { label: string; color: string } => {
+  // Rótulo + cor + hint do "LIDA:" (o que está ABERTO no painel). CONTÊINER é o termo GENÉRICO para
+  // imagens multi-disco (MiniIDE / DriveWire / CoCoSDC) — o tipo específico fica no hint, pois a
+  // detecção do tipo nem sempre é confiável (ex.: uma VHD de CoCoSDC pode cair na varredura MiniIDE).
+  const readFormat = (p: any): { label: string; color: string; hint: string } => {
     if (p.container) {
       const k = p.container.kind === 'cocosdc' ? 'CoCoSDC' : p.container.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
-      return { label: `${k} · ${p.container.count} ${currentLang === 'pt-br' ? 'discos' : 'disks'}`, color: '#a78bfa' };
+      const discos = currentLang === 'pt-br' ? 'discos' : 'disks';
+      return {
+        label: `${currentLang === 'pt-br' ? 'Contêiner' : 'Container'} · ${p.container.count} ${discos}`,
+        color: '#a78bfa',
+        hint: currentLang === 'pt-br'
+          ? `Contêiner multi-disco (MiniIDE / DriveWire / CoCoSDC) — detectado como ${k}. ${p.container.count} ${discos}.`
+          : `Multi-disk container (MiniIDE / DriveWire / CoCoSDC) — detected as ${k}. ${p.container.count} ${discos}.`,
+      };
     }
     if (p.format === 'dragon') {
       const ds = p.geom?.sides === 2, t80 = (p.geom?.tracks || 40) >= 80;
-      return { label: `Dragon DOS ${t80 ? '80' : '40'}T ${ds ? 'DS' : 'SS'}`, color: '#22d3ee' };
+      const label = `Dragon DOS ${t80 ? '80' : '40'}T ${ds ? 'DS' : 'SS'}`;
+      return { label, color: '#22d3ee', hint: currentLang === 'pt-br' ? `Imagem ${label} aberta neste painel.` : `${label} image open in this pane.` };
     }
-    return { label: `CoCo DECB ${p.size === 184320 ? '40T' : '35T'}`, color: 'var(--primary)' };
+    const label = `CoCo DECB ${p.size === 184320 ? '40T' : '35T'}`;
+    return { label, color: 'var(--primary)', hint: currentLang === 'pt-br' ? `Imagem ${label} aberta neste painel.` : `${label} image open in this pane.` };
   };
 
   const renderDskPane = (which: 'A' | 'B', pane: any) => {
@@ -3238,66 +3278,76 @@ export default function App() {
                 <Eraser size={14} />
               </button>
             </div>
-            {/* O "NOVO: formato | +" agora fica FIXO na barra de status (rodapé do painel). */}
-            {/* LINHA 2: vazio → legenda; senão NOME da imagem + tamanho + "LIDO:" (formato aberto) + navegação do contêiner. */}
-            {!pane ? (
-              <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>
-            ) : (
-              <div className="flex flex-col gap-1 text-[11px] mt-1">
-                {/* Nome da IMAGEM (.dsk/.vdk/.img) ENCURTADO em 1 linha (nome completo no hint). Em
-                    contêiner-arquivo (MiniIDE) = nome do .img; em DriveWire (sem .fileName) = pane.fileName. */}
-                {(() => { const full = pane.container?.fileName ?? pane.fileName; return (
-                  <div className="text-white font-mono whitespace-nowrap overflow-hidden text-ellipsis" title={full}>{truncName(full)}</div>
-                ); })()}
-                <div className="text-[var(--text-secondary)]">{((pane.container ? pane.buffer.length : pane.size) / 1024).toFixed(0)} KB</div>
-                {/* Selo do painel: imagem CRIADA pelo ✚ → "NOVA: nome"; imagem ABERTA de arquivo → "LIDA: formato". */}
-                {pane.created ? (
-                  <span
-                    className="text-[9px] font-bold uppercase tracking-wide rounded self-start"
-                    style={{ color: '#000', background: '#fbbf24', padding: '3px 8px', boxShadow: '0 0 8px rgba(251,191,36,0.6)' }}
-                    title={currentLang === 'pt-br' ? 'Imagem NOVA criada neste painel (ainda não salva em arquivo).' : 'NEW image created in this pane (not yet saved to a file).'}
-                  >
-                    {currentLang === 'pt-br' ? 'Nova' : 'New'}: {truncName(pane.fileName)}
-                  </span>
-                ) : (() => { const rf = readFormat(pane); return (
-                  <span
-                    className="text-[9px] font-bold uppercase tracking-wide rounded self-start"
-                    style={{ color: '#000', background: rf.color, padding: '3px 8px', boxShadow: `0 0 8px ${rf.color === 'var(--primary)' ? 'var(--primary-glow)' : rf.color + '99'}` }}
-                    title={currentLang === 'pt-br' ? 'Formato/tipo da imagem ABERTA neste painel.' : 'Format/type of the image OPEN in this pane.'}
-                  >
-                    {currentLang === 'pt-br' ? 'Lida' : 'Read'}: {rf.label}
-                  </span>
-                ); })()}
-                {/* Navegação do contêiner: nome do DISCO (centralizado) + índice editável + lupa (Buscar disco). */}
-                {pane.container && (
-                  <div className="flex flex-col gap-1 mt-1 bg-slate-950/40 rounded p-1.5 border border-[#a78bfa]/40" onClick={(e) => e.stopPropagation()}>
-                    {(() => { const dlabel = pane.container.entries?.[pane.container.index]?.label ?? `${currentLang === 'pt-br' ? 'Disco' : 'Disk'} ${pane.container.index}`; return (
-                      <span className="text-[10px] font-mono text-[#c4b5fd] font-bold break-all text-center" title={dlabel}>{dlabel}</span>
-                    ); })()}
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={imageBusy || pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Disco anterior' : 'Previous disk'}>◀</button>
-                      <input
-                        key={pane.container.index}
-                        type="number" min={0} max={pane.container.count - 1} defaultValue={pane.container.index}
-                        onClick={(e) => e.currentTarget.select()}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); handleSelectContainerDisk(which, v); } }}
-                        onBlur={(e) => { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); if (v !== pane.container.index) handleSelectContainerDisk(which, v); }}
-                        className="input-text py-0.5 text-[11px] text-center font-mono"
-                        style={{ width: 46 }}
-                        title={currentLang === 'pt-br' ? 'Digite o nº do disco e Enter para ir direto' : 'Type the disk # and Enter to jump'}
-                      />
-                      <span className="text-[10px] font-mono text-[var(--text-muted)]">/{pane.container.count - 1}</span>
-                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={imageBusy || pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Próximo disco' : 'Next disk'}>▶</button>
-                      <button onClick={() => { setActivePane(which); setImageFilter(''); setDiskPicker({ which }); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '3px 6px' }} title={t('dskSearchDisk')} aria-label={t('dskSearchDisk')}><Search size={12} /></button>
+            {/* O "NOVA: formato | +" fica FIXO na barra de status (rodapé). Aqui a INFO da imagem é
+                CENTRALIZADA verticalmente no espaço que sobra (distribuição harmônica), tudo centralizado. */}
+            <div className="flex-1 flex flex-col justify-center items-center gap-2.5 min-h-0 w-full">
+              {!pane ? (
+                <span className="text-[10px] text-[var(--text-muted)] leading-relaxed text-center px-1">{t('imgFormatsLegend')}</span>
+              ) : (
+                <div className="flex flex-col gap-2 items-center text-center w-full">
+                  {/* Nome da IMAGEM encurtado em 1 linha (nome completo no hint). Contêiner-arquivo = .img. */}
+                  {(() => { const full = pane.container?.fileName ?? pane.fileName; return (
+                    <div className="text-white font-mono text-[12px] max-w-full whitespace-nowrap overflow-hidden text-ellipsis" title={full}>{truncName(full)}</div>
+                  ); })()}
+                  <div className="text-[var(--text-secondary)] text-[11px]">{((pane.container ? pane.buffer.length : pane.size) / 1024).toFixed(0)} KB</div>
+                  {/* Selo: CRIADA pelo ✚ → "NOVA: nome"; ABERTA de arquivo → "LIDA: formato". */}
+                  {pane.created ? (
+                    <span className="text-[9px] font-bold uppercase tracking-wide rounded" style={{ color: '#000', background: '#fbbf24', padding: '3px 9px', boxShadow: '0 0 8px rgba(251,191,36,0.6)' }} title={currentLang === 'pt-br' ? 'Imagem NOVA criada neste painel (ainda não salva em arquivo).' : 'NEW image created in this pane (not yet saved to a file).'}>
+                      {currentLang === 'pt-br' ? 'Nova' : 'New'}: {truncName(pane.fileName)}
+                    </span>
+                  ) : (() => { const rf = readFormat(pane); return (
+                    <span className="text-[9px] font-bold uppercase tracking-wide rounded" style={{ color: '#000', background: rf.color, padding: '3px 9px', boxShadow: `0 0 8px ${rf.color === 'var(--primary)' ? 'var(--primary-glow)' : rf.color + '99'}` }} title={rf.hint}>
+                      {currentLang === 'pt-br' ? 'Lida' : 'Read'}: {rf.label}
+                    </span>
+                  ); })()}
+                  {/* Aviso: formato de contêiner NÃO totalmente suportado (nomes ilegíveis). */}
+                  {pane.container?.suspect && (
+                    <span className="text-[9px] font-bold uppercase tracking-wide rounded" style={{ color: '#000', background: '#f87171', padding: '3px 9px', boxShadow: '0 0 8px rgba(248,113,113,0.6)' }} title={currentLang === 'pt-br' ? 'Formato não totalmente suportado: discos com nomes ilegíveis. Só para inspeção; não recomendado salvar.' : 'Format not fully supported: garbled disk names. Inspection only; saving not recommended.'}>
+                      ⚠ {currentLang === 'pt-br' ? 'Formato não suportado' : 'Unsupported format'}
+                    </span>
+                  )}
+                  {/* Navegação do contêiner: "DISCO" + índice editável + lupa (centralizada). */}
+                  {pane.container && (
+                    <div className="flex flex-col gap-1.5 bg-slate-950/40 rounded p-2 border border-[#a78bfa]/40 w-full" style={{ maxWidth: 172 }} onClick={(e) => e.stopPropagation()}>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#c4b5fd] text-center">{currentLang === 'pt-br' ? 'Disco' : 'Disk'}</span>
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={imageBusy || pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Disco anterior' : 'Previous disk'}>◀</button>
+                        <input
+                          key={pane.container.index}
+                          type="number" min={0} max={pane.container.count - 1} defaultValue={pane.container.index}
+                          onClick={(e) => e.currentTarget.select()}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); handleSelectContainerDisk(which, v); } }}
+                          onBlur={(e) => { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); if (v !== pane.container.index) handleSelectContainerDisk(which, v); }}
+                          className="input-text py-0.5 text-[11px] text-center font-mono"
+                          style={{ width: 46 }}
+                          title={currentLang === 'pt-br' ? 'Digite o nº do disco e Enter para ir direto' : 'Type the disk # and Enter to jump'}
+                        />
+                        <span className="text-[10px] font-mono text-[var(--text-muted)]">/{pane.container.count - 1}</span>
+                        <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={imageBusy || pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Próximo disco' : 'Next disk'}>▶</button>
+                        <button onClick={() => { setActivePane(which); setImageFilter(''); setDiskPicker({ which }); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '3px 6px' }} title={t('dskSearchDisk')} aria-label={t('dskSearchDisk')}><Search size={12} /></button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
+            </div>
           </div>
           {/* Right: file list */}
           <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
-            {pane ? (
+            {pane && pane.diskUnreadable ? (
+              <div className="h-full flex flex-col items-center justify-center gap-2 p-6 text-center">
+                <span className="text-3xl">🚫</span>
+                <span className="text-sm font-bold text-rose-300">{currentLang === 'pt-br' ? 'Disco em formato não suportado' : 'Disk in an unsupported format'}</span>
+                <span className="text-[11px] text-[var(--text-secondary)] leading-relaxed max-w-[420px]">
+                  {currentLang === 'pt-br'
+                    ? `Este disco do contêiner não é um RS-DOS padrão (${(pane.size / 1024).toFixed(0)} KB) — provavelmente OS-9, dupla-face ou .dsk com cabeçalho (JVC). Não é editável aqui; use ◀ ▶ para ir a outro disco. Você pode extraí-lo com "Salvar Como".`
+                    : `This container disk isn't a standard RS-DOS image (${(pane.size / 1024).toFixed(0)} KB) — likely OS-9, double-sided, or a headered .dsk (JVC). Not editable here; use ◀ ▶ to move to another disk. You can extract it with "Save As".`}
+                </span>
+                {pane.diskUnreadableReason && pane.diskUnreadableReason !== 'garbled' && (
+                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{pane.diskUnreadableReason}</span>
+                )}
+              </div>
+            ) : pane ? (
               <table className="w-full text-left border-collapse text-[11px]">
                 <thead>
                   <tr className="bg-slate-900 text-[var(--text-muted)] font-bold border-b border-[var(--border)]">

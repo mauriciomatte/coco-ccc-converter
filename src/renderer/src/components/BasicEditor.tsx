@@ -76,6 +76,16 @@ export default function BasicEditor({
   useEffect(() => { try { localStorage.setItem('basicUpper', autoUpper ? '1' : '0'); } catch { /* ignore */ } }, [autoUpper]);
   const applyCase = (v: string) => (autoUpper ? v.toUpperCase() : v);
   const setUpper = (v: string) => onTextChange(applyCase(v));
+  // "Maiúsculas auto" maiusculiza SÓ o trecho RECÉM-DIGITADO/COLADO, preservando o que já existia
+  // (inclusive minúsculas anteriores). Diff por prefixo/sufixo comum entre o texto antigo e o novo.
+  const applyCaseDelta = (oldText: string, newText: string): string => {
+    if (!autoUpper) return newText;
+    let i = 0;
+    while (i < oldText.length && i < newText.length && oldText[i] === newText[i]) i++;
+    let j = 0;
+    while (j < oldText.length - i && j < newText.length - i && oldText[oldText.length - 1 - j] === newText[newText.length - 1 - j]) j++;
+    return newText.slice(0, i) + newText.slice(i, newText.length - j).toUpperCase() + newText.slice(newText.length - j);
+  };
 
   // ── Modo de tela do editor (persistido): 'normal' (editor de sempre, com temas de cor),
   // 'vdg' (aparência VDG do CoCo com a fonte monospace do sistema) e 'vdg6847' (idem, com a fonte
@@ -184,13 +194,14 @@ export default function BasicEditor({
     }
   }, [text, cellW, display, wrap32, measurePx]); // measurePx = escala; re-mede a célula e redesenha ao mudar
 
-  // Insere texto na posição do cursor (usado por colar e substituir), respeitando o auto-maiúsculas.
+  // Insere texto na posição do cursor (usado por colar e substituir). Maiusculiza SÓ o texto inserido
+  // (up), preservando o restante (inclusive minúsculas que já existiam).
   const insertAtCursor = (ins: string) => {
     const ta = taRef.current;
     const up = applyCase(ins);
-    if (!ta) { setUpper(text + up); return; }
+    if (!ta) { onTextChange(text + up); return; }
     const s = ta.selectionStart, e = ta.selectionEnd;
-    const next = applyCase(text.slice(0, s) + up + text.slice(e));
+    const next = text.slice(0, s) + up + text.slice(e);
     caretToRestore.current = { s: s + up.length, e: s + up.length };
     onTextChange(next);
   };
@@ -387,7 +398,7 @@ export default function BasicEditor({
                   ref={taRef}
                   className="vdg-input"
                   value={text}
-                  onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCase(ta.value)); }}
+                  onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); }}
                   onKeyDown={handleEditorKeyDown}
                   spellCheck={false}
                   autoCapitalize="characters"
@@ -411,7 +422,7 @@ export default function BasicEditor({
               ref={taRef}
               className="vdg-input"
               value={text}
-              onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCase(ta.value)); }}
+              onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); }}
               onKeyDown={handleEditorKeyDown}
               spellCheck={false}
               autoCapitalize="characters"
@@ -426,13 +437,13 @@ export default function BasicEditor({
         <textarea
           ref={taRef}
           value={text}
-          onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCase(ta.value)); }}
+          onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); }}
           onKeyDown={handleEditorKeyDown}
           spellCheck={false}
           autoCapitalize="characters"
           placeholder={'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}
           className="flex-1 w-full p-3 font-mono text-sm leading-relaxed resize-none outline-none rounded-lg"
-          style={{ minHeight: 0, color: schemeOf(screen).fg, fontWeight: bold ? 700 : 400, textTransform: autoUpper ? 'uppercase' : 'none', background: schemeOf(screen).bg, border: '2px solid rgba(0,0,0,0.35)', caretColor: schemeOf(screen).fg }}
+          style={{ minHeight: 0, color: schemeOf(screen).fg, fontWeight: bold ? 700 : 400, textTransform: 'none', background: schemeOf(screen).bg, border: '2px solid rgba(0,0,0,0.35)', caretColor: schemeOf(screen).fg }}
         />
       )}
 

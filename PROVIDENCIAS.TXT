@@ -80,14 +80,30 @@ CONTÊINERES (MiniIDE / CoCoSDC / DriveWire)
 --------------------------------------------------------------------------------
 NOVOS FORMATOS (linha Color e clones) — backlog
 --------------------------------------------------------------------------------
-[ ] OS-9 / NitrOS-9 (RBF): ler o sistema de arquivos (descritores, listas de segmentos,
-    diretório próprio). As imagens MiniIDE têm partições OS-9. Projeto médio (leitura);
-    escrita maior. Mais valioso dos novos formatos.
-[ ] Formatos de imagem DMK e JVC/.dsk-com-cabeçalho (DMK guarda metadados de trilha, bom
-    p/ discos protegidos). Nível de imagem, não-FS — mais fácil.
+[ ] OS-9 / NitrOS-9 (RBF): ler (depois editar) o sistema de arquivos. >>> ROADMAP DETALHADO
+    em ROADMAP_OS9.md (estudar RBF a fundo → REANALISAR a MiniIDE com a lente OS-9 → implementar
+    leitura). As imagens MiniIDE/RetroRewind têm partições/discos OS-9. Mais valioso dos novos formatos.
+[ ] JVC / .dsk-com-cabeçalho: detectar e remover o cabeçalho (1–5 bytes; tamanho = arquivo%256)
+    e ler a GEOMETRIA. Explica o disco de 737.282 B da RetroRewind (cabeçalho 2B + 80T DS). Editáveis
+    de fato só os JVC single-sided RS-DOS; DS/OS-9 precisam do suporte OS-9. Esforço baixo, alto valor de
+    diagnóstico (parar de mostrar "lixo"/"formato não suportado").
+[ ] DMK (guarda metadados de trilha, bom p/ discos protegidos). Nível de imagem, não-FS.
 [ ] FLEX (SO 6809) — FS próprio, nicho.
 [ ] Botão "Novo Dragon DS" (40T 2 lados) — engine já suporta DS; falta só a opção na UI.
     Clones CP-400 (Prológica) e TDP-100 já funcionam (são RS-DOS).
+
+
+--------------------------------------------------------------------------------
+FUJINET / TNFS (rede) — implementação FUTURA
+--------------------------------------------------------------------------------
+[ ] >>> ROADMAP DETALHADO em ROADMAP_FUJINET.md (achados da pesquisa + escopo isolado).
+    Resumo: FujiNet SUPORTA CoCo (cartucho + serial DriveWire + ROM HDB-DOS; monta .DSK padrão do SD
+    ou de servidor TNFS). CoCoDCU como PONTE de 2 vias usando .DSK padrão:
+    • CLIENTE TNFS (M1): baixar imagens dos hubs (tnfs.fujinet.online/COCO) + download HTTP. Maior valor.
+    • "Enviar p/ dispositivo" (M2): CoCoSDC (copiar .dsk no drive FAT), disquete (GW, feito), MiniIDE (.img).
+    • SERVIDOR TNFS (M3): a FujiNet do usuário monta as imagens do PC ao vivo (host slot = IP do PC).
+    • Servidor DriveWire serial (M4, opcional): CoCo direto no PC sem placa.
+    Manual em amostras/"FujiNet for CoCo - The Basics (Rich Stephens).pdf". TNFS = UDP porta 16384.
 
 
 --------------------------------------------------------------------------------

@@ -468,7 +468,12 @@ ipcMain.handle('image-analyze', async () => {
           info: `${d.fileCount} arq · ${d.freeGranules} livres`, sub: d.label,
           locator: { kind: 'miniide', offset: d.offset },
         }));
-        return { success: true, kind: 'miniide', filePath, fileName, entries };
+        // Heurística de "formato não totalmente suportado": se a maioria dos discos tem nomes de
+        // arquivo ILEGÍVEIS (chars não-imprimíveis nos rótulos), o layout não casa com o nosso
+        // MiniIDE (sector-doubled) — ex.: a imagem "VHD" do CoCoSDC-no-VCC. Avisamos no renderer.
+        const garbled = disks.filter(d => /[^\x20-\x7E]/.test(d.label || '')).length;
+        const suspect = disks.length > 0 && garbled / disks.length > 0.35;
+        return { success: true, kind: 'miniide', filePath, fileName, entries, suspect };
       }
     }
 
