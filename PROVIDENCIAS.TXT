@@ -63,6 +63,34 @@ DRAGON / VDK (multi-formato)
 
 
 --------------------------------------------------------------------------------
+CONTÊINERES (MiniIDE / CoCoSDC / DriveWire)
+--------------------------------------------------------------------------------
+[FEITO v1.0.12] SALVAR de volta na imagem MiniIDE (.img): grava o disco editado no slot
+    dele, IN PLACE. Abordagem SEGURA: lê o slot atual (322.560) e sobrescreve só os
+    "chunks pares" (os setores CoCo de 256B que o de-double lê), PRESERVANDO os chunks
+    ímpares byte-a-byte (o teste na .img real mostrou que NÃO são cópias idênticas — são
+    lixo/2ª cópia do CF que o HDBDOS pode manter). Validado na imagem REAL (507MB, 337
+    discos): arquivo adicionado lê de volta, ímpares preservados, disco vizinho intacto.
+    "Trocar de disco" com edição pendente grava antes (sem perda). IPC image-write-slot.
+[ ] RECOMENDADO: confirmar em HARDWARE REAL (gravar a .img editada num CF e testar no
+    MiniIDE/CoCo) — a lógica só altera os setores CoCo reais e preserva o resto, risco baixo.
+[ ] CoCoSDC (FAT): gravação de volta exige escrita na cadeia de clusters FAT (fat.ts hoje
+    é só-leitura). Diferente da MiniIDE (que é setor-dobrado). Avançado.
+
+--------------------------------------------------------------------------------
+NOVOS FORMATOS (linha Color e clones) — backlog
+--------------------------------------------------------------------------------
+[ ] OS-9 / NitrOS-9 (RBF): ler o sistema de arquivos (descritores, listas de segmentos,
+    diretório próprio). As imagens MiniIDE têm partições OS-9. Projeto médio (leitura);
+    escrita maior. Mais valioso dos novos formatos.
+[ ] Formatos de imagem DMK e JVC/.dsk-com-cabeçalho (DMK guarda metadados de trilha, bom
+    p/ discos protegidos). Nível de imagem, não-FS — mais fácil.
+[ ] FLEX (SO 6809) — FS próprio, nicho.
+[ ] Botão "Novo Dragon DS" (40T 2 lados) — engine já suporta DS; falta só a opção na UI.
+    Clones CP-400 (Prológica) e TDP-100 já funcionam (são RS-DOS).
+
+
+--------------------------------------------------------------------------------
 DISCOS 40 TRILHAS (JDOS / CODIMEX)
 --------------------------------------------------------------------------------
 [ ] Validar o formato real JDOS/CODIMEX com um .dsk de verdade.

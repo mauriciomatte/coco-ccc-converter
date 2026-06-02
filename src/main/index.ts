@@ -509,6 +509,38 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
   }
 });
 
+// 3c1c2. Write ONE MiniIDE disk back IN PLACE into the .img at its slot offset. The disk must be a
+// standard 161,280-byte (35-track) RS-DOS image; the slot is 322,560 (sector-doubled).
+//   SAFETY: read tests on real .img show the doubled "odd" sub-sectors are NOT identical copies (raw
+//   CF leftovers/2nd copy the HDBDOS firmware may keep). So we DON'T re-double blindly — we read the
+//   current slot and overwrite ONLY the EVEN 256-byte sub-sectors (the actual CoCo sectors that
+//   de-double reads), preserving every odd sub-sector byte-for-byte. Minimal, reversible change.
+ipcMain.handle('image-write-slot', async (_, filePath: string, offset: number, diskUint8Array: Uint8Array) => {
+  try {
+    const disk = Buffer.from(diskUint8Array);
+    if (disk.length !== 161280) {
+      return { success: false, error: `Disco precisa ter 161.280 bytes (35T) para caber no slot da MiniIDE; tem ${disk.length}.` };
+    }
+    const SLOT = 322560;
+    const stat = fs.statSync(filePath);
+    if (offset < 0 || offset + SLOT > stat.size) {
+      return { success: false, error: `Offset ${offset} fora dos limites da imagem (${stat.size} bytes).` };
+    }
+    const fd = fs.openSync(filePath, 'r+');
+    try {
+      const slot = Buffer.alloc(SLOT);
+      fs.readSync(fd, slot, 0, SLOT, offset);               // slot atual (preserva os chunks ímpares)
+      const sectors = disk.length / 256;                    // 630
+      for (let i = 0; i < sectors; i++) disk.copy(slot, i * 2 * 256, i * 256, i * 256 + 256); // só os pares
+      fs.writeSync(fd, slot, 0, SLOT, offset);
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
 // 3c2. Sort a .dsk image's directory entries alphabetically (A→Z). Routes RS-DOS vs Dragon by format.
 ipcMain.handle('dsk-sort-directory', async (_, dskUint8Array: Uint8Array) => {
   try {

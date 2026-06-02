@@ -1415,6 +1415,12 @@ export default function App() {
     if (!pane || !pane.container) return;
     const c = pane.container;
     if (index < 0 || index >= c.count) return;
+    if (index === c.index) return; // já é o disco atual
+    // Trocar de disco num contêiner-arquivo RELÊ do .img → descartaria edições não salvas. Numa
+    // MiniIDE com alterações pendentes, grava o disco atual de volta ANTES de trocar (sem perda).
+    if (c.source === 'file' && c.kind === 'miniide' && dskDirty[which]) {
+      await saveMiniIdeBack(which);
+    }
     let slice: Uint8Array;
     let label = pane.fileName;
     try {
@@ -2311,8 +2317,9 @@ export default function App() {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     try {
-      // Para contêiner multi-disco, salva o arquivo inteiro (todos os discos); senão o disco único.
-      const saveBuf = pane.container ? pane.container.full : pane.buffer;
+      // Contêiner EM MEMÓRIA (DriveWire) salva o arquivo inteiro; contêiner-ARQUIVO (MiniIDE/CoCoSDC,
+      // sem .full) ou imagem única salva o DISCO ATUAL como .dsk avulso.
+      const saveBuf = pane.container?.full ?? pane.buffer;
       // Disco Dragon → sugere .VDK (formato nativo, com o header que o XRoar lê); CoCo → .DSK.
       const isDragon = pane.format === 'dragon';
       const defName = pane.fileName || (isDragon ? 'disco.vdk' : 'disk.dsk');
@@ -2335,9 +2342,31 @@ export default function App() {
 
   // "Salvar": sobrescreve o arquivo de origem (sem diálogo). Sem caminho conhecido (disco novo,
   // leitura GW, contêiner) → cai no "Salvar como".
+  // Grava o disco ATUAL de volta dentro da imagem MiniIDE (.img), no slot dele (re-dobra + escreve no
+  // offset). Retorna true se a gravação foi tratada aqui (painel é um contêiner-arquivo MiniIDE).
+  const saveMiniIdeBack = async (which: 'A' | 'B'): Promise<boolean> => {
+    const pane = getPane(which);
+    const c = pane?.container;
+    if (!(c && c.source === 'file' && c.kind === 'miniide')) return false;
+    if (typeof window.cocoApi.imageWriteSlot !== 'function') { addLog('Reinicie o app: a gravação na MiniIDE (preload) não está carregada.', 'Restart the app: MiniIDE write-back (preload) is not loaded.', 'error'); return true; }
+    const offset = c.entries?.[c.index]?.locator?.offset;
+    if (typeof offset !== 'number') { addLog('MiniIDE: offset do disco não encontrado.', 'MiniIDE: disk slot offset not found.', 'error'); return true; }
+    if (pane!.buffer.length !== 161280) {
+      addLog('Este disco não tem 35T (161.280 B) — não cabe no slot da MiniIDE. Use "Salvar Como" para gerar um .dsk avulso.', 'This disk isn\'t 35T (161,280 B) — it doesn\'t fit the MiniIDE slot. Use "Save As" for a standalone .dsk.', 'warn');
+      return true;
+    }
+    try {
+      const r = await window.cocoApi.imageWriteSlot(c.filePath, offset, pane!.buffer);
+      if (r.success) { clearDirty(which); addLog(`Disco ${c.index} gravado de volta na imagem MiniIDE (${c.fileName}).`, `Disk ${c.index} written back to the MiniIDE image (${c.fileName}).`, 'success'); }
+      else addLog(`MiniIDE salvar: ${r.error}`, `MiniIDE save: ${r.error}`, 'error');
+    } catch (err: any) { addLog(`MiniIDE salvar: ${err.message}`, `MiniIDE save: ${err.message}`, 'error'); }
+    return true;
+  };
+
   const handleDskSaveOverwrite = async () => {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    if (await saveMiniIdeBack(activePane)) return; // contêiner MiniIDE → grava no .img
     if (!pane.sourcePath || pane.container) { handleDskSaveAs(); return; }
     try {
       const r = await window.cocoApi.saveDskOverwrite(pane.sourcePath, pane.buffer);

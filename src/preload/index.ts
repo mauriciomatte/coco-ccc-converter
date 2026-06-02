@@ -69,6 +69,10 @@ const api = {
   dskDefragDragon: (dskBuffer: Uint8Array) =>
     ipcRenderer.invoke('dsk-defrag-dragon', dskBuffer),
 
+  // Grava UM disco editado de volta no slot da imagem MiniIDE (.img), no offset do slot.
+  imageWriteSlot: (filePath: string, offset: number, diskBuffer: Uint8Array) =>
+    ipcRenderer.invoke('image-write-slot', filePath, offset, diskBuffer),
+
   // Drag-OUT nativo: extrai o arquivo para um temp e inicia o arrasto do SO (soltar no Explorer).
   startFileDrag: (dskBuffer: Uint8Array, fileEntry: any, fileName: string) =>
     ipcRenderer.send('start-file-drag', dskBuffer, fileEntry, fileName),

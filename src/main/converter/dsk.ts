@@ -207,6 +207,21 @@ export function deDoubleDisk(buf: Buffer): Buffer {
   return out;
 }
 
+/**
+ * Inverse of deDoubleDisk: re-doubles a standard RS-DOS disk for write-back into a MiniIDE/HDBDOS
+ * slot — each 256-byte sector is written TWICE in a row (S0 S0 S1 S1 …). A 161,280-byte disk
+ * becomes 322,560 physical bytes (DBL_SLOT). Used to update one disk in place inside a .img.
+ */
+export function reDoubleDisk(buf: Buffer): Buffer {
+  const sectors = Math.floor(buf.length / 256);
+  const out = Buffer.alloc(buf.length * 2);
+  for (let i = 0; i < sectors; i++) {
+    buf.copy(out, i * 2 * 256, i * 256, i * 256 + 256);        // primeira cópia do setor
+    buf.copy(out, i * 2 * 256 + 256, i * 256, i * 256 + 256);  // duplicata (igual à 1ª)
+  }
+  return out;
+}
+
 // Doubled-disk on-disk offsets (35-track, sector-doubled): de-doubled Track-17 Sector-2
 // (FAT) lives at physical 614*256, Sector-3 (first directory page) at 616*256.
 const DBL_FAT_OFF = 614 * 256;   // 157,184

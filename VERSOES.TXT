@@ -10,6 +10,23 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.12 — 2026-06-02
+--------------------------------------------------------------------------------
+ADICIONADO (Salvar de volta na imagem MiniIDE .img)
+  • Agora dá para EDITAR um disco dentro de uma imagem MiniIDE e SALVAR de volta no .img
+    (antes só salvava .dsk avulso). "Salvar" grava o disco atual no slot dele, in place.
+  • Abordagem SEGURA contra hardware: o slot é setor-dobrado (322.560 = 161.280 ×2). Em vez
+    de re-dobrar cego, lemos o slot atual e sobrescrevemos SÓ os "chunks pares" (os setores
+    CoCo de 256B que o de-double lê), PRESERVANDO os ímpares byte-a-byte — porque o teste na
+    imagem REAL mostrou que os ímpares NÃO são cópias idênticas (lixo/2ª cópia do CF). Assim
+    só os setores que realmente mudaram são tocados; o resto do .img fica intacto.
+  • Validado na imagem MiniIDE real (507 MB, 337 discos): arquivo adicionado lê de volta com
+    dados íntegros, chunks ímpares preservados, disco vizinho intacto.
+  • "Trocar de disco" no contêiner com edição pendente grava o disco atual ANTES de trocar
+    (não perde edições). "Salvar Como" de contêiner-arquivo gera um .dsk avulso do disco atual.
+  • RECOMENDADO confirmar em hardware real (gravar a .img num CF e testar no MiniIDE).
+
+--------------------------------------------------------------------------------
 v1.0.11 — 2026-06-02
 --------------------------------------------------------------------------------
 ADICIONADO (Dragon DOS — ordenar, desfragmentar, DS/80T)
