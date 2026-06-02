@@ -10,6 +10,21 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.13 — 2026-06-02
+--------------------------------------------------------------------------------
+ADICIONADO (Redesenho do cabeçalho do painel + "?" com o changelog)
+  • Cabeçalho de cada painel reorganizado: badge do painel | abrir imagem (ícone) | limpar
+    painel (ícone); o seletor "Nova:" (formato do disco) + o botão criar (✚) foram para a
+    BARRA DE STATUS do painel.
+  • Selo "LIDA:" (o que está ABERTO) vs "NOVA:" (o que o ✚ cria) agora bem distintos: imagem
+    recém-CRIADA mostra "NOVA: nome.ext" (âmbar); imagem ABERTA mostra "LIDA: formato".
+  • Nome de arquivo longo é encurtado em 1 linha (~15 chars + "…" + .ext; nome completo no hint).
+  • Navegação do contêiner mostra o nome do DISCO centralizado + índice EDITÁVEL (digite o número
+    e Enter para ir direto) + lupa de busca; o botão "Novo" saiu da toolbar.
+  • Botão "?" (à esquerda de Sair) abre este changelog num modal rolável (PT e EN).
+  • Correção de gênero: "A imagem" → Nova/Lida (e NOVA_A.DSK, etc.).
+
+--------------------------------------------------------------------------------
 v1.0.12 — 2026-06-02
 --------------------------------------------------------------------------------
 ADICIONADO (Salvar de volta na imagem MiniIDE .img)

@@ -48,6 +48,9 @@ import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
 import DiskMap, { DiskLegend } from './components/DiskMap';
 import FileCompareModal from './components/FileCompareModal';
+// Changelog (histórico de versões) embutido no build a partir dos arquivos da raiz do repo.
+import changelogPt from '../../../VERSOES.TXT?raw';
+import changelogEn from '../../../VERSIONS_EN.TXT?raw';
 import { detokenizeBasic } from './basicDetokenize';
 import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
 
@@ -620,6 +623,7 @@ export default function App() {
     if (child) child.scrollIntoView({ block: 'nearest' });
   }, [hexSel, showDisasm, disasmOrigin, loadAddr]);
   const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
+  const [showChangelog, setShowChangelog] = useState<boolean>(false); // modal "?" com o histórico de versões
   const [modalBuffer, setModalBuffer] = useState<Uint8Array | null>(null);
   const [modalFileName, setModalFileName] = useState<string>('');
   // Marcas código/dados do disassembly PERSISTEM por arquivo (localStorage), chaveadas por
@@ -1367,8 +1371,9 @@ export default function App() {
     finally { setImageBusy(false); }
   };
 
-  // Carrega uma imagem nova num painel; detecta contêiner multi-disco (N x 161280) e mostra o disco 0
-  const loadPaneFromBuffer = async (which: 'A' | 'B', full: Uint8Array, fileName: string, index = 0, sourcePath?: string): Promise<boolean> => {
+  // Carrega uma imagem num painel; detecta contêiner multi-disco (N x 161280) e mostra o disco 0.
+  // `created` = imagem CRIADA pelo botão ✚ (badge "NOVA: nome") vs ABERTA de arquivo (badge "LIDA: formato").
+  const loadPaneFromBuffer = async (which: 'A' | 'B', full: Uint8Array, fileName: string, index = 0, sourcePath?: string, created = false): Promise<boolean> => {
     let count = (full.length > 0 && full.length % STD_DISK === 0) ? full.length / STD_DISK : 1;
     if (count > 1) {
       // Um arquivo múltiplo de 161.280 pode ser um contêiner multi-disco OU um disco único
@@ -1381,7 +1386,7 @@ export default function App() {
     const res = await window.cocoApi.readDskDirectory(slice);
     if (!res.success) { addLog(`DSK: ${res.error}`, `DSK: ${res.error}`, 'error'); return false; }
     setPane(which, {
-      buffer: slice, fileName, size: slice.length,
+      buffer: slice, fileName, size: slice.length, created,
       // Caminho do arquivo de origem só para imagem ÚNICA (não-contêiner) → habilita "Salvar" (sobrescrever).
       sourcePath: count > 1 ? undefined : sourcePath,
       files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
@@ -1499,8 +1504,9 @@ export default function App() {
     // (não regrava no .img); trocar de disco relê do arquivo.
     setPane(which, {
       buffer: image,
-      fileName: fileName ?? prev.fileName ?? (which === 'A' ? 'NOVO_A.DSK' : 'NOVO_B.DSK'),
+      fileName: fileName ?? prev.fileName ?? (which === 'A' ? 'NOVA_A.DSK' : 'NOVA_B.DSK'),
       size: size ?? image.length,
+      created: prev.created, // mantém o selo "NOVA" ao editar uma imagem recém-criada
       sourcePath: prev.sourcePath, // preserva o caminho de origem para o "Salvar" (sobrescrever)
       files: res.files,
       freeGranules: res.freeGranules,
@@ -1895,9 +1901,13 @@ export default function App() {
       setPane(which, {
         buffer: buf, fileName: res.entries[0].label, size: buf.length,
         files: dir.files, freeGranules: dir.freeGranules, totalGranules: dir.totalGranules,
+        format: dir.format, geom: dir.geom, totalSectors: dir.totalSectors, usedSectors: dir.usedSectors, freeSectors: dir.freeSectors,
         container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0 },
       });
       clearDirty(which);
+      // O "Novo" do painel acompanha o formato dos discos do contêiner (MiniIDE/CoCoSDC = RS-DOS),
+      // evitando que fique indicando, por engano, um formato diferente do que está aberto.
+      setPaneNewFormat(p => ({ ...p, [which]: paneFormatKey(dir.format, buf.length) }));
       setActivePane(which);
       const noun = res.kind === 'cocosdc' ? (currentLang === 'pt-br' ? '.dsk' : '.dsk') : (currentLang === 'pt-br' ? 'discos' : 'disks');
       addLog(`${res.kind === 'cocosdc' ? 'CoCoSDC' : 'MiniIDE'} "${res.fileName}": ${res.entries.length} ${noun}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
@@ -2234,10 +2244,11 @@ export default function App() {
     addLog(`Painel ${which} limpo.`, `Pane ${which} cleared.`, 'info');
   };
 
-  // "Novo" disco: se o painel ativo já tem uma imagem carregada, confirma antes (vai descartá-la).
-  const handleDskNew = () => {
-    if (getPane(activePane)) { setDskNewConfirm(activePane); return; }
-    doDskNew(activePane);
+  // "Novo" disco (por painel): se o painel já tem imagem, confirma antes (vai descartá-la).
+  const handleDskNew = (which: 'A' | 'B' = activePane) => {
+    setActivePane(which);
+    if (getPane(which)) { setDskNewConfirm(which); return; }
+    doDskNew(which);
   };
   const doDskNew = async (which: 'A' | 'B') => {
     setDskNewConfirm(null);
@@ -2252,7 +2263,7 @@ export default function App() {
       if (!res.success) { addLog(`New disk: ${res.error}`, `New disk: ${res.error}`, 'error'); return; }
       const ext = isDragon ? 'VDK' : 'DSK';
       const label = isDragon ? 'Dragon (40T)' : fmt === 'coco40' ? 'RS-DOS (40T JDOS)' : 'RS-DOS (35T)';
-      await loadPaneFromBuffer(which, new Uint8Array(res.image), which === 'A' ? `NOVO_A.${ext}` : `NOVO_B.${ext}`);
+      await loadPaneFromBuffer(which, new Uint8Array(res.image), which === 'A' ? `NOVA_A.${ext}` : `NOVA_B.${ext}`, 0, undefined, true);
       markDirty(which); // disco novo ainda não salvo
       addLog(
         `Novo disco ${label} criado no painel ${which}.`,
@@ -2333,7 +2344,8 @@ export default function App() {
       );
       if (r.success) {
         clearDirty(activePane);
-        if (!pane.container && r.filePath) setPane(activePane, { ...getPane(activePane), sourcePath: r.filePath }); // futuras gravações sobrescrevem aqui
+        // Salva → deixa de ser "NOVA" (agora é um arquivo de verdade): vira "LIDA" e fixa o sourcePath.
+        if (!pane.container && r.filePath) setPane(activePane, { ...getPane(activePane), sourcePath: r.filePath, created: false, fileName: r.filePath.split(/[\\/]/).pop() || getPane(activePane)?.fileName });
         addLog(`Imagem do painel ${activePane} salva em: ${r.filePath}${pane.container ? ` (contêiner com ${pane.container.count} discos)` : ''}`, `Pane ${activePane} image saved at: ${r.filePath}${pane.container ? ` (${pane.container.count}-disk container)` : ''}`, 'success');
       }
       else if (r.error) addLog(`Save: ${r.error}`, `Save: ${r.error}`, 'error');
@@ -3153,6 +3165,31 @@ export default function App() {
     return labels[f.fileType] ?? (f.fileTypeName || '?');
   };
 
+  // Encurta um nome de arquivo longo para caber em UMA linha: ~15 chars do nome + "…" + extensão.
+  // (O nome completo aparece no title/hint.)
+  const truncName = (name: string, head = 15): string => {
+    if (!name) return '';
+    const dot = name.lastIndexOf('.');
+    const ext = dot > 0 ? name.slice(dot) : '';
+    const base = dot > 0 ? name.slice(0, dot) : name;
+    if (base.length <= head + 2) return name;
+    return base.slice(0, head) + '…' + ext;
+  };
+
+  // Rótulo + cor do "LIDO:" (o que está ABERTO no painel): contêiner (MiniIDE/CoCoSDC/DriveWire),
+  // Dragon DOS (com geometria) ou CoCo DECB (35/40T). Distingue do "NOVO:" (o que o botão cria).
+  const readFormat = (p: any): { label: string; color: string } => {
+    if (p.container) {
+      const k = p.container.kind === 'cocosdc' ? 'CoCoSDC' : p.container.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
+      return { label: `${k} · ${p.container.count} ${currentLang === 'pt-br' ? 'discos' : 'disks'}`, color: '#a78bfa' };
+    }
+    if (p.format === 'dragon') {
+      const ds = p.geom?.sides === 2, t80 = (p.geom?.tracks || 40) >= 80;
+      return { label: `Dragon DOS ${t80 ? '80' : '40'}T ${ds ? 'DS' : 'SS'}`, color: '#22d3ee' };
+    }
+    return { label: `CoCo DECB ${p.size === 184320 ? '40T' : '35T'}`, color: 'var(--primary)' };
+  };
+
   const renderDskPane = (which: 'A' | 'B', pane: any) => {
     // Disco Dragon DOS (.vdk): somente leitura. Alocação por SETOR (256 B), diretório na trilha 20.
     const isDragon = pane?.format === 'dragon';
@@ -3184,92 +3221,78 @@ export default function App() {
         <div className="flex-1 flex flex-row overflow-hidden" style={{ minHeight: 0 }}>
           {/* Left: open + image info */}
           <div className="flex flex-col gap-2 p-3 border-r border-[var(--border)] flex-shrink-0" style={{ width: 200, overflowY: 'auto', minHeight: 0 }}>
-            <div className="flex items-center justify-center gap-2">
-              {/* Badge PAINEL A/B — brilho laranja quando o painel está ativo (distingue ativo/inativo) */}
+            {/* LINHA 1: badge do painel | ABRIR imagem (ícone) | LIMPAR painel (ícone) */}
+            <div className="flex items-center gap-1.5">
               <span
-                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md"
+                className="text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md flex-1 text-center"
                 style={which === activePane
                   ? { color: '#000', background: '#ff8c1a', border: '1px solid #ff8c1a', boxShadow: '0 0 10px rgba(255,140,26,0.8)' }
                   : { color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
               >
                 {currentLang === 'pt-br' ? 'Painel' : 'Pane'} {which}
               </span>
-              {/* Limpar painel (somente ícone) — sempre visível; volta ao estado recém-aberto */}
-              <button
-                onClick={(e) => { e.stopPropagation(); handleClearPane(which); }}
-                disabled={!pane}
-                className="dsk-tool"
-                style={{ padding: '4px 6px' }}
-                title={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`}
-                aria-label={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`}
-              >
+              <button onClick={(e) => { e.stopPropagation(); handleImageImport(which); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '4px 6px' }} title={t('openImageBtn')} aria-label={t('openImageBtn')}>
+                <FolderOpen size={14} />
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); handleClearPane(which); }} disabled={!pane} className="dsk-tool" style={{ padding: '4px 6px' }} title={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`} aria-label={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`}>
                 <Eraser size={14} />
               </button>
             </div>
-            <button
-              onClick={() => handleImageImport(which)}
-              disabled={imageBusy}
-              className="btn btn-secondary py-1.5 text-[11px] font-bold uppercase flex items-center justify-center gap-1.5 border-[var(--primary)]/40 text-[var(--primary)] hover:bg-[var(--primary-glow)] disabled:opacity-50"
-            >
-              <FolderOpen size={12} /> {t('openImageBtn')}
-            </button>
-            {/* Formato do "Novo disco" DESTE painel (por painel). Ao abrir uma imagem, ajusta-se sozinho
-                ao formato lido. Permite A=CoCo 35T e B=CoCo 40T (ou Dragon) ao mesmo tempo. */}
-            <label
-              className="flex items-center gap-1 text-[10px] text-[var(--text-secondary)]"
-              onClick={(e) => e.stopPropagation()}
-              title={currentLang === 'pt-br'
-                ? 'Formato que o botão "Novo" cria NESTE painel. Ajusta-se sozinho ao abrir uma imagem.'
-                : 'Format the "New" button creates in THIS pane. Auto-adjusts when you open an image.'}
-            >
-              <span className="font-semibold">{currentLang === 'pt-br' ? 'Novo' : 'New'}:</span>
-              <select
-                value={paneNewFormat[which]}
-                onChange={(e) => { e.stopPropagation(); handlePaneFormatChange(which, e.target.value as PaneFmt); }}
-                className="input-select text-[10px] py-0.5 flex-1"
-              >
-                <option value="coco35">CoCo 35T</option>
-                <option value="coco40">CoCo 40T (JDOS)</option>
-                <option value="dragon">Dragon 40T</option>
-              </select>
-            </label>
-            {/* Legenda de formatos só quando vazio; ao carregar, o NOME da imagem sobe nesse lugar
-                (libera espaço vertical p/ os controles do contêiner — ex.: "Buscar disco"). */}
-            {!pane && <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>}
-            {pane ? (
+            {/* O "NOVO: formato | +" agora fica FIXO na barra de status (rodapé do painel). */}
+            {/* LINHA 2: vazio → legenda; senão NOME da imagem + tamanho + "LIDO:" (formato aberto) + navegação do contêiner. */}
+            {!pane ? (
+              <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>
+            ) : (
               <div className="flex flex-col gap-1 text-[11px] mt-1">
-                <div className="text-white font-mono break-all">{pane.fileName}</div>
-                <div className="text-[var(--text-secondary)]">{(pane.size / 1024).toFixed(0)} KB</div>
-                {isDragon && (
+                {/* Nome da IMAGEM (.dsk/.vdk/.img) ENCURTADO em 1 linha (nome completo no hint). Em
+                    contêiner-arquivo (MiniIDE) = nome do .img; em DriveWire (sem .fileName) = pane.fileName. */}
+                {(() => { const full = pane.container?.fileName ?? pane.fileName; return (
+                  <div className="text-white font-mono whitespace-nowrap overflow-hidden text-ellipsis" title={full}>{truncName(full)}</div>
+                ); })()}
+                <div className="text-[var(--text-secondary)]">{((pane.container ? pane.buffer.length : pane.size) / 1024).toFixed(0)} KB</div>
+                {/* Selo do painel: imagem CRIADA pelo ✚ → "NOVA: nome"; imagem ABERTA de arquivo → "LIDA: formato". */}
+                {pane.created ? (
                   <span
-                    className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded self-start"
-                    style={{ color: '#000', background: '#22d3ee', boxShadow: '0 0 8px rgba(34,211,238,0.6)' }}
-                    title={currentLang === 'pt-br' ? 'Imagem Dragon DOS. Adicionar, excluir e salvar funcionam; ordenar/desfragmentar ainda não.' : 'Dragon DOS image. Add, delete and save work; sort/defragment not yet.'}
+                    className="text-[9px] font-bold uppercase tracking-wide rounded self-start"
+                    style={{ color: '#000', background: '#fbbf24', padding: '3px 8px', boxShadow: '0 0 8px rgba(251,191,36,0.6)' }}
+                    title={currentLang === 'pt-br' ? 'Imagem NOVA criada neste painel (ainda não salva em arquivo).' : 'NEW image created in this pane (not yet saved to a file).'}
                   >
-                    Dragon DOS
+                    {currentLang === 'pt-br' ? 'Nova' : 'New'}: {truncName(pane.fileName)}
                   </span>
-                )}
+                ) : (() => { const rf = readFormat(pane); return (
+                  <span
+                    className="text-[9px] font-bold uppercase tracking-wide rounded self-start"
+                    style={{ color: '#000', background: rf.color, padding: '3px 8px', boxShadow: `0 0 8px ${rf.color === 'var(--primary)' ? 'var(--primary-glow)' : rf.color + '99'}` }}
+                    title={currentLang === 'pt-br' ? 'Formato/tipo da imagem ABERTA neste painel.' : 'Format/type of the image OPEN in this pane.'}
+                  >
+                    {currentLang === 'pt-br' ? 'Lida' : 'Read'}: {rf.label}
+                  </span>
+                ); })()}
+                {/* Navegação do contêiner: nome do DISCO (centralizado) + índice editável + lupa (Buscar disco). */}
                 {pane.container && (
-                  <div className="flex flex-col gap-1 mt-1 bg-slate-950/40 rounded p-1.5 border border-[var(--primary)]/30" onClick={(e) => e.stopPropagation()}>
-                    <span className="text-[9px] uppercase tracking-wider text-[var(--text-muted)]">
-                      {pane.container.kind === 'cocosdc' ? 'CoCoSDC' : pane.container.kind === 'miniide' ? 'MiniIDE' : (currentLang === 'pt-br' ? 'Contêiner' : 'Container')} · {pane.container.count} {currentLang === 'pt-br' ? 'discos' : 'disks'}
-                    </span>
+                  <div className="flex flex-col gap-1 mt-1 bg-slate-950/40 rounded p-1.5 border border-[#a78bfa]/40" onClick={(e) => e.stopPropagation()}>
+                    {(() => { const dlabel = pane.container.entries?.[pane.container.index]?.label ?? `${currentLang === 'pt-br' ? 'Disco' : 'Disk'} ${pane.container.index}`; return (
+                      <span className="text-[10px] font-mono text-[#c4b5fd] font-bold break-all text-center" title={dlabel}>{dlabel}</span>
+                    ); })()}
                     <div className="flex items-center gap-1">
-                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={imageBusy || pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 7px' }}>◀</button>
-                      <span className="text-[11px] font-mono text-[var(--primary)] font-bold flex-1 text-center">{pane.container.index}/{pane.container.count - 1}</span>
-                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={imageBusy || pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 7px' }}>▶</button>
+                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={imageBusy || pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Disco anterior' : 'Previous disk'}>◀</button>
+                      <input
+                        key={pane.container.index}
+                        type="number" min={0} max={pane.container.count - 1} defaultValue={pane.container.index}
+                        onClick={(e) => e.currentTarget.select()}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); handleSelectContainerDisk(which, v); } }}
+                        onBlur={(e) => { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); if (v !== pane.container.index) handleSelectContainerDisk(which, v); }}
+                        className="input-text py-0.5 text-[11px] text-center font-mono"
+                        style={{ width: 46 }}
+                        title={currentLang === 'pt-br' ? 'Digite o nº do disco e Enter para ir direto' : 'Type the disk # and Enter to jump'}
+                      />
+                      <span className="text-[10px] font-mono text-[var(--text-muted)]">/{pane.container.count - 1}</span>
+                      <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={imageBusy || pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Próximo disco' : 'Next disk'}>▶</button>
+                      <button onClick={() => { setActivePane(which); setImageFilter(''); setDiskPicker({ which }); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '3px 6px' }} title={t('dskSearchDisk')} aria-label={t('dskSearchDisk')}><Search size={12} /></button>
                     </div>
-                    <input
-                      type="number" min={0} max={pane.container.count - 1} value={pane.container.index}
-                      onChange={(e) => handleSelectContainerDisk(which, Math.max(0, Math.min(pane.container.count - 1, parseInt(e.target.value) || 0)))}
-                      className="input-text py-0.5 text-[11px] text-center font-mono"
-                    />
-                    <button onClick={() => { setActivePane(which); setImageFilter(''); setDiskPicker({ which }); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '3px 7px' }}><Search size={12} /> {t('dskSearchDisk')}</button>
                   </div>
                 )}
               </div>
-            ) : (
-              <div className="text-[10px] text-[var(--text-muted)] mt-1">{t('dskPaneEmpty')}</div>
             )}
           </div>
           {/* Right: file list */}
@@ -3388,6 +3411,30 @@ export default function App() {
         {/* Status bar — dividida: stats à esquerda; à direita (alinhada sob a coluna do disco, 240px)
             a legenda do mapa. Tirar a legenda de dentro do disco libera espaço e o disco fica maior. */}
         <div className="dsk-statusbar" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* "NOVO: formato | +" FIXO na barra de status (libera o topo; o + não fica mais escondido). */}
+          <label
+            className="flex items-center gap-1 flex-shrink-0"
+            onClick={(e) => { e.stopPropagation(); setActivePane(which); }}
+            title={currentLang === 'pt-br'
+              ? 'Formato que o botão ✚ cria NESTE painel. Ajusta-se sozinho ao abrir uma imagem.'
+              : 'Format the ✚ button creates in THIS pane. Auto-adjusts when you open an image.'}
+          >
+            <span className="font-bold uppercase tracking-wider">{currentLang === 'pt-br' ? 'Nova' : 'New'}:</span>
+            <select
+              value={paneNewFormat[which]}
+              onChange={(e) => { e.stopPropagation(); handlePaneFormatChange(which, e.target.value as PaneFmt); }}
+              className="input-select"
+              style={{ fontSize: 10, padding: '1px 4px' }}
+            >
+              <option value="coco35">CoCo 35T</option>
+              <option value="coco40">CoCo 40T (JDOS)</option>
+              <option value="dragon">Dragon 40T</option>
+            </select>
+            <button onClick={(e) => { e.stopPropagation(); handleDskNew(which); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '2px 5px' }} title={currentLang === 'pt-br' ? `Criar nova imagem no Painel ${which}` : `Create new image in Pane ${which}`} aria-label={currentLang === 'pt-br' ? 'Nova imagem' : 'New image'}>
+              <Plus size={13} />
+            </button>
+          </label>
+          <div style={{ width: 1, height: 14, background: 'var(--border)', flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {pane
               ? (isDragon
@@ -3523,6 +3570,16 @@ export default function App() {
 
           {/* Divider */}
           <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+
+          {/* "?" — novidades / histórico de versões (changelog) */}
+          <button
+            onClick={() => setShowChangelog(true)}
+            className="px-2.5 py-1 text-xs font-bold text-[var(--primary)] hover:text-white border border-[var(--primary)]/30 hover:border-[var(--primary)]/60 bg-[var(--primary-glow)] rounded-lg transition-all flex items-center cursor-pointer"
+            title={currentLang === 'pt-br' ? 'Novidades / histórico de versões' : "What's new / version history"}
+            aria-label={currentLang === 'pt-br' ? 'Histórico de versões' : 'Version history'}
+          >
+            <HelpCircle size={14} />
+          </button>
 
           {/* Exit Button */}
           <button
@@ -4108,7 +4165,7 @@ export default function App() {
             {/* DSK toolbar — folga simples (mb-3) como na aba BASIC; o brilho do painel ativo
                 foi reduzido p/ anel fino (CSS .dsk-pane-active) para não vazar e "colar" na barra. */}
             <div className="flex items-center gap-1.5 mb-3 flex-wrap flex-shrink-0">
-              <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
+              {/* "Novo" saiu da toolbar — agora é o botão ✚ DENTRO de cada painel (junto do seletor de formato). */}
               <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FileInput size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               {/* Ações de ARQUIVO — CONTEXTUAIS: aparecem só quando há arquivo(s) selecionado(s).
@@ -4409,6 +4466,32 @@ export default function App() {
               >
                 {t('modalSave')}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Changelog ("?") — histórico de versões (PT/EN), rolável. Conteúdo vem do VERSOES.TXT / VERSIONS_EN.TXT. */}
+      {showChangelog && (
+        <div className="glass-modal-overlay" onClick={() => setShowChangelog(false)}>
+          <div
+            className="glass-panel flex flex-col"
+            style={{ width: 760, maxWidth: '94%', height: '82vh', maxHeight: '82vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-[var(--border)] flex-shrink-0">
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide flex items-center gap-2">
+                <HelpCircle size={16} className="text-[var(--primary)]" />
+                {currentLang === 'pt-br' ? 'Novidades — Histórico de versões' : "What's new — Version history"}
+              </h3>
+              <button onClick={() => setShowChangelog(false)} className="dsk-tool" style={{ padding: '4px 7px' }} title={t('modalCancel')} aria-label={t('modalCancel')}><X size={15} /></button>
+            </div>
+            <pre
+              className="flex-1 overflow-auto px-5 py-4 text-[11px] leading-relaxed text-[var(--text-secondary)] font-mono whitespace-pre-wrap break-words"
+              style={{ minHeight: 0 }}
+            >{currentLang === 'pt-br' ? changelogPt : changelogEn}</pre>
+            <div className="flex justify-end gap-3 px-5 py-3 border-t border-[var(--border)] flex-shrink-0">
+              <button onClick={() => setShowChangelog(false)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase">{currentLang === 'pt-br' ? 'Fechar' : 'Close'}</button>
             </div>
           </div>
         </div>

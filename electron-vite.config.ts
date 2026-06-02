@@ -30,6 +30,8 @@ export default defineConfig({
       }
     },
     plugins: [react()],
-    root: resolve(__dirname, 'src/renderer')
+    root: resolve(__dirname, 'src/renderer'),
+    // Permite importar arquivos da RAIZ do repo (ex.: VERSOES.TXT via ?raw para o changelog) no dev server.
+    server: { fs: { allow: [resolve(__dirname)] } }
   }
 });

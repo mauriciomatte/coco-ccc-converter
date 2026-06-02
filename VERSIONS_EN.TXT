@@ -1,0 +1,221 @@
+================================================================================
+  CoCo DSK & CCC Utility  —  VERSION HISTORY
+  .DSK image manager and file-to-.CCC converter (CoCoEPROMpak)
+  Author: Mauricio Matte (c) 2026
+================================================================================
+
+How to read this file: the NEWEST versions are at the TOP. On each release,
+add a new section at the beginning with the date and a description of what was
+changed/added/fixed.
+
+
+--------------------------------------------------------------------------------
+v1.0.13 — 2026-06-02
+--------------------------------------------------------------------------------
+ADDED (Pane header redesign + "?" changelog)
+  • Each pane header was reworked: pane badge | open-image (icon) | clear-pane (icon);
+    the "New:" disk-format selector + the create (✚) button moved to the pane STATUS BAR.
+  • "READ:" badge (what is OPEN) vs "NEW:" (what ✚ creates) are now clearly distinct: a
+    newly CREATED image shows "NEW: name.ext" (amber); an OPENED image shows "READ: format".
+  • Long file names are shortened to one line (~15 chars + "…" + .ext; full name in the hint).
+  • Container navigation shows the DISK name centered + an EDITABLE index (type the number and
+    Enter to jump) + a magnifying-glass to search; the "New" button left the toolbar.
+  • "?" button (left of Exit) opens this changelog in a scrollable modal (PT and EN).
+
+--------------------------------------------------------------------------------
+v1.0.12 — 2026-06-02
+--------------------------------------------------------------------------------
+ADDED (Save back into the MiniIDE .img image)
+  • You can now EDIT a disk inside a MiniIDE image and SAVE it back into the .img (before it
+    only saved a standalone .dsk). "Save" writes the current disk into its slot, in place.
+  • Hardware-SAFE approach: the slot is sector-doubled (322,560 = 161,280 ×2). Instead of
+    re-doubling blindly, we read the current slot and overwrite ONLY the "even chunks" (the
+    256B CoCo sectors that de-double reads), PRESERVING the odd ones byte-for-byte — because a
+    test on the REAL image showed the odd halves are NOT identical copies (CF leftovers/2nd
+    copy). Only the sectors that actually changed are touched; the rest of the .img is intact.
+  • Validated on the real MiniIDE image (507 MB, 337 disks): added file reads back with intact
+    data, odd chunks preserved, neighbor disk untouched.
+  • Switching disks in a container with pending edits writes the current disk back FIRST (no
+    data loss). "Save As" of a file-container produces a standalone .dsk of the current disk.
+  • RECOMMENDED to confirm on real hardware (write the .img to a CF and test on the MiniIDE).
+
+--------------------------------------------------------------------------------
+v1.0.11 — 2026-06-02
+--------------------------------------------------------------------------------
+ADDED (Dragon DOS — sort, defragment, DS/80T)
+  • SORT (A-Z) and DEFRAGMENT Dragon disks (previously blocked). Sort rewrites only the
+    directory (no data moved); whole-disk defrag rewrites files contiguously + rebuilds the
+    bitmap/directory. Validated in self-tests (data/geometry preserved).
+  • DOUBLE-SIDED (DS) and 80-TRACK Dragon support: detection/read/write generalized by
+    geometry (SS spt=18 / DS spt=36; format sector at LSN 20×spt). Based on the Greaseweazle
+    specs (all Dragon formats = 18 sectors/head, 256B; DS = 36 logical sectors/track, flat
+    LSN-ordered image). Self-tested on 40T-DS, 80T-SS, 80T-DS.
+ADDED (40-track disks + per-pane format)
+  • Create a new 40-track disk (JDOS/CODIMEX) — parameterized encodeDsk (35/40T; 78 granules).
+  • PER-PANE "New disk" FORMAT: each pane has its own selector (CoCo 35T / CoCo 40T / Dragon
+    40T), persistent; "New" creates with the active pane's format; opening an image auto-adjusts
+    the selector to the read format. (The global "New: 35T/40T" selector was removed.) Dropping
+    onto an empty pane creates the image in the pane's chosen format.
+  • CHANGE the format (35↔40) of an image already holding files: re-creates in the new format
+    KEEPING the files (aborts without changes if something doesn't fit). CoCo↔Dragon warns it
+    needs the converter.
+ADDED (Drag-out / toolbar UI)
+  • Native DRAG-OUT: a "⠿" handle on each file drags it to Windows Explorer (Electron startDrag).
+    Fixed the <span> inside <tr draggable> nesting (which prevented the drag starting from the
+    handle) and the startDrag icon.
+  • Internal A→B drag with the Windows convention: Shift=move (removes from source), Ctrl=copy,
+    with cursor feedback (dropEffect). "Cut" button removed (move is Shift+drag).
+  • The DSK toolbar is now CONTEXTUAL: file buttons (Copy/Delete/Edit/Extract/Compare/Convert)
+    appear only when a file is selected; disk buttons stay visible. (The "⋯ More" kebab menu
+    was removed.)
+ADDED (BASIC editor)
+  • "Code export speed" toggle (persistent): Fast (12ms/key) or Standard (25ms). xroar.html
+    now ALWAYS types character-by-character (the bulk send made the CoCo drop the 1st line) —
+    audited at 3s/key with a per-key log.
+  • "ENTER at the end" option (persistent): adds an ENTER when the last line is code without a
+    trailing newline.
+  • "Run + reset" does NOT inject NEW (the hard reset already clears RAM); the NEW hint explains
+    it only applies without reset. CoCo no prime; Dragon sends a space (dismisses the ROM's
+    "press a key").
+  • "32 columns" toggle (VDG modes): wraps at the real CoCo width; the screen becomes a 32×16
+    box CENTERED on a dark bezel, auto-fitting the font. SCALE selector (S/M/L) in VDG 6847.
+  • "Bold" disabled in VDG 6847 (fixed MC6847 bitmap font).
+FIXED
+  • "Save As" of a Dragon image now offers .VDK (native format) in addition to .dsk.
+  • VDG 6847: lowercase (inverse video) on first typing, and selection revealing the system font.
+
+--------------------------------------------------------------------------------
+v1.0.10 — 2026-06-01
+--------------------------------------------------------------------------------
+ADDED (CoCo → Dragon converter, experimental)
+  • Converts a MACHINE-code file (.BIN) from a CoCo disk to Dragon, in 2 modes: "Direct"
+    (loads at the same CoCo address) and "Relocator" (loads low at 0x0C00; a 20-byte stub
+    copies the code to the CoCo address and runs it). The recommended mode is suggested from
+    the load geometry. The result goes to a NEW Dragon disk in the other pane → "Test Panel"
+    (XRoar reset) → if it runs, save. Games rewritten for Dragon do not convert.
+  • Based on analysis of 7 real CoCo/Dragon pairs — ~30-43% are "lazy ports" (identical code,
+    just relocated) and convert; the rest were rewritten.
+IMPROVED (DSK toolbar)
+  • Toolbar is now ICON-ONLY (labels removed; all with tooltips), freeing space. Distinct icon
+    for "Save As".
+ADDED (BASIC editor)
+  • "Auto uppercase" toggle: on = forces UPPERCASE (classic Color BASIC); off = allows lowercase.
+  • "Screen" selector with 3 PERSISTENT, DIRECTLY EDITABLE modes:
+      - Normal: the usual editor, with color themes.
+      - VDG: VDG look (system font) — uppercase/symbol BLACK on GREEN; lowercase in INVERSE video.
+      - VDG 6847 (authentic): real PIXELATED MC6847 glyphs (the chip's public char-ROM, from the
+        datasheet/MAME — NOT the CGS) drawn on a canvas. Includes the CoCo UP-ARROW (↑): '^'
+        (exponentiation) is shown as ↑, like the real screen/keyboard.
+  • CoCo up-arrow (↑): besides '^', a toolbar ↑ button and the Alt+↑ shortcut (the ↑ key alone
+    navigates), both with explanatory tooltips.
+IMPROVED (BASIC → XRoar injection)
+  • Transport is now ALWAYS character-by-character. The "bulk" send (whole string at once) made
+    the CoCo ROM drop the 1st line + the 1st char of the 2nd — audited at 3s/key, char-by-char
+    loses nothing.
+  • "Run + reset" no longer injects NEW (the hard reset already clears RAM → NEW is redundant).
+  • CoCo: no space/prime before typing. Dragon: sends a SPACE to dismiss the ROM's "press a key".
+FIXED (BASIC editor — VDG 6847)
+  • Lowercase (inverse video) vanished on first typing: the canvas cell was measured too late.
+    Now the width is measured INSIDE the draw → glyphs are correct from the first keystroke.
+  • Selecting text revealed the system font over the authentic glyphs — fixed (transparent
+    selection text), preserving the MC6847 glyphs.
+FIXED (new/converted Dragon disk wasn't read by XRoar)
+  • The new Dragon VDK header had TRACKS/SIDES = 0 (bytes 8/9) → XRoar "RF ERROR" and empty DIR.
+    Now writes 40 tracks / 1 side, like real .vdk files. Empty directory entries use the Dragon
+    DOS standard marker (0x88).
+IMPROVED (test flow / XRoar)
+  • After CONVERTING, focus goes to the RESULT pane. "Test Panel" (and double-click to run) now
+    sets the XRoar machine to the disk FORMAT (Dragon disk → Dragon machine); the disk mounts
+    only AFTER the right machine boots.
+
+--------------------------------------------------------------------------------
+v1.0.9 — 2026-06-01
+--------------------------------------------------------------------------------
+ADDED (Dragon DOS edit/write)
+  • Dragon disks are now EDITABLE: add a file (inject/paste/drag), delete and save. Allocation
+    uses the Dragon DOS bitmap (SAB blocks of contiguous sectors, with continuation entries when
+    needed) and the track-20 directory. Preserves the VDK header when present.
+  • Add/delete IPCs detect the disk format automatically (RS-DOS vs Dragon).
+  • Format-aware Greaseweazle writing: a Dragon pane writes with profile dragon.40ss/40ds/80ss/80ds.
+ADDED (BASIC editor — Dragon dialect)
+  • The editor now detokenizes DRAGON BASIC correctly (Dragon token tables, which differ from
+    the CoCo's). The dialect is chosen by the disk format or the target platform.
+  • Auto-detection of the program start: tolerates the Dragon DOS 9-byte header and the CoCo 0xFF.
+ADDED (DSK tab — extract and compare)
+  • EXTRACT button: saves the file(s) from the image to a Windows folder, with the exact raw bytes.
+  • COMPARE button: compares the selected file with a PC file in a side-by-side hex diff.
+ADDED (XRoar — Test Panel)
+  • "Test Panel" now RESETS the emulator (hard reset → clean boot) before mounting the disk, with
+    a warning MODAL (XRoar content will be lost). Works for CoCo and Dragon.
+IMPROVED (Dragon file types + VDK)
+  • Dragon file type (BASIC/Machine/Data) is now read from the file HEADER (55 [type] ... AA),
+    not just the extension. The "Open image" filter now lists .vdk/.jvc/.dmk.
+FIXED (BASIC editor)
+  • The cursor jumped to the last line when typing/pasting in the middle. The position is now
+    preserved.
+
+--------------------------------------------------------------------------------
+v1.0.8 — 2026-06-01
+--------------------------------------------------------------------------------
+ADDED (multi-format — Dragon DOS / VDK, READ-ONLY)
+  • The DSK tab now OPENS Dragon images: recognizes the .VDK container (header "dk") and the
+    Dragon DOS disk (directory on TRACK 20, per-sector allocation via bitmap).
+  • File list, sizes and fragmentation; file EXTRACTION; and the visual disk MAP with Dragon
+    geometry. Automatically distinguishes RS-DOS vs Dragon on open.
+ADDED (CoCo/Dragon target platform — persistent)
+  • CoCo/Dragon toggle in the header (persisted). Sets the DEFAULT for: "New disk" (RS-DOS 35T
+    vs Dragon DOS 40T), XRoar machine (CoCo 3 vs Dragon 64) and Greaseweazle format. Opened
+    disks still respect their real format.
+  • Creation of a new blank Dragon disk (40T SS) — the basis for Dragon editing.
+
+--------------------------------------------------------------------------------
+v1.0.7 — 2026-06-01
+--------------------------------------------------------------------------------
+ADDED (Greaseweazle)
+  • Auto-selects the write profile from the disk GEOMETRY: detects 35T (161,280 bytes →
+    coco.decb) or 40T (184,320 → coco.decb.40t) and picks the profile automatically.
+
+--------------------------------------------------------------------------------
+v1.0.6 — 2026-06-01
+--------------------------------------------------------------------------------
+ADDED
+  • 40-TRACK (JDOS / CODIMEX) support in the visual disk map: the number of rings is now DYNAMIC
+    per disk geometry (68 granules = 35 tracks; 78 granules = 40 tracks). The directory stays on
+    track 17.
+
+--------------------------------------------------------------------------------
+v1.0.5 — 2026-06-01
+--------------------------------------------------------------------------------
+ADDED (6809 disassembler)
+  • Immediate-pointer labeling (LDX/LDY/… #$xxxx → #L####); DP register tracking (LDA #$xx ;
+    TFR A,DP) resolving direct operands; code/data vector tables (C-VECTOR / D-VECTOR). Marks
+    persist per file.
+
+--------------------------------------------------------------------------------
+v1.0.2 — v1.0.4 — 2026-05-31 / 06-01
+--------------------------------------------------------------------------------
+ADDED
+  • 6809 disassembler (read-only) next to the hex editor: recursive-descent + manual code/data
+    marking; hardware symbol table (PIA/SAM/GIME), cross-references, data/string detection.
+  • Visual floppy MAP (concentric SVG) per pane; nostalgic Defrag animation; file-name search in
+    the container "Find disk".
+  • Color schemes for the BASIC editor.
+FIXED
+  • CoCo 3 PAL "black screen" (missing coco3p.rom); more robust XRoar iframe mounting.
+
+--------------------------------------------------------------------------------
+v1.0.0 — v1.0.1 — base (2026-05-20 to 2026-05-30)
+--------------------------------------------------------------------------------
+INITIAL CORE
+  • EPROM converter: turns CoCo programs (.wav/.cas/.dsk/.bin) into .CCC cartridges for the
+    CoCoEPROMpak.
+  • 3-column UI, adjustable splitters, header with language toggle (PT/EN) and Exit; drag-and-drop.
+  • DSK tab: dual-pane RS-DOS image manager (sort A-Z, copy pane A→B, icon toolbar). Save / Save As.
+  • Greaseweazle (GW) tab: read/write real floppies; direct command.
+  • XRoar tab: embedded (WASM) emulator to test .dsk/.bin in the app — machines, real-time
+    video/joystick, 4 drives, persistence.
+  • Container image browser: DriveWire, MiniIDE (HDBDOS) and CoCoSDC (FAT), with a progress bar
+    and boot-disk detection.
+  • BASIC editor + 6809 (Color BASIC) token detokenizer; .cas tape import; NSIS Windows installer.
+
+================================================================================
