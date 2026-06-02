@@ -38,9 +38,14 @@ interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number
 interface PendingType { text: string; key: number; reset?: boolean; }
 
 // Atraso por tecla na injeção BASIC→XRoar. O xroar.html SEMPRE digita caractere-a-caractere (o envio
-// em bloco descartava a 1ª linha no CoCo). Para AUDITAR o transporte, suba para 3000 (3s/tecla, com
-// log por tecla no console de diagnóstico). 40ms é o uso normal (~1/3 mais rápido que os 60ms iniciais).
-const TYPE_DELAY_MS = 40;
+// em bloco descartava a 1ª linha no CoCo). A velocidade é o toggle "Vel.Export.Código" do editor BASIC
+// (localStorage 'xroarTypeSpeed'): 'fast' = 12ms/tecla, 'normal'/padrão = 25ms. Lido a cada digitação.
+// AUDITORIA: ponha AUDIT_DELAY_MS em 3000 para inspecionar a 3s/tecla (com log por tecla no console).
+const AUDIT_DELAY_MS = 0;
+const getTypeDelay = () => {
+  if (AUDIT_DELAY_MS > 0) return AUDIT_DELAY_MS;
+  try { return localStorage.getItem('xroarTypeSpeed') === 'fast' ? 12 : 25; } catch { return 25; }
+};
 
 interface Props {
   lang: 'pt-br' | 'en-us';
@@ -158,7 +163,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     if (pendingLoad.runCmd) {
       const cmd = pendingLoad.runCmd;
       setTimeout(() => sendCmd('hard_reset'), 900);                                  // disco montou → reseta
-      setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: TYPE_DELAY_MS }); focusEmu(); }, 3400); // boot pronto → digita
+      setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: getTypeDelay() }); focusEmu(); }, 3400); // boot pronto → digita
     } else if (pendingLoad.reset) {
       // "Testar Painel": monta o disco e dá HARD RESET → boot limpo com o disco no drive 0
       // (sem auto-digitar; o usuário testa com DIR/RUN/LOADM no prompt).
@@ -185,11 +190,11 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     const primed = isDragon ? ' ' + text : text;
     if (reset) {
       sendCmd('hard_reset');
-      setTimeout(() => { focusEmu(); sendCmd('type_string', { text: primed, delayMs: TYPE_DELAY_MS }); }, 2800); // espera o boot
+      setTimeout(() => { focusEmu(); sendCmd('type_string', { text: primed, delayMs: getTypeDelay() }); }, 2800); // espera o boot
     } else {
       // Atraso curto para o canvas focar/processar antes de digitar (aba recém-exibida).
       focusEmu();
-      setTimeout(() => { sendCmd('type_string', { text: primed, delayMs: TYPE_DELAY_MS }); }, 450);
+      setTimeout(() => { sendCmd('type_string', { text: primed, delayMs: getTypeDelay() }); }, 450);
     }
   }, [pendingType, ready]);
 

@@ -86,6 +86,36 @@ export default function BasicEditor({
   // o scroll acompanha sozinho).
   const [display, setDisplay] = useState<'normal' | 'vdg' | 'vdg6847'>(() => { try { const d = localStorage.getItem('basicDisplay'); return d === 'vdg' || d === 'vdg6847' ? d : 'normal'; } catch { return 'normal'; } });
   useEffect(() => { try { localStorage.setItem('basicDisplay', display); } catch { /* ignore */ } }, [display]);
+
+  // Velocidade de digitação do código no XRoar (persistente). 'fast' = 12ms/tecla, 'normal' = 25ms.
+  // O XRoarPanel lê esta preferência (localStorage 'xroarTypeSpeed') na hora de digitar.
+  const [typeSpeed, setTypeSpeed] = useState<'fast' | 'normal'>(() => { try { return localStorage.getItem('xroarTypeSpeed') === 'fast' ? 'fast' : 'normal'; } catch { return 'normal'; } });
+  useEffect(() => { try { localStorage.setItem('xroarTypeSpeed', typeSpeed); } catch { /* ignore */ } }, [typeSpeed]);
+
+  // "ENTER ao final" (persistente, padrão LIGADO): se a última linha do editor for código sem quebra
+  // final, acrescenta um ENTER (CR) ao injetar, validando/inserindo essa última linha no emulador.
+  const [addEnter, setAddEnter] = useState(() => { try { return localStorage.getItem('basicEnterEnd') !== '0'; } catch { return true; } });
+  useEffect(() => { try { localStorage.setItem('basicEnterEnd', addEnter ? '1' : '0'); } catch { /* ignore */ } }, [addEnter]);
+
+  // 32 colunas (persistente): quebra a tela na largura real do CoCo (32 col) nos modos VDG, em vez de
+  // não-quebrar + rolagem horizontal. A textarea sobreposta quebra junto (largura = 32 células).
+  const COLS = 32;
+  const [wrap32, setWrap32] = useState(() => { try { return localStorage.getItem('basicWrap32') === '1'; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem('basicWrap32', wrap32 ? '1' : '0'); } catch { /* ignore */ } }, [wrap32]);
+  // Escala da fonte autêntica VDG 6847 (persistente): P/M/G → tamanho da célula do canvas.
+  const [vdgScale, setVdgScale] = useState<'sm' | 'md' | 'lg'>(() => { try { const v = localStorage.getItem('basicVdgScale'); return v === 'sm' || v === 'lg' ? v : 'md'; } catch { return 'md'; } });
+  useEffect(() => { try { localStorage.setItem('basicVdgScale', vdgScale); } catch { /* ignore */ } }, [vdgScale]);
+
+  // Quebra o texto em linhas VISUAIS de 32 colunas (cada linha lógica vira ceil(len/32) linhas de tela).
+  const wrapForDisplay = (raw: string): string[] => {
+    const out: string[] = [];
+    for (const line of (raw ?? '').split('\n')) {
+      if (!wrap32 || line.length <= COLS) { out.push(line); continue; }
+      for (let i = 0; i < line.length; i += COLS) out.push(line.slice(i, i + COLS));
+    }
+    return out;
+  };
+
   const isVdg = display !== 'normal';
   const VDG_GREEN = '#3fcf3f', VDG_DARK = '#06320a';
   const vdgFontFamily = "'Courier New', monospace";
@@ -114,7 +144,7 @@ export default function BasicEditor({
   // avanço REAL do monospace (medida), e o canvas usa essa mesma célula → alinha com a textarea
   // transparente (editável). Sem quebra de linha (cada linha do texto = 1 linha de tela; rola na
   // horizontal). A seta-para-cima já vem do glifo 0x1E (mc6847Glyph mapeia '^' → ela).
-  const MEASURE_PX = 26;
+  const measurePx = vdgScale === 'sm' ? 20 : vdgScale === 'lg' ? 34 : 26; // px da fonte autêntica (escala P/M/G)
   const measureRef = useRef<HTMLSpanElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [cellW, setCellW] = useState(15.6);
@@ -129,9 +159,12 @@ export default function BasicEditor({
     if (span) { const w = span.getBoundingClientRect().width / 20; if (w > 4) A = w; }
     if (Math.abs(A - cellW) > 0.05) setCellW(A);
     const LH = Math.round(A * 1.5);
-    const lines = (text || '').split('\n');
-    const cols = Math.max(1, ...lines.map(l => l.length));
-    const W = Math.ceil(cols * A) + 2, H = Math.max(1, lines.length) * LH;
+    const lines = wrapForDisplay(text);                                 // 32 col → quebra; senão 1 linha lógica = 1 linha
+    const cols = wrap32 ? COLS : Math.max(1, ...lines.map(l => l.length));
+    // No modo 32 col damos a PROPORÇÃO da tela do CoCo (mín. 16 linhas) → quadro 32×16 centralizado,
+    // em vez de uma faixa fininha. Sem 32 col, a altura segue o texto (rolagem horizontal).
+    const rows = wrap32 ? Math.max(16, lines.length) : Math.max(1, lines.length);
+    const W = Math.ceil(cols * A) + 2, H = rows * LH;
     canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d'); if (!ctx) return;
     ctx.imageSmoothingEnabled = false;
@@ -149,7 +182,7 @@ export default function BasicEditor({
           for (let c = 0; c < 8; c++) if ((b >> (7 - c)) & 1) ctx.fillRect(Math.floor(x0 + c * dw), Math.floor(y0 + r * dh), Math.ceil(dw), Math.ceil(dh)); }
       }
     }
-  }, [text, cellW, display]); // bitmap fixo do MC6847 → 'bold' não afeta o desenho
+  }, [text, cellW, display, wrap32, measurePx]); // measurePx = escala; re-mede a célula e redesenha ao mudar
 
   // Insere texto na posição do cursor (usado por colar e substituir), respeitando o auto-maiúsculas.
   const insertAtCursor = (ins: string) => {
@@ -224,6 +257,8 @@ export default function BasicEditor({
     if (addNew && !omitNew) s += 'NEW\n';
     s += text;
     if (addRun) { if (s.length && !s.endsWith('\n')) s += '\n'; s += 'RUN\n'; }
+    // ENTER ao final: garante a quebra final (insere a última linha) quando não há RUN nem \n no fim.
+    else if (addEnter && s.length && !s.endsWith('\n')) s += '\n';
     return s;
   };
 
@@ -335,10 +370,15 @@ export default function BasicEditor({
           o container rola e leva as duas juntas). Modo normal: a textarea de sempre. */}
       {display === 'vdg' ? (
         (() => {
-          const vdgFont: React.CSSProperties = { margin: 0, padding: 12, fontFamily: vdgFontFamily, fontSize: 14, lineHeight: 1.55, letterSpacing: '1px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontWeight: bold ? 700 : 400 };
+          // 32 col: largura fixa ≈32 colunas (32 avanços + 32 letter-spacings). As DUAS camadas usam a
+          // MESMA largura/CSS → quebram igual e o cursor continua alinhado, mesmo que a coluna exata varie.
+          const wrapW = wrap32 ? 'calc(32ch + 32px)' : undefined;
+          const vdgFont: React.CSSProperties = { margin: 0, padding: 12, fontFamily: vdgFontFamily, fontSize: 14, lineHeight: 1.55, letterSpacing: '1px', whiteSpace: 'pre-wrap', wordBreak: wrap32 ? 'break-all' : 'break-word', width: wrapW, fontWeight: bold ? 700 : 400 };
+          // 32 col: a tela verde vira um quadro centralizado (proporção ~32×16) num bezel escuro.
+          const screenH = Math.round(16 * 1.55 * 14) + 24; // 16 linhas + padding
           return (
-            <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)' }}>
-              <div style={{ position: 'relative', minHeight: '100%' }}>
+            <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: wrap32 ? '#0b1018' : VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)', padding: wrap32 ? 12 : 0, display: wrap32 ? 'flex' : 'block', justifyContent: wrap32 ? 'center' : undefined, alignItems: wrap32 ? 'flex-start' : undefined }}>
+              <div style={{ position: 'relative', minHeight: wrap32 ? screenH : '100%', width: wrapW, margin: wrap32 ? '0 auto' : undefined, flex: wrap32 ? '0 0 auto' : undefined, background: wrap32 ? VDG_GREEN : undefined, boxShadow: wrap32 ? '0 0 0 2px rgba(0,0,0,0.5), 0 6px 22px rgba(0,0,0,0.55)' : undefined }}>
                 <div aria-hidden style={{ ...vdgFont, minHeight: '100%', pointerEvents: 'none' }}>
                   {text ? renderVdg(text) : <span style={{ color: 'rgba(0,0,0,0.35)' }}>{'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}</span>}
                   {'​'}
@@ -359,8 +399,13 @@ export default function BasicEditor({
         })()
       ) : display === 'vdg6847' ? (
         // Canvas pixelado (glifos reais do MC6847) + textarea transparente alinhada (editável).
-        <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)', position: 'relative' }}>
-          <div style={{ position: 'relative', width: 'max-content', minWidth: '100%', minHeight: '100%' }}>
+        // 32 col: largura fixa de 32 células (canvas + textarea quebram juntos em 32). Senão: max-content + rolagem.
+        (() => {
+          const wrapW = Math.ceil(COLS * cellW) + 2;
+          // 32 col: a tela vira um quadro 32×16 CENTRALIZADO num bezel escuro (não a área verde inteira).
+          return (
+        <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: wrap32 ? '#0b1018' : VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)', position: 'relative', padding: wrap32 ? 12 : 0, display: wrap32 ? 'flex' : 'block', justifyContent: wrap32 ? 'center' : undefined, alignItems: wrap32 ? 'flex-start' : undefined }}>
+          <div style={{ position: 'relative', width: wrap32 ? wrapW : 'max-content', minWidth: wrap32 ? undefined : '100%', minHeight: wrap32 ? undefined : '100%', margin: wrap32 ? '0 auto' : undefined, flex: wrap32 ? '0 0 auto' : undefined, boxShadow: wrap32 ? '0 0 0 2px rgba(0,0,0,0.5), 0 6px 22px rgba(0,0,0,0.55)' : undefined }}>
             <canvas ref={canvasRef} style={{ display: 'block', imageRendering: 'pixelated' }} />
             <textarea
               ref={taRef}
@@ -370,11 +415,13 @@ export default function BasicEditor({
               onKeyDown={handleEditorKeyDown}
               spellCheck={false}
               autoCapitalize="characters"
-              style={{ position: 'absolute', inset: 0, margin: 0, padding: 0, fontFamily: vdgFontFamily, fontSize: MEASURE_PX, lineHeight: `${cellH}px`, letterSpacing: 0, whiteSpace: 'pre', color: 'transparent', caretColor: '#000', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden' }}
+              style={{ position: 'absolute', inset: 0, margin: 0, padding: 0, fontFamily: vdgFontFamily, fontSize: measurePx, lineHeight: `${cellH}px`, letterSpacing: 0, whiteSpace: wrap32 ? 'pre-wrap' : 'pre', wordBreak: wrap32 ? 'break-all' : 'normal', width: wrap32 ? wrapW : undefined, color: 'transparent', caretColor: '#000', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden' }}
             />
           </div>
-          <span ref={measureRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: 0, left: 0, fontFamily: vdgFontFamily, fontSize: MEASURE_PX, letterSpacing: 0, whiteSpace: 'pre' }}>00000000000000000000</span>
+          <span ref={measureRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: 0, left: 0, fontFamily: vdgFontFamily, fontSize: measurePx, letterSpacing: 0, whiteSpace: 'pre' }}>00000000000000000000</span>
         </div>
+          );
+        })()
       ) : (
         <textarea
           ref={taRef}
@@ -399,6 +446,11 @@ export default function BasicEditor({
           <input type="checkbox" checked={addRun} onChange={e => onAddRunChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('RUN ao final', 'RUN at the end')}
         </label>
+        {/* ENTER ao final: dá um ENTER quando a última linha é código sem quebra, inserindo-a no emulador. */}
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Dá um ENTER no fim quando a última linha do editor é código (sem quebra final), garantindo que ela seja inserida no emulador. Dispensável se "RUN ao final" estiver ligado (o RUN já gera o ENTER).', 'Adds a final ENTER when the last editor line is code (no trailing newline), so it gets entered into the emulator. Not needed if "RUN at the end" is on (RUN already provides the ENTER).')}>
+          <input type="checkbox" checked={addEnter} onChange={e => setAddEnter(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+          {t('ENTER ao final', 'ENTER at the end')}
+        </label>
         {/* Modo de tela: Normal (com temas) / VDG (fonte do sistema) / VDG 6847 (fonte autêntica). */}
         <label className="flex items-center gap-1.5" title={t('Aparência do editor. VDG = visual do CoCo (maiúscula preta no verde, minúscula em vídeo inverso). Editável nos 3 modos.', 'Editor look. VDG = CoCo screen (black uppercase on green, lowercase inverse video). Editable in all 3 modes.')}>
           <span className="font-semibold">{t('Tela', 'Screen')}:</span>
@@ -416,6 +468,24 @@ export default function BasicEditor({
             </select>
           </label>
         )}
+        {/* 32 colunas: quebra na largura real da tela do CoCo (só nos modos VDG). */}
+        {isVdg && (
+          <label className="flex items-center gap-1.5 cursor-pointer" title={t('Quebra a tela em 32 colunas (largura real do CoCo) em vez de não-quebrar com rolagem horizontal.', 'Wrap the screen at 32 columns (the real CoCo width) instead of no-wrap with horizontal scroll.')}>
+            <input type="checkbox" checked={wrap32} onChange={e => setWrap32(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
+            {t('32 colunas', '32 columns')}
+          </label>
+        )}
+        {/* Escala da fonte autêntica VDG 6847 (P/M/G). */}
+        {display === 'vdg6847' && (
+          <label className="flex items-center gap-1.5" title={t('Tamanho da fonte autêntica VDG 6847 no canvas.', 'Size of the authentic VDG 6847 font on the canvas.')}>
+            <span className="font-semibold">{t('Escala', 'Scale')}:</span>
+            <select value={vdgScale} onChange={e => setVdgScale(e.target.value as 'sm' | 'md' | 'lg')} className="input-select text-[11px] py-0.5">
+              <option value="sm">{t('Pequena', 'Small')}</option>
+              <option value="md">{t('Média', 'Medium')}</option>
+              <option value="lg">{t('Grande', 'Large')}</option>
+            </select>
+          </label>
+        )}
         {/* No VDG 6847 autêntico a fonte é bitmap fixo do MC6847 → negrito não se aplica: desabilita e mostra desmarcado. */}
         <label
           className="flex items-center gap-1.5"
@@ -430,6 +500,14 @@ export default function BasicEditor({
         <label className="flex items-center gap-1.5 cursor-pointer" title={t('Converte tudo para MAIÚSCULAS (Color BASIC clássico). Desligue para permitir minúsculas.', 'Force UPPERCASE (classic Color BASIC). Turn off to allow lowercase.')}>
           <input type="checkbox" checked={autoUpper} onChange={e => setAutoUpper(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
           {t('Maiúsculas auto', 'Auto uppercase')}
+        </label>
+        {/* Velocidade da digitação do programa no XRoar. Rápido pode perder caractere em máquinas lentas. */}
+        <label className="flex items-center gap-1.5" title={t('Velocidade com que o programa é digitado no XRoar. Rápido = 12ms/tecla; Padrão = 25ms/tecla (mais seguro).', 'Speed the program is typed into XRoar. Fast = 12ms/key; Standard = 25ms/key (safer).')}>
+          <span className="font-semibold">{t('Vel.Export.Código', 'Code export speed')}:</span>
+          <select value={typeSpeed} onChange={e => setTypeSpeed(e.target.value as 'fast' | 'normal')} className="input-select text-[11px] py-0.5">
+            <option value="fast">{t('Rápido (12ms)', 'Fast (12ms)')}</option>
+            <option value="normal">{t('Padrão (25ms)', 'Standard (25ms)')}</option>
+          </select>
         </label>
         <div className="flex-1" />
         <span className="font-mono">{lineCount} {t('linhas', 'lines')} · {text.length} {t('chars', 'chars')}</span>

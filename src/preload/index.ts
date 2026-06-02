@@ -39,6 +39,12 @@ const api = {
     return () => ipcRenderer.removeListener('image-progress', listener);
   },
 
+  onDragError: (cb: (msg: string) => void) => {
+    const listener = (_e: any, msg: string) => cb(msg);
+    ipcRenderer.on('drag-error', listener);
+    return () => ipcRenderer.removeListener('drag-error', listener);
+  },
+
   openDskPane: () =>
     ipcRenderer.invoke('open-dsk-pane'),
 
@@ -48,8 +54,8 @@ const api = {
   dskAddBytes: (dskBuffer: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, data: Uint8Array) =>
     ipcRenderer.invoke('dsk-add-bytes', dskBuffer, name, ext, fileType, asciiFlag, data),
 
-  dskNewBlank: () =>
-    ipcRenderer.invoke('dsk-new-blank'),
+  dskNewBlank: (tracks?: number) =>
+    ipcRenderer.invoke('dsk-new-blank', tracks),
 
   dskNewBlankDragon: () =>
     ipcRenderer.invoke('dsk-new-blank-dragon'),
@@ -59,6 +65,13 @@ const api = {
 
   dskDefragFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-defrag-file', dskBuffer, fileEntry),
+
+  dskDefragDragon: (dskBuffer: Uint8Array) =>
+    ipcRenderer.invoke('dsk-defrag-dragon', dskBuffer),
+
+  // Drag-OUT nativo: extrai o arquivo para um temp e inicia o arrasto do SO (soltar no Explorer).
+  startFileDrag: (dskBuffer: Uint8Array, fileEntry: any, fileName: string) =>
+    ipcRenderer.send('start-file-drag', dskBuffer, fileEntry, fileName),
 
   pickCocoFile: () =>
     ipcRenderer.invoke('pick-coco-file'),

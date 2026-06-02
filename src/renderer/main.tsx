@@ -11,7 +11,7 @@ import { Buffer } from 'buffer';
 import { decodeWav } from '../main/converter/wav';
 import { parseCas } from '../main/converter/cas';
 import { parseDsk, extractDskFile, sortDskDirectory, isRsDosDisk } from '../main/converter/dsk';
-import { readDragonDirectory, stripVdk, extractDragonFile } from '../main/converter/dragondos';
+import { readDragonDirectory, stripVdk, extractDragonFile, looksDragon, sortDragonDirectory, defragDragonDisk } from '../main/converter/dragondos';
 import { parseBin } from '../main/converter/bin';
 import { compileBootstrap } from '../main/converter/bootstrap';
 
@@ -73,7 +73,17 @@ if (!(window as any).cocoApi) {
 
     dskSortDirectory: async (dskUint8Array: Uint8Array) => {
       try {
-        const img = sortDskDirectory(Buffer.from(dskUint8Array));
+        const buf = Buffer.from(dskUint8Array);
+        const img = looksDragon(buf) ? sortDragonDirectory(buf) : sortDskDirectory(buf);
+        return { success: true, image: new Uint8Array(img) };
+      } catch (error: any) {
+        return { success: false, error: error.message };
+      }
+    },
+
+    dskDefragDragon: async (dskUint8Array: Uint8Array) => {
+      try {
+        const img = defragDragonDisk(Buffer.from(dskUint8Array));
         return { success: true, image: new Uint8Array(img) };
       } catch (error: any) {
         return { success: false, error: error.message };

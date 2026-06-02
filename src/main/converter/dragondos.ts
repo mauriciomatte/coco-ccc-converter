@@ -56,21 +56,33 @@ function lsnOffset(lsn: number): number {
   return lsn * SEC;
 }
 
+export interface DragonGeom { tracks: number; spt: number; sides: number; fmtLsn: number; }
+
 /**
- * Is `raw` (already de-headered) a Dragon DOS disk? Validates the format-ID field at
- * Track 20, Sector 1, offset 0xFC..0xFF: [tracks][sectors/trk][~tracks][~sectors],
- * where the last two are the one's complement of the first two.
+ * Probe a Dragon DOS disk's geometry. The format/bitmap sector sits at Track 20, Sector 1, whose
+ * LSN is 20×(sectors-per-track). Single-sided uses spt=18 (LSN 360); double-sided is stored by
+ * Dragon DOS as spt=36 (18 sectors per side, image ordered cyl→head→sector, LSN 720). We try both
+ * positions and accept the one whose format-ID field (offset 0xFC..0xFF =
+ * [tracks][spt][~tracks][~spt], one's-complement) is valid AND whose stored spt matches the probe.
  */
+export function dragonGeometry(raw: Buffer): DragonGeom | null {
+  for (const spt of [18, 36]) {
+    const fmtLsn = DIR_TRACK * spt;
+    const o = lsnOffset(fmtLsn);
+    if (raw.length < o + SEC) continue;
+    const t = raw[o + 0xFC], s = raw[o + 0xFD];
+    if (((t + raw[o + 0xFE]) & 0xFF) === 0xFF &&
+        ((s + raw[o + 0xFF]) & 0xFF) === 0xFF &&
+        (t === 35 || t === 40 || t === 80) && s === spt) {
+      return { tracks: t, spt, sides: spt === 36 ? 2 : 1, fmtLsn };
+    }
+  }
+  return null;
+}
+
+/** Is `raw` (already de-headered) a Dragon DOS disk? (SS spt=18 or DS spt=36; 35/40/80 tracks.) */
 export function isDragonDosDisk(raw: Buffer): boolean {
-  const o = lsnOffset(DIR_TRACK * 18); // Track 20, Sector 1 (LSN 360) — SS layout
-  if (raw.length < o + SEC) return false;
-  const t = raw[o + 0xFC], s = raw[o + 0xFD];
-  return (
-    ((t + raw[o + 0xFE]) & 0xFF) === 0xFF &&
-    ((s + raw[o + 0xFF]) & 0xFF) === 0xFF &&
-    (t === 35 || t === 40 || t === 80) &&
-    (s === 18 || s === 36)
-  );
+  return dragonGeometry(raw) !== null;
 }
 
 /** Convenience: accepts a VDK or a raw image and tells whether it is Dragon DOS. */
@@ -113,12 +125,12 @@ function readSabs(raw: Buffer, off: number, isContinuation: boolean): Array<{ ls
  * geometry and per-sector occupancy. Throws if not a Dragon DOS disk.
  */
 export function parseDragonDos(raw: Buffer): ParsedDragon {
-  if (!isDragonDosDisk(raw)) throw new Error('Not a Dragon DOS disk');
-  const fmtLsn = DIR_TRACK * 18; // SS format sector
-  const fo = lsnOffset(fmtLsn);
-  const tracks = raw[fo + 0xFC];
-  const sectorsPerTrack = raw[fo + 0xFD];
-  const sides = sectorsPerTrack === 36 ? 2 : 1;
+  const geom = dragonGeometry(raw);
+  if (!geom) throw new Error('Not a Dragon DOS disk');
+  const fo = lsnOffset(geom.fmtLsn);             // Track 20 Sector 1 (format + bitmap part 1)
+  const tracks = geom.tracks;
+  const sectorsPerTrack = geom.spt;
+  const sides = geom.sides;
   const totalSectors = tracks * sectorsPerTrack;
 
   // Sector bitmap: track-20 sector 1 covers LSN 0x000-0x59f, sector 2 covers 0x5a0-0xb3f.
@@ -272,7 +284,7 @@ export function readDragonDirectory(buf: Buffer): any | null {
 export function encodeDragonBlank(tracks = 40, sectorsPerTrack = 18): Buffer {
   const totalSectors = tracks * sectorsPerTrack;
   const img = Buffer.alloc(totalSectors * SEC); // all zero
-  const fmtLsn = DIR_TRACK * 18;                 // SS format/bitmap sector (LSN 360)
+  const fmtLsn = DIR_TRACK * sectorsPerTrack;    // format/bitmap sector: LSN 360 (SS) or 720 (DS)
   const fo = lsnOffset(fmtLsn);
 
   // Bitmap (sector 1 covers LSN 0..0x59f; sector 2 covers 0x5a0..0xb3f). bit=1 free, 0 used.
@@ -309,23 +321,22 @@ export function encodeDragonBlank(tracks = 40, sectorsPerTrack = 18): Buffer {
   return Buffer.concat([vdkHeader, img]);
 }
 
-// ── Write support (single-sided Dragon DOS) ───────────────────────────────────
-// All write helpers assume the standard SS layout (format/bitmap at Track 20 = LSN 360/361,
-// 18 sectors/track). DS images aren't detected as Dragon by isDragonDosDisk, so they never
-// reach these paths.
+// ── Write support (Dragon DOS, SS or DS) ──────────────────────────────────────
+// The bitmap is two sectors at Track 20, Sectors 1-2, i.e. LSN fmtLsn / fmtLsn+1 where
+// fmtLsn = 20×spt (360 for SS, 720 for DS). Sector-1 part covers LSN 0..0x59f, sector-2 part
+// covers 0x5a0..0xb3f — enough for the largest geometry (80T DS = 2880 sectors). bit=1 free, 0 used.
 
-const BMP1 = lsnOffset(DIR_TRACK * 18);       // Track 20 Sector 1 (bitmap part 1) = 0x16800
-const BMP2 = lsnOffset(DIR_TRACK * 18 + 1);   // Track 20 Sector 2 (bitmap part 2)
-
-function bmpLoc(lsn: number): [number, number] {
-  if (lsn <= 0x59f) return [BMP1 + (lsn >> 3), lsn & 7];
-  const r = lsn - 0x5a0; return [BMP2 + (r >> 3), r & 7];
+// Byte/bit location of `lsn` in the bitmap, given the format sector's LSN.
+function bmpLoc(lsn: number, fmtLsn: number): [number, number] {
+  const bmp1 = lsnOffset(fmtLsn), bmp2 = lsnOffset(fmtLsn + 1);
+  if (lsn <= 0x59f) return [bmp1 + (lsn >> 3), lsn & 7];
+  const r = lsn - 0x5a0; return [bmp2 + (r >> 3), r & 7];
 }
-function bmpIsFree(raw: Buffer, lsn: number): boolean {
-  const [o, b] = bmpLoc(lsn); return ((raw[o] >> b) & 1) === 1;
+function bmpIsFree(raw: Buffer, lsn: number, fmtLsn: number): boolean {
+  const [o, b] = bmpLoc(lsn, fmtLsn); return ((raw[o] >> b) & 1) === 1;
 }
-function bmpSet(raw: Buffer, lsn: number, used: boolean): void {
-  const [o, b] = bmpLoc(lsn);
+function bmpSet(raw: Buffer, lsn: number, used: boolean, fmtLsn: number): void {
+  const [o, b] = bmpLoc(lsn, fmtLsn);
   if (used) raw[o] &= ~(1 << b) & 0xff; else raw[o] |= (1 << b);
 }
 
@@ -359,10 +370,9 @@ function occupiedEntries(raw: Buffer, spt: number): Set<number> {
 export function addDragonFile(raw0: Buffer, name: string, ext: string, data: Buffer): Buffer {
   const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
   const raw = Buffer.from(stripVdk(raw0));   // mutable copy of the disk image
-  if (!isDragonDosDisk(raw)) throw new Error('Not a Dragon DOS disk');
-  const fo = lsnOffset(DIR_TRACK * 18);
-  const tracks = raw[fo + 0xfc], spt = raw[fo + 0xfd];
-  if (spt !== 18) throw new Error('Dragon write supports single-sided (18 sec/track) only');
+  const geom = dragonGeometry(raw);
+  if (!geom) throw new Error('Not a Dragon DOS disk');
+  const { tracks, spt, fmtLsn } = geom;
   const totalSectors = tracks * spt;
 
   const nm = (name || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
@@ -377,8 +387,8 @@ export function addDragonFile(raw0: Buffer, name: string, ext: string, data: Buf
   // marked used in the bitmap), largest first.
   const runs: Array<{ lsn: number; len: number }> = [];
   for (let lsn = 0; lsn < totalSectors;) {
-    if (!bmpIsFree(raw, lsn)) { lsn++; continue; }
-    let len = 0; while (lsn + len < totalSectors && bmpIsFree(raw, lsn + len)) len++;
+    if (!bmpIsFree(raw, lsn, fmtLsn)) { lsn++; continue; }
+    let len = 0; while (lsn + len < totalSectors && bmpIsFree(raw, lsn + len, fmtLsn)) len++;
     runs.push({ lsn, len }); lsn += len;
   }
   runs.sort((a, b) => b.len - a.len);
@@ -414,7 +424,7 @@ export function addDragonFile(raw0: Buffer, name: string, ext: string, data: Buf
     if (n > 0) data.copy(raw, off, dpos, dpos + n);
     for (let z = n; z < SEC; z++) raw[off + z] = 0; // pad tail of last sector
     dpos += SEC;
-    bmpSet(raw, s.lsn + k, true);
+    bmpSet(raw, s.lsn + k, true, fmtLsn);
   }
   const bytesInLast = data.length % SEC; // 0 ⇒ full 256-byte last sector
 
@@ -456,9 +466,10 @@ export function addDragonFile(raw0: Buffer, name: string, ext: string, data: Buf
 export function deleteDragonFile(raw0: Buffer, entry: { index: number; sectors?: number[] }): Buffer {
   const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
   const raw = Buffer.from(stripVdk(raw0));
-  if (!isDragonDosDisk(raw)) throw new Error('Not a Dragon DOS disk');
-  const spt = raw[lsnOffset(DIR_TRACK * 18) + 0xfd];
-  for (const lsn of entry.sectors || []) bmpSet(raw, lsn, false); // free data sectors
+  const geom = dragonGeometry(raw);
+  if (!geom) throw new Error('Not a Dragon DOS disk');
+  const { spt, fmtLsn } = geom;
+  for (const lsn of entry.sectors || []) bmpSet(raw, lsn, false, fmtLsn); // free data sectors
   // Mark the header and any continuation entries deleted.
   let o = entryOffset(raw, spt, entry.index);
   let f = raw[o], guard = 0;
@@ -469,6 +480,141 @@ export function deleteDragonFile(raw0: Buffer, entry: { index: number; sectors?:
     if (seen.has(nx) || nx >= 160) break;
     seen.add(nx); o = entryOffset(raw, spt, nx); f = raw[o]; raw[o] |= 0x80;
   }
+  return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
+}
+
+// ── Sort + Defrag (single-sided Dragon DOS) ──────────────────────────────────
+
+/** Group an ordered LSN list into contiguous runs (Sector Allocation Blocks). */
+function runsFromSectors(sectors: number[]): Array<{ lsn: number; count: number }> {
+  const runs: Array<{ lsn: number; count: number }> = [];
+  for (let i = 0; i < sectors.length;) {
+    let len = 1;
+    while (i + len < sectors.length && sectors[i + len] === sectors[i + len - 1] + 1) len++;
+    runs.push({ lsn: sectors[i], count: len });
+    i += len;
+  }
+  return runs;
+}
+
+interface DirFile { name: string; ext: string; protected: boolean; sabs: Array<{ lsn: number; count: number }>; bytesInLast: number; }
+
+/**
+ * Rewrite the WHOLE directory region from a list of files (already in the desired order). Clears
+ * all 160 entries to 0x88 (empty + end-of-directory), then writes each file's header (+continuation)
+ * into SEQUENTIAL slots, with the chain pointer (byte 0x18) referencing the assigned continuation
+ * slots. Data sectors and the bitmap are NOT touched here. `bytesInLast` is the stored value (0 = 256).
+ */
+function rebuildDragonDirectory(raw: Buffer, spt: number, files: DirFile[]): void {
+  for (let n = 0; n < 160; n++) { const o = entryOffset(raw, spt, n); for (let i = 0; i < 25; i++) raw[o + i] = 0; raw[o] = 0x88; }
+  const writeSab = (base: number, k: number, s: { lsn: number; count: number }) => {
+    raw[base + k * 3] = (s.lsn >> 8) & 0xff;
+    raw[base + k * 3 + 1] = s.lsn & 0xff;
+    raw[base + k * 3 + 2] = s.count & 0xff;
+  };
+  let slot = 0;
+  for (const f of files) {
+    const nSabs = f.sabs.length;
+    const nCont = nSabs <= 4 ? 0 : Math.ceil((nSabs - 4) / 7);
+    const headerSlot = slot;
+    const contSlots: number[] = [];
+    for (let c = 0; c < nCont; c++) contSlots.push(slot + 1 + c);
+    slot += 1 + nCont;
+    if (slot > 160) throw new Error('Directory full while rebuilding');
+
+    const nm = f.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    const ex = f.ext.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
+    const hOff = entryOffset(raw, spt, headerSlot);
+    raw[hOff] = (nCont > 0 ? 0x20 : 0x00) | (f.protected ? 0x02 : 0x00);
+    for (let i = 0; i < 8; i++) raw[hOff + 1 + i] = i < nm.length ? nm.charCodeAt(i) : 0;
+    for (let i = 0; i < 3; i++) raw[hOff + 9 + i] = i < ex.length ? ex.charCodeAt(i) : 0;
+    let sabIdx = 0;
+    for (let k = 0; k < 4 && sabIdx < nSabs; k++, sabIdx++) writeSab(hOff + 0x0c, k, f.sabs[sabIdx]);
+    raw[hOff + 0x18] = nCont > 0 ? contSlots[0] : f.bytesInLast;
+    for (let c = 0; c < nCont; c++) {
+      const cOff = entryOffset(raw, spt, contSlots[c]);
+      const more = c < nCont - 1;
+      raw[cOff] = 0x01 | (more ? 0x20 : 0x00);
+      for (let k = 0; k < 7 && sabIdx < nSabs; k++, sabIdx++) writeSab(cOff + 0x01, k, f.sabs[sabIdx]);
+      raw[cOff + 0x18] = more ? contSlots[c + 1] : f.bytesInLast;
+    }
+  }
+}
+
+/** Stored "bytes in last sector": 1..255 as-is, a full 256-byte last sector as 0. */
+function lastSectorByte(totalSize: number, sectorCount: number): number {
+  return (totalSize - (sectorCount - 1) * SEC) & 0xff; // (256 → 0)
+}
+
+/**
+ * Sort a Dragon DOS disk's directory alphabetically (A→Z) WITHOUT moving any file data — only the
+ * directory entries are rebuilt in sorted order, reusing each file's existing sector allocation.
+ */
+export function sortDragonDirectory(raw0: Buffer): Buffer {
+  const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
+  const raw = Buffer.from(stripVdk(raw0));
+  const geom = dragonGeometry(raw);
+  if (!geom) throw new Error('Not a Dragon DOS disk');
+  const spt = geom.spt;
+  const p = parseDragonDos(raw);
+  const files: DirFile[] = p.files
+    .slice()
+    .sort((a, b) => a.fullName.localeCompare(b.fullName, 'en'))
+    .map(f => ({ name: f.name, ext: f.ext, protected: f.protected, sabs: runsFromSectors(f.sectors), bytesInLast: f.bytesInLastSector & 0xff }));
+  rebuildDragonDirectory(raw, spt, files);
+  return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
+}
+
+/**
+ * Defragment a Dragon DOS disk: rewrite every file's data into contiguous sectors packed from the
+ * start of the disk (skipping the directory track), then rebuild the bitmap and directory. Keeps
+ * the current directory order. A file that straddles the directory-track gap splits into 2 blocks.
+ */
+export function defragDragonDisk(raw0: Buffer): Buffer {
+  const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
+  const raw = Buffer.from(stripVdk(raw0));
+  const geom = dragonGeometry(raw);
+  if (!geom) throw new Error('Not a Dragon DOS disk');
+  const { tracks, spt, fmtLsn } = geom;
+  const fo = lsnOffset(fmtLsn);
+  const totalSectors = tracks * spt;
+  const p = parseDragonDos(raw);
+
+  // 1) Read every file's bytes from the CURRENT layout first (before overwriting anything).
+  const payloads = p.files.map(f => ({ name: f.name, ext: f.ext, protected: f.protected, data: extractDragonFile(raw, f) }));
+
+  // 2) Ordered pool of allocatable LSNs (everything except the directory track).
+  const dirBase = DIR_TRACK * spt;
+  const avail: number[] = [];
+  for (let lsn = 0; lsn < totalSectors; lsn++) if (lsn < dirBase || lsn >= dirBase + spt) avail.push(lsn);
+
+  // 3) Allocate + write each file contiguously from the pool; collect new directory entries.
+  let ai = 0;
+  const dirFiles: DirFile[] = [];
+  for (const f of payloads) {
+    const need = Math.max(1, Math.ceil(f.data.length / SEC));
+    if (ai + need > avail.length) throw new Error('Defrag: not enough room on disk');
+    const lsns = avail.slice(ai, ai + need); ai += need;
+    let dpos = 0;
+    for (const lsn of lsns) {
+      const off = lsnOffset(lsn);
+      const n = Math.max(0, Math.min(SEC, f.data.length - dpos));
+      if (n > 0) f.data.copy(raw, off, dpos, dpos + n);
+      for (let z = n; z < SEC; z++) raw[off + z] = 0; // pad tail of last sector
+      dpos += SEC;
+    }
+    dirFiles.push({ name: f.name, ext: f.ext, protected: f.protected, sabs: runsFromSectors(lsns), bytesInLast: lastSectorByte(f.data.length, need) });
+  }
+
+  // 4) Rebuild the bitmap: all free, then mark directory track, out-of-range, and allocated used.
+  const bmp1 = fo, bmp2 = lsnOffset(dirBase + 1);
+  for (let i = 0; i < 0xb4; i++) { raw[bmp1 + i] = 0xff; raw[bmp2 + i] = 0xff; }
+  for (let s = 0; s < spt; s++) bmpSet(raw, dirBase + s, true, fmtLsn);  // directory track
+  for (let lsn = totalSectors; lsn <= 0xb3f; lsn++) bmpSet(raw, lsn, true, fmtLsn); // non-existent sectors
+  for (let i = 0; i < ai; i++) bmpSet(raw, avail[i], true, fmtLsn);      // allocated data
+
+  // 5) Rebuild the directory (same order).
+  rebuildDragonDirectory(raw, spt, dirFiles);
   return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
 }
 

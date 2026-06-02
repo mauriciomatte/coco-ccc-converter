@@ -40,7 +40,8 @@ import {
   Download,
   GitCompare,
   SaveAll,
-  ArrowRightLeft
+  ArrowRightLeft,
+  MoreHorizontal
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
@@ -148,6 +149,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolGwShort: 'Gravar GW',
     dskUnsaved: 'alterações não salvas',
     dskRunHint: 'Duplo-clique: rodar no XRoar',
+    dskDragOutHint: 'Arraste para o Windows Explorer (solta o arquivo numa pasta). Arrastar a linha = mover para o outro painel.',
     dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
     dskToolSave: 'Salvar',
     dskToolSaveAs: 'Salvar Como',
@@ -317,6 +319,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolGwShort: 'Write GW',
     dskUnsaved: 'unsaved changes',
     dskRunHint: 'Double-click: run in XRoar',
+    dskDragOutHint: 'Drag to Windows Explorer (drops the file into a folder). Dragging the row = move to the other pane.',
     dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
     dskToolSave: 'Save',
     dskToolSaveAs: 'Save As',
@@ -499,6 +502,12 @@ export default function App() {
   // padrão do XRoar e o formato padrão do Greaseweazle. Cada painel/disco aberto continua
   // respeitando o seu formato real; o toggle é só o contexto/padrão.
   const [platform, setPlatform] = useState<'coco' | 'dragon'>('coco');
+  // Formato do "Novo disco" POR PAINEL (persistente): 'coco35' (DECB), 'coco40' (JDOS/CODIMEX) ou
+  // 'dragon' (Dragon 40T SS). Permite, ex., abrir jogos 35T no painel A e criar um 40T no painel B.
+  // Ao ABRIR uma imagem, o formato do painel se auto-ajusta ao disco lido.
+  type PaneFmt = 'coco35' | 'coco40' | 'dragon';
+  const [paneNewFormat, setPaneNewFormat] = useState<{ A: PaneFmt; B: PaneFmt }>({ A: 'coco35', B: 'coco35' });
+  const paneFormatKey = (format: string, size: number): PaneFmt => format === 'dragon' ? 'dragon' : size === 184320 ? 'coco40' : 'coco35';
 
   // Greaseweazle (aba GW)
   const [gwPath, setGwPath] = useState<string>('gw');
@@ -515,6 +524,7 @@ export default function App() {
   const [compareData, setCompareData] = useState<{ nameA: string; dataA: Uint8Array; nameB: string; dataB: Uint8Array } | null>(null); // modal comparador de arquivos
   const [convertModal, setConvertModal] = useState<{ srcPane: 'A' | 'B'; name: string; loadAddr: number; execAddr: number; payload: Uint8Array; mode: 'direct' | 'reloc' } | null>(null); // modal conversor CoCo→Dragon
   const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
+  const [reformatConfirm, setReformatConfirm] = useState<{ which: 'A' | 'B'; newFmt: 'coco35' | 'coco40'; count: number } | null>(null); // modal: recriar imagem noutro formato mantendo arquivos
   const [gwBusy, setGwBusy] = useState<boolean>(false);
   const [gwOp, setGwOp] = useState<'' | 'info' | 'read' | 'write'>('');
   const [gwDone, setGwDone] = useState<Set<string>>(new Set());
@@ -677,6 +687,13 @@ export default function App() {
     return () => { if (typeof off === 'function') off(); };
   }, []);
 
+  // Erros do arraste-para-fora (startDrag) chegam aqui para aparecer no console de diagnóstico.
+  useEffect(() => {
+    if (!window.cocoApi || typeof window.cocoApi.onDragError !== 'function') return;
+    const off = window.cocoApi.onDragError((msg: string) => addLog(`Arrastar p/ Explorer: ${msg}`, `Drag to Explorer: ${msg}`, 'error'));
+    return () => { if (typeof off === 'function') off(); };
+  }, []);
+
   // O X da janela dispara o MESMO modal de "Sair" (confirma + avisa sobre salvar).
   useEffect(() => {
     if (!window.cocoApi || typeof window.cocoApi.onAppCloseRequest !== 'function') return;
@@ -752,6 +769,7 @@ export default function App() {
             if (typeof s.basicBold === 'boolean') setBasicBold(s.basicBold);
             if (typeof s.gwStep === 'string') setGwStep(s.gwStep);
             if (s.platform === 'coco' || s.platform === 'dragon') setPlatform(s.platform);
+            if (s.paneNewFormat && s.paneNewFormat.A && s.paneNewFormat.B) setPaneNewFormat(s.paneNewFormat);
             addLog('Configurações carregadas do arquivo de configuração.', 'Settings loaded from the configuration file.', 'success');
           } else if (typeof window.cocoApi.saveConfig === 'function') {
             await window.cocoApi.saveConfig({ currentLang: 'pt-br', gwPath: 'gw', gwFormat: 'coco.decb', gwDevice: '', gwDrive: '', gwExtra: '', fillerByte: 0xFF });
@@ -769,9 +787,9 @@ export default function App() {
   useEffect(() => {
     if (!settingsLoaded.current) return;
     if (window.cocoApi && typeof window.cocoApi.saveConfig === 'function') {
-      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform });
+      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform, paneNewFormat });
     }
-  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform]);
+  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform, paneNewFormat]);
 
   const changeLanguage = (lang: 'pt-br' | 'en-us') => {
     setCurrentLang(lang);
@@ -1322,15 +1340,31 @@ export default function App() {
 
   const STD_DISK = 161280; // disco RS-DOS padrão (35 trilhas)
 
-  // Discos Dragon DOS suportam adicionar/excluir/salvar, mas ORDENAR e DESFRAGMENTAR ainda não.
-  // Este guard bloqueia apenas essas operações ainda-não-suportadas. Retorna true se deve abortar.
-  const dragonUnsupportedGuard = (which: 'A' | 'B'): boolean => {
-    if (getPane(which)?.format === 'dragon') {
-      addLog('Ordenar/Desfragmentar ainda não está disponível para discos Dragon (em breve).',
-        'Sort/Defragment is not available yet for Dragon disks (coming soon).', 'info');
-      return true;
+  const isDragonPane = (which: 'A' | 'B'): boolean => getPane(which)?.format === 'dragon';
+
+  // Desfragmentação de disco Dragon INTEIRA (sem a animação por-grânulo do RS-DOS — o Dragon usa
+  // bitmap+SAB, não FAT de grânulos). Reescreve os arquivos contíguos e regrava bitmap/diretório.
+  const handleDragonDefrag = async (which: 'A' | 'B') => {
+    const pane = getPane(which);
+    if (!pane || !pane.files.length) { addLog('Sem arquivos para desfragmentar.', 'No files to defragment.', 'warn'); return; }
+    if (typeof window.cocoApi.dskDefragDragon !== 'function') {
+      addLog('Reinicie o app: a desfragmentação Dragon (preload) não está carregada.', 'Restart the app: Dragon defrag (preload) is not loaded.', 'error');
+      return;
     }
-    return false;
+    const before = pane.files.filter((f: any) => f.fragmented).length;
+    try {
+      setImageBusy(true);
+      pushDskUndo();
+      const res = await window.cocoApi.dskDefragDragon(pane.buffer);
+      if (!res.success) { addLog(`Desfragmentar (Dragon): ${res.error}`, `Defrag (Dragon): ${res.error}`, 'error'); return; }
+      if (selectedDsk?.pane === which) setSelectedDsk(null);
+      await refreshPane(which, res.image);
+      const after = await window.cocoApi.readDskDirectory(res.image);
+      const afterFrag = after.success ? after.files.filter((f: any) => f.fragmented).length : 0;
+      addLog(`Disco Dragon do painel ${which} desfragmentado (${before}→${afterFrag} arquivo(s) fragmentado(s)). Lembre-se de salvar.`,
+        `Pane ${which} Dragon disk defragmented (${before}→${afterFrag} fragmented file(s)). Remember to save.`, 'success');
+    } catch (err: any) { addLog(`Desfragmentar (Dragon): ${err.message}`, `Defrag (Dragon): ${err.message}`, 'error'); }
+    finally { setImageBusy(false); }
   };
 
   // Carrega uma imagem nova num painel; detecta contêiner multi-disco (N x 161280) e mostra o disco 0
@@ -1359,6 +1393,8 @@ export default function App() {
       } : null
     });
     clearDirty(which); // imagem recém-aberta = sem alterações
+    // O formato de "Novo disco" deste painel se auto-ajusta ao disco carregado (35/40T, CoCo/Dragon).
+    setPaneNewFormat(p => ({ ...p, [which]: paneFormatKey(res.format, slice.length) }));
     // Ajusta o formato do Greaseweazle para casar com o disco recém-carregado (RS-DOS x Dragon,
     // 35/40T, 1/2 lados) — assim "Gravar GW" já vem com o perfil certo.
     setGwFormat(gwFormatForDisk({ format: res.format, geom: res.geom, size: slice.length }));
@@ -1504,7 +1540,8 @@ export default function App() {
   // em memória — a cada passo fica válida (suporta parar no meio, mantendo o que já foi feito).
   const isChainFrag = (c: number[]) => { for (let i = 1; i < (c || []).length; i++) if (c[i] !== c[i - 1] + 1) return true; return false; };
   const startDefragAnimation = async (which: 'A' | 'B', order: 'dir' | 'alpha' | 'size') => {
-    if (dragonUnsupportedGuard(which)) return;
+    // Dragon não tem FAT de grânulos (a animação por-grânulo não se aplica): desfragmenta o disco inteiro.
+    if (isDragonPane(which)) { await handleDragonDefrag(which); return; }
     const pane = getPane(which);
     if (!pane || !pane.files.length) return;
     const diskName = pane.fileName || which;
@@ -1584,7 +1621,8 @@ export default function App() {
   // Desfragmenta APENAS o arquivo selecionado (realoca num trecho contíguo). Se não couber num vão
   // contíguo (espaço livre fragmentado), avisa e sugere a desfragmentação total.
   const handleDefragFile = async (which: 'A' | 'B', entry: any) => {
-    if (dragonUnsupportedGuard(which)) return;
+    // Dragon: a desfragmentação é por DISCO (sem realocação por-arquivo) → roda a do disco inteiro.
+    if (isDragonPane(which)) { await handleDragonDefrag(which); return; }
     const pane = getPane(which);
     if (!pane || !entry) return;
     try {
@@ -1626,11 +1664,16 @@ export default function App() {
     if (pane) {
       buffer = pane.buffer;
     } else {
-      // Painel vazio: cria uma imagem .dsk nova para receber o(s) arquivo(s) (automatiza o passo manual).
-      const blank = await window.cocoApi.dskNewBlank();
+      // Painel vazio: cria uma imagem nova NO FORMATO ESCOLHIDO DESTE painel (CoCo 35/40 ou Dragon),
+      // em vez de um padrão fixo — assim o drop num painel vazio respeita o formato que o usuário definiu.
+      const fmt = paneNewFormat[which];
+      const blank = fmt === 'dragon' && typeof window.cocoApi.dskNewBlankDragon === 'function'
+        ? await window.cocoApi.dskNewBlankDragon()
+        : await window.cocoApi.dskNewBlank(fmt === 'coco40' ? 40 : 35);
       if (!blank.success) { addLog(`Novo disco: ${blank.error}`, `New disk: ${blank.error}`, 'error'); return; }
       buffer = new Uint8Array(blank.image);
-      addLog(`Imagem nova criada no painel ${which} para receber o(s) arquivo(s).`, `New image created in pane ${which} to receive the file(s).`, 'info');
+      const lbl = fmt === 'dragon' ? 'Dragon 40T' : fmt === 'coco40' ? 'CoCo 40T' : 'CoCo 35T';
+      addLog(`Imagem nova (${lbl}) criada no painel ${which} para receber o(s) arquivo(s).`, `New ${lbl} image created in pane ${which} to receive the file(s).`, 'info');
     }
     let added = 0;
     try {
@@ -1733,7 +1776,6 @@ export default function App() {
 
   // Ordena alfabeticamente (A→Z) o diretório da imagem no painel ativo
   const handleDskSort = async () => {
-    if (dragonUnsupportedGuard(activePane)) return;
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     if (!pane.files.length) { addLog('Não há arquivos para ordenar.', 'No files to sort.', 'warn'); return; }
@@ -1753,7 +1795,6 @@ export default function App() {
 
   // Ordena alfabeticamente TODOS os discos de um contêiner multi-disco no painel ativo
   const handleDskSortAll = async () => {
-    if (dragonUnsupportedGuard(activePane)) return;
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     if (!pane.container) { addLog('Esta imagem não é um contêiner multi-disco.', 'This image is not a multi-disk container.', 'warn'); return; }
@@ -2196,20 +2237,72 @@ export default function App() {
     setDskNewConfirm(null);
     pushDskUndo();
     try {
-      // A plataforma-alvo define o tipo do disco novo: CoCo → RS-DOS 35T; Dragon → Dragon DOS 40T.
-      const isDragon = platform === 'dragon';
+      // O formato do "Novo disco" vem do seletor DESTE painel (não mais global): CoCo 35T/40T ou Dragon 40T.
+      const fmt = paneNewFormat[which];
+      const isDragon = fmt === 'dragon';
       const res = isDragon && typeof window.cocoApi.dskNewBlankDragon === 'function'
         ? await window.cocoApi.dskNewBlankDragon()
-        : await window.cocoApi.dskNewBlank();
+        : await window.cocoApi.dskNewBlank(fmt === 'coco40' ? 40 : 35);
       if (!res.success) { addLog(`New disk: ${res.error}`, `New disk: ${res.error}`, 'error'); return; }
       const ext = isDragon ? 'VDK' : 'DSK';
+      const label = isDragon ? 'Dragon (40T)' : fmt === 'coco40' ? 'RS-DOS (40T JDOS)' : 'RS-DOS (35T)';
       await loadPaneFromBuffer(which, new Uint8Array(res.image), which === 'A' ? `NOVO_A.${ext}` : `NOVO_B.${ext}`);
       markDirty(which); // disco novo ainda não salvo
       addLog(
-        isDragon ? `Novo disco Dragon (40T) criado no painel ${which}.` : `Novo disco RS-DOS (35T) criado no painel ${which}.`,
-        isDragon ? `New Dragon disk (40T) created in pane ${which}.` : `New RS-DOS disk (35T) created in pane ${which}.`,
+        `Novo disco ${label} criado no painel ${which}.`,
+        `New ${label} disk created in pane ${which}.`,
         'success');
     } catch (err: any) { addLog(`New disk: ${err.message}`, `New disk: ${err.message}`, 'error'); }
+  };
+
+  // Troca o formato de "Novo disco" de um painel. Se o painel já tem arquivos, decide o que fazer:
+  //  • painel vazio → só muda a preferência;
+  //  • mesma família RS-DOS, geometria diferente (35↔40) → pergunta e RECRIA mantendo os arquivos;
+  //  • CoCo↔Dragon (conteúdo diferente) → avisa que precisa do conversor; mantém a imagem e o seletor.
+  const handlePaneFormatChange = (which: 'A' | 'B', newFmt: PaneFmt) => {
+    if (newFmt === paneNewFormat[which]) return;
+    const pane = getPane(which);
+    const hasFiles = !!(pane && pane.files?.length);
+    if (!hasFiles) { setPaneNewFormat(p => ({ ...p, [which]: newFmt })); return; } // só preferência
+    const curDragon = pane!.format === 'dragon';
+    const newDragon = newFmt === 'dragon';
+    if (curDragon !== newDragon) {
+      addLog('Trocar entre CoCo e Dragon muda o CONTEÚDO dos arquivos (tokens/cabeçalhos) — use o conversor "→ Dragon" por arquivo. O seletor não foi alterado.',
+             'Switching between CoCo and Dragon changes file CONTENT (tokens/headers) — use the per-file "→ Dragon" converter. The selector was not changed.', 'warn');
+      return; // não muda o seletor (revert): ele reflete o disco aberto
+    }
+    if (newDragon) return; // Dragon só tem 40T por ora
+    // RS-DOS 35↔40 com arquivos → confirma a recriação preservando arquivos
+    setReformatConfirm({ which, newFmt: newFmt as 'coco35' | 'coco40', count: pane!.files.length });
+  };
+
+  // Recria a imagem do painel no novo formato RS-DOS (35↔40) MANTENDO os arquivos. Aborta sem alterar
+  // se algum arquivo não couber (ex.: 40T→35T com dados demais).
+  const reformatPaneKeepingFiles = async (which: 'A' | 'B', newFmt: 'coco35' | 'coco40') => {
+    setReformatConfirm(null);
+    const pane = getPane(which);
+    if (!pane) return;
+    try {
+      const dir = await window.cocoApi.readDskDirectory(pane.buffer);
+      if (!dir.success) { addLog(`Reformatar: ${dir.error}`, `Reformat: ${dir.error}`, 'error'); return; }
+      const blank = await window.cocoApi.dskNewBlank(newFmt === 'coco40' ? 40 : 35);
+      if (!blank.success) { addLog(`Reformatar: ${blank.error}`, `Reformat: ${blank.error}`, 'error'); return; }
+      let buffer = new Uint8Array(blank.image);
+      let added = 0;
+      for (const entry of dir.files) {
+        const ex = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
+        if (!ex.success) { addLog(`Reformatar: extração falhou (${entry.fullName}) — imagem mantida.`, `Reformat: extract failed (${entry.fullName}) — image kept.`, 'error'); return; }
+        const r = await window.cocoApi.dskAddBytes(buffer, entry.name, entry.ext, entry.fileType, entry.asciiFlag || 0, ex.data);
+        if (!r.success) { addLog(`Reformatar ABORTADO: "${entry.fullName}" não cabe no formato ${newFmt === 'coco40' ? '40T' : '35T'} (${r.error}). Imagem mantida.`, `Reformat ABORTED: "${entry.fullName}" doesn't fit ${newFmt === 'coco40' ? '40T' : '35T'} (${r.error}). Image kept.`, 'error'); return; }
+        buffer = r.image; added++;
+      }
+      pushDskUndo();
+      const base = (pane.fileName || 'DISCO').replace(/\.(dsk|vdk)$/i, '');
+      await loadPaneFromBuffer(which, buffer, `${base}.dsk`);
+      markDirty(which);
+      addLog(`Painel ${which} recriado em ${newFmt === 'coco40' ? '40T (JDOS)' : '35T'} mantendo ${added} arquivo(s). Lembre-se de salvar.`,
+             `Pane ${which} re-created as ${newFmt === 'coco40' ? '40T (JDOS)' : '35T'} keeping ${added} file(s). Remember to save.`, 'success');
+    } catch (err: any) { addLog(`Reformatar: ${err.message}`, `Reformat: ${err.message}`, 'error'); }
   };
 
   // "Salvar como": abre o diálogo de Salvar e grava num arquivo escolhido (preserva o original).
@@ -2220,10 +2313,16 @@ export default function App() {
     try {
       // Para contêiner multi-disco, salva o arquivo inteiro (todos os discos); senão o disco único.
       const saveBuf = pane.container ? pane.container.full : pane.buffer;
+      // Disco Dragon → sugere .VDK (formato nativo, com o header que o XRoar lê); CoCo → .DSK.
+      const isDragon = pane.format === 'dragon';
+      const defName = pane.fileName || (isDragon ? 'disco.vdk' : 'disk.dsk');
+      const filters = isDragon
+        ? [{ name: 'Dragon Disk Image (.vdk)', extensions: ['vdk'] }, { name: 'Raw Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]
+        : [{ name: 'RS-DOS Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }];
       const r = await window.cocoApi.saveCartridgeFile(
-        saveBuf, pane.fileName || 'disk.dsk',
-        currentLang === 'pt-br' ? `Salvar imagem .DSK como… (painel ${activePane})` : `Save .DSK image as… (pane ${activePane})`,
-        [{ name: 'RS-DOS Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]
+        saveBuf, defName,
+        currentLang === 'pt-br' ? `Salvar imagem como… (painel ${activePane})` : `Save image as… (pane ${activePane})`,
+        filters
       );
       if (r.success) {
         clearDirty(activePane);
@@ -2382,7 +2481,24 @@ export default function App() {
   };
 
   // Drop de uma ou mais linhas arrastadas de um painel para o outro (cópia A↔B)
-  const handleDskInternalDrop = async (targetWhich: 'A' | 'B', source: { pane: 'A' | 'B'; entries: any[]; srcBuffer?: Uint8Array }) => {
+  // Remove arquivos (por nome) da imagem de um painel — usado pelo MOVER (Shift+arrastar).
+  const deleteEntriesFromPane = async (which: 'A' | 'B', entries: any[]) => {
+    const pane = getPane(which);
+    if (!pane || !entries.length) return;
+    let buffer = pane.buffer;
+    for (const entry of entries) {
+      const dir = await window.cocoApi.readDskDirectory(buffer);   // re-acha por nome (índices mudam a cada delete)
+      if (!dir.success) break;
+      const cur = dir.files.find((f: any) => f.fullName === entry.fullName);
+      if (!cur) continue;
+      const del = await window.cocoApi.dskDeleteFile(buffer, cur);
+      if (del.success) buffer = del.image;
+    }
+    await refreshPane(which, buffer);
+  };
+
+  // Drop interno: `move=true` (Shift) move (remove da origem após copiar); senão copia (Ctrl/padrão).
+  const handleDskInternalDrop = async (targetWhich: 'A' | 'B', source: { pane: 'A' | 'B'; entries: any[]; srcBuffer?: Uint8Array }, move = false) => {
     if (source.pane === targetWhich) return;
     const src = getPane(source.pane);
     if (!src) return;
@@ -2392,6 +2508,7 @@ export default function App() {
     setActivePane(targetWhich);
     try {
       const files: any[] = [];
+      const moved: any[] = []; // entradas extraídas com sucesso (candidatas a remover da origem no MOVER)
       for (const entry of source.entries) {
         const res = await window.cocoApi.dskExtractRaw(srcBuffer, entry);
         if (!res.success) { addLog(`Extração falhou: ${entry.fullName} — ${res.error}`, `Extract failed: ${entry.fullName} — ${res.error}`, 'error'); continue; }
@@ -2405,9 +2522,17 @@ export default function App() {
           continue;
         }
         files.push({ name: entry.name, ext: entry.ext, fileType: entry.fileType, asciiFlag: entry.asciiFlag, data });
+        moved.push(entry);
       }
-      if (files.length) beginAddBatch(targetWhich, files);
-      else addLog('Nenhum arquivo válido para copiar (origem vazia/corrompida).', 'No valid file to copy (source blank/corrupt).', 'warn');
+      if (files.length) {
+        beginAddBatch(targetWhich, files);
+        // MOVER: os dados já estão em memória (files), então é seguro remover da origem.
+        if (move && moved.length) {
+          await deleteEntriesFromPane(source.pane, moved);
+          addLog(`${moved.length} arquivo(s) movido(s) do painel ${source.pane} para ${targetWhich}.`,
+                 `${moved.length} file(s) moved from pane ${source.pane} to ${targetWhich}.`, 'success');
+        }
+      } else addLog('Nenhum arquivo válido para copiar (origem vazia/corrompida).', 'No valid file to copy (source blank/corrupt).', 'warn');
     } catch (err: any) { addLog(`DSK drop: ${err.message}`, `DSK drop: ${err.message}`, 'error'); }
   };
 
@@ -2421,7 +2546,9 @@ export default function App() {
     }
     const item = dskDragItem.current;
     dskDragItem.current = null;
-    if (item) handleDskInternalDrop(which, item);
+    // Shift (sem Ctrl) = MOVER (remove da origem); senão COPIAR. Igual à convenção do Windows.
+    const move = e.shiftKey && !e.ctrlKey;
+    if (item) handleDskInternalDrop(which, item, move);
   };
 
   // Editor hexadecimal global: edita o arquivo .DSK selecionado (1º da seleção), ou o programa extraído (aba EPROM)
@@ -3016,7 +3143,12 @@ export default function App() {
     return (
       <div
         onClick={() => setActivePane(which)}
-        onDragOver={(e) => { e.preventDefault(); }}
+        onDragOver={(e) => {
+          e.preventDefault();
+          // Convenção do Windows: Ctrl=copiar, Shift=mover; padrão=copiar. O dropEffect muda o
+          // cursor do SO (mostra o "+" no copiar, a seta no mover) durante o arraste interno.
+          if (dskDragItem.current) e.dataTransfer.dropEffect = (e.shiftKey && !e.ctrlKey) ? 'move' : 'copy';
+        }}
         onDrop={(e) => handlePaneDrop(which, e)}
         className={`glass-panel h-full flex flex-col overflow-hidden transition-all ${which === activePane ? 'dsk-pane-active' : ''}`}
       >
@@ -3052,6 +3184,26 @@ export default function App() {
             >
               <FolderOpen size={12} /> {t('openImageBtn')}
             </button>
+            {/* Formato do "Novo disco" DESTE painel (por painel). Ao abrir uma imagem, ajusta-se sozinho
+                ao formato lido. Permite A=CoCo 35T e B=CoCo 40T (ou Dragon) ao mesmo tempo. */}
+            <label
+              className="flex items-center gap-1 text-[10px] text-[var(--text-secondary)]"
+              onClick={(e) => e.stopPropagation()}
+              title={currentLang === 'pt-br'
+                ? 'Formato que o botão "Novo" cria NESTE painel. Ajusta-se sozinho ao abrir uma imagem.'
+                : 'Format the "New" button creates in THIS pane. Auto-adjusts when you open an image.'}
+            >
+              <span className="font-semibold">{currentLang === 'pt-br' ? 'Novo' : 'New'}:</span>
+              <select
+                value={paneNewFormat[which]}
+                onChange={(e) => { e.stopPropagation(); handlePaneFormatChange(which, e.target.value as PaneFmt); }}
+                className="input-select text-[10px] py-0.5 flex-1"
+              >
+                <option value="coco35">CoCo 35T</option>
+                <option value="coco40">CoCo 40T (JDOS)</option>
+                <option value="dragon">Dragon 40T</option>
+              </select>
+            </label>
             {/* Legenda de formatos só quando vazio; ao carregar, o NOME da imagem sobe nesse lugar
                 (libera espaço vertical p/ os controles do contêiner — ex.: "Buscar disco"). */}
             {!pane && <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('imgFormatsLegend')}</span>}
@@ -3115,7 +3267,7 @@ export default function App() {
                         // Captura o buffer do disco ATUAL no início do arraste (imune a trocar de disco no
                         // container entre arrastar e soltar). Cada arquivo é extraído deste disco exato.
                         dskDragItem.current = { pane: which, entries: inSel ? selectedDsk!.entries : [f], srcBuffer: pane.buffer ? new Uint8Array(pane.buffer) : undefined };
-                        e.dataTransfer.effectAllowed = 'copy';
+                        e.dataTransfer.effectAllowed = 'copyMove'; // permite copiar (Ctrl) e mover (Shift)
                       }}
                       onClick={(e) => handleSelectDskFile(which, f, e)}
                       onDoubleClick={() => handleRunFileInXroar(which, f)}
@@ -3125,7 +3277,31 @@ export default function App() {
                         ? { background: 'rgba(255,140,26,0.16)', boxShadow: 'inset 0 0 8px rgba(255,140,26,0.45)', color: '#ffb066' }
                         : undefined}
                     >
-                      <td className="p-2 font-mono">{f.name}</td>
+                      <td className="p-2 font-mono">
+                        {/* Alça de arraste-para-fora: drag NATIVO do SO → soltar o arquivo no Windows Explorer.
+                            (O resto da linha continua sendo o arraste interno A→B.) stopPropagation evita o
+                            onDragStart do <tr>; preventDefault cancela o DnD HTML5 e deixa o startDrag nativo agir. */}
+                        <span
+                          draggable
+                          onMouseDown={(e) => { const tr = (e.currentTarget as HTMLElement).closest('tr'); if (tr) tr.setAttribute('draggable', 'false'); }}
+                          onMouseUp={(e) => { const tr = (e.currentTarget as HTMLElement).closest('tr'); if (tr) tr.setAttribute('draggable', 'true'); }}
+                          onDragStart={(e) => {
+                            // Sem isto, o Chromium dispara o arraste da <tr> (interno), não o da alça. Desativamos
+                            // o draggable da <tr> no mousedown → o arraste parte da ALÇA; restauramos logo depois.
+                            e.stopPropagation();
+                            e.preventDefault();
+                            const tr = (e.currentTarget as HTMLElement).closest('tr');
+                            window.cocoApi.startFileDrag?.(pane.buffer, f, f.fullName);
+                            if (tr) setTimeout(() => tr.setAttribute('draggable', 'true'), 0);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          title={t('dskDragOutHint')}
+                          className="cursor-grab mr-1 select-none text-[var(--text-muted)] hover:text-[var(--primary)]"
+                          style={{ display: 'inline-block', padding: '0 3px', fontSize: 13 }}
+                        >⠿</span>
+                        {f.name}
+                      </td>
                       <td className="p-2 text-center">{f.ext}</td>
                       <td className="p-2 text-right font-mono">{f.totalSize} B</td>
                       <td className="p-2 text-center font-mono">{f.granuleChain ? f.granuleChain.length : (f.sectors ? `${f.sectors.length}s` : '-')}</td>
@@ -3163,16 +3339,16 @@ export default function App() {
                 return (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'nowrap', justifyContent: 'center', flexShrink: 0 }}>
                     <button
-                      onClick={() => { setDefragOrder('dir'); setDefragModal({ which }); }}
-                      disabled={imageBusy || !pane.files.length || isDragon}
+                      onClick={() => { if (isDragon) { handleDragonDefrag(which); } else { setDefragOrder('dir'); setDefragModal({ which }); } }}
+                      disabled={imageBusy || !pane.files.length}
                       className="dsk-tool" style={{ padding: '3px 8px', fontSize: 10, whiteSpace: 'nowrap' }}
-                      title={isDragon ? (currentLang === 'pt-br' ? 'Discos Dragon são somente leitura nesta versão' : 'Dragon disks are read-only in this version') : (currentLang === 'pt-br' ? 'Desfragmentar o disco inteiro (reescreve numa imagem nova, contígua)' : 'Defragment the whole disk (rewrite to a fresh contiguous image)')}
+                      title={isDragon ? (currentLang === 'pt-br' ? 'Desfragmentar o disco Dragon inteiro (reescreve os arquivos contíguos + regrava bitmap/diretório)' : 'Defragment the whole Dragon disk (rewrite files contiguous + rebuild bitmap/directory)') : (currentLang === 'pt-br' ? 'Desfragmentar o disco inteiro (reescreve numa imagem nova, contígua)' : 'Defragment the whole disk (rewrite to a fresh contiguous image)')}
                     >DEFRAG</button>
                     <button
                       onClick={() => sel && handleDefragFile(which, sel)}
                       disabled={imageBusy || !selFrag || isDragon}
                       className="dsk-tool" style={{ padding: '3px 8px', fontSize: 10, whiteSpace: 'nowrap' }}
-                      title={currentLang === 'pt-br' ? 'Desfragmentar apenas o arquivo selecionado (precisa de um vão contíguo livre)' : 'Defragment only the selected file (needs a contiguous free run)'}
+                      title={isDragon ? (currentLang === 'pt-br' ? 'No Dragon a desfragmentação é por DISCO inteiro — use o botão DEFRAG' : 'On Dragon, defragmentation is whole-disk — use the DEFRAG button') : (currentLang === 'pt-br' ? 'Desfragmentar apenas o arquivo selecionado (precisa de um vão contíguo livre)' : 'Defragment only the selected file (needs a contiguous free run)')}
                     >{currentLang === 'pt-br' ? 'DEFRAG ARQ.' : 'DEFRAG FILE'}</button>
                   </div>
                 );
@@ -3906,57 +4082,36 @@ export default function App() {
               <button onClick={handleDskNew} title={t('dskToolNew')} aria-label={t('dskToolNew')} className="dsk-tool"><Plus size={15} /></button>
               <button onClick={handleDskInject} title={t('dskToolInject')} aria-label={t('dskToolInject')} className="dsk-tool"><FileInput size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={() => handleDskCopy(false)} disabled={!selectedDsk?.entries.length} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
-              <button onClick={() => handleDskCopy(true)} disabled={!selectedDsk?.entries.length} title={t('dskToolCut')} aria-label={t('dskToolCut')} className="dsk-tool"><Scissors size={15} /></button>
-              <button onClick={handleDskPaste} disabled={!dskClipboard} title={t('dskToolPaste')} aria-label={t('dskToolPaste')} className="dsk-tool"><Clipboard size={15} /></button>
-              <button onClick={handleDskDelete} disabled={!selectedDsk?.entries.length} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
-              <button
-                onClick={handleDskEditBas}
-                disabled={!(selectedDsk?.entries.length && (selectedDsk.entries[0].ext || '').toUpperCase() === 'BAS')}
-                title={t('Editar .BAS no editor BASIC', 'Edit .BAS in the BASIC editor')}
-                aria-label="Editar BAS"
-                className="dsk-tool"
-              >
-                <FileCode2 size={15} />
-              </button>
-              <button
-                onClick={handleDskExtractToPc}
-                disabled={!selectedDsk?.entries.length}
-                title={currentLang === 'pt-br' ? 'Extrair o(s) arquivo(s) selecionado(s) para uma pasta do Windows' : 'Extract the selected file(s) to a Windows folder'}
-                aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'}
-                className="dsk-tool"
-              >
-                <Download size={15} />
-              </button>
-              <button
-                onClick={handleDskCompare}
-                disabled={selectedDsk?.entries.length !== 1}
-                title={currentLang === 'pt-br' ? 'Comparar o arquivo selecionado com um arquivo do PC (diff hexadecimal)' : 'Compare the selected file with a file from the PC (hex diff)'}
-                aria-label={currentLang === 'pt-br' ? 'Comparar' : 'Compare'}
-                className="dsk-tool"
-              >
-                <GitCompare size={15} />
-              </button>
-              <button
-                onClick={handleConvertToDragon}
-                disabled={!(selectedDsk?.entries.length === 1 && selectedDsk.entries[0].fileType === 2 && getPane(selectedDsk.pane)?.format !== 'dragon')}
-                title={currentLang === 'pt-br' ? 'Converter o .BIN de máquina (CoCo) para Dragon — testa-se antes de salvar' : 'Convert the (CoCo) machine-code .BIN to Dragon — test before saving'}
-                aria-label={currentLang === 'pt-br' ? 'Converter para Dragon' : 'Convert to Dragon'}
-                className="dsk-tool"
-                style={{ color: '#22d3ee' }}
-              >
-                <ArrowRightLeft size={15} />
-              </button>
+              {/* Ações de ARQUIVO — CONTEXTUAIS: aparecem só quando há arquivo(s) selecionado(s).
+                  (Sem botão Recortar: mover é por arrastar com Shift; copiar com Ctrl.) */}
+              {!!selectedDsk?.entries.length && (
+                <>
+                  <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+                  <button onClick={() => handleDskCopy(false)} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
+                  <button onClick={handleDskDelete} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
+                  <button onClick={handleDskEditBas} disabled={(selectedDsk.entries[0].ext || '').toUpperCase() !== 'BAS'} title={t('Editar .BAS no editor BASIC', 'Edit .BAS in the BASIC editor')} aria-label="Editar BAS" className="dsk-tool"><FileCode2 size={15} /></button>
+                  <button onClick={handleDskExtractToPc} title={currentLang === 'pt-br' ? 'Extrair o(s) arquivo(s) selecionado(s) para uma pasta do Windows' : 'Extract the selected file(s) to a Windows folder'} aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'} className="dsk-tool"><Download size={15} /></button>
+                  <button onClick={handleDskCompare} disabled={selectedDsk.entries.length !== 1} title={currentLang === 'pt-br' ? 'Comparar com um arquivo do PC (diff hexadecimal)' : 'Compare with a file from the PC (hex diff)'} aria-label={currentLang === 'pt-br' ? 'Comparar' : 'Compare'} className="dsk-tool"><GitCompare size={15} /></button>
+                  <button onClick={handleConvertToDragon} disabled={!(selectedDsk.entries.length === 1 && selectedDsk.entries[0].fileType === 2 && getPane(selectedDsk.pane)?.format !== 'dragon')} title={currentLang === 'pt-br' ? 'Converter o .BIN de máquina (CoCo) para Dragon — testa-se antes de salvar' : 'Convert the (CoCo) machine-code .BIN to Dragon — test before saving'} aria-label={currentLang === 'pt-br' ? 'Converter para Dragon' : 'Convert to Dragon'} className="dsk-tool" style={{ color: '#22d3ee' }}><ArrowRightLeft size={15} /></button>
+                </>
+              )}
+              {/* Colar — só quando há algo na área de transferência. */}
+              {dskClipboard && (
+                <>
+                  <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+                  <button onClick={handleDskPaste} title={t('dskToolPaste')} aria-label={t('dskToolPaste')} className="dsk-tool"><Clipboard size={15} /></button>
+                </>
+              )}
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleCopyPaneAToB} disabled={!paneA} title={t('dskToolCopyAtoB')} aria-label={t('dskToolCopyAtoB')} className="dsk-tool"><ArrowRight size={15} /></button>
+              {paneA && <button onClick={handleCopyPaneAToB} title={t('dskToolCopyAtoB')} aria-label={t('dskToolCopyAtoB')} className="dsk-tool"><ArrowRight size={15} /></button>}
+              <button onClick={handleDskSort} disabled={!getPane(activePane)?.files.length} title={t('dskToolSort')} aria-label={t('dskToolSort')} className="dsk-tool"><ArrowDownAZ size={15} /></button>
+              {getPane(activePane)?.container && (
+                <button onClick={handleDskSortAll} disabled={!getPane(activePane)?.files.length} title={t('dskToolSortAll')} aria-label={t('dskToolSortAll')} className="dsk-tool"><Layers size={15} /></button>
+              )}
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleDskUndo} disabled={dskUndo.length === 0} title={t('dskToolUndo')} aria-label={t('dskToolUndo')} className="dsk-tool"><Undo2 size={15} /></button>
               <button onClick={handleDskRedo} disabled={dskRedo.length === 0} title={t('dskToolRedo')} aria-label={t('dskToolRedo')} className="dsk-tool"><Redo2 size={15} /></button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleDskSort} disabled={!getPane(activePane)?.files.length || getPane(activePane)?.format === 'dragon'} title={t('dskToolSort')} aria-label={t('dskToolSort')} className="dsk-tool"><ArrowDownAZ size={15} /></button>
-              {getPane(activePane)?.container && (
-                <button onClick={handleDskSortAll} disabled={!getPane(activePane)?.files.length || getPane(activePane)?.format === 'dragon'} title={t('dskToolSortAll')} aria-label={t('dskToolSortAll')} className="dsk-tool"><Layers size={15} /></button>
-              )}
               {/* Salvar = sobrescreve o arquivo de origem (sem diálogo). Destaque amarelo se há alterações. */}
               <button
                 onClick={handleDskSaveOverwrite}
@@ -4433,6 +4588,29 @@ export default function App() {
               <button onClick={() => setDskNewConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
               <button onClick={() => doDskNew(dskNewConfirm)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
                 <Plus size={13} /> {currentLang === 'pt-br' ? 'Criar' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: recriar a imagem do painel noutro formato RS-DOS (35↔40) MANTENDO os arquivos. */}
+      {reformatConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setReformatConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Recriar imagem em ${reformatConfirm.newFmt === 'coco40' ? '40T (JDOS)' : '35T'}?` : `Re-create image as ${reformatConfirm.newFmt === 'coco40' ? '40T (JDOS)' : '35T'}?`}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `O Painel ${reformatConfirm.which} vira um disco ${reformatConfirm.newFmt === 'coco40' ? '40 trilhas (JDOS/CODIMEX)' : '35 trilhas (DECB)'} MANTENDO os ${reformatConfirm.count} arquivo(s). Se algum arquivo não couber no novo formato, nada é alterado. (Operação não salva — use "Salvar" depois.)`
+                : `Pane ${reformatConfirm.which} becomes a ${reformatConfirm.newFmt === 'coco40' ? '40-track (JDOS/CODIMEX)' : '35-track (DECB)'} disk KEEPING the ${reformatConfirm.count} file(s). If any file doesn't fit the new format, nothing changes. (Not saved — use "Save" afterwards.)`}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setReformatConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={() => reformatPaneKeepingFiles(reformatConfirm.which, reformatConfirm.newFmt)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase">
+                {currentLang === 'pt-br' ? 'Recriar' : 'Re-create'}
               </button>
             </div>
           </div>

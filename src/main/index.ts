@@ -1,11 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
-import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode } from './converter/dragondos';
+import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
@@ -162,6 +162,43 @@ ipcMain.handle('dsk-extract-raw', async (_, dskUint8Array: Uint8Array, entry: an
   }
 });
 
+// 2b2. Native drag-OUT: extract the selected file to a temp path and start an OS drag so the user can
+// drop it into Explorer. Uses ipcMain.on (fire-and-forget) because startDrag takes over the gesture.
+// Electron REQUIRES a non-empty icon (else startDrag throws). We build one from a raw bitmap (always
+// valid), falling back from a tiny PNG — a bad/empty icon was the silent cause of "drag does nothing".
+function makeDragIcon() {
+  let img = nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAKklEQVR42mNgGAWjYBSMglEwCkbBKBgFo2AUjIJRMApGwSgYBaNgFAwAAB0+AAFr0pK3AAAAAElFTkSuQmCC'
+  );
+  if (!img || img.isEmpty()) {
+    const s = 32, bmp = Buffer.alloc(s * s * 4);
+    for (let i = 0; i < s * s; i++) { bmp[i * 4] = 0x3f; bmp[i * 4 + 1] = 0xcf; bmp[i * 4 + 2] = 0x3f; bmp[i * 4 + 3] = 0xff; }
+    img = nativeImage.createFromBitmap(bmp, { width: s, height: s });
+  }
+  return img;
+}
+let DRAG_ICON: Electron.NativeImage | null = null;
+ipcMain.on('start-file-drag', (event, dskUint8Array: Uint8Array, entry: any, fileName: string) => {
+  try {
+    if (!DRAG_ICON) DRAG_ICON = makeDragIcon();
+    const buf = Buffer.from(dskUint8Array);
+    const raw = entry?.format === 'dragon'
+      ? extractDragonFile(stripVdk(buf), entry)
+      : extractDskFile(buf, entry as DskFileEntry);
+    const safe = (fileName || 'FILE.BIN').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'FILE.BIN';
+    const dir = path.join(app.getPath('temp'), 'ccc-dragout');
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = path.join(dir, safe);
+    fs.writeFileSync(tmp, Buffer.from(raw));
+    event.sender.startDrag({ file: tmp, icon: DRAG_ICON });
+  } catch (error: any) {
+    // startDrag falhando não pode derrubar o app; mostra o motivo no console de diagnóstico.
+    const msg = error?.message || String(error);
+    console.error('start-file-drag error:', msg);
+    mainWindow?.webContents.send('drag-error', msg);
+  }
+});
+
 // 2c. Add raw bytes as a file into a .dsk image (paste / drop)
 ipcMain.handle('dsk-add-bytes', async (_, dskUint8Array: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, dataUint8Array: Uint8Array) => {
   try {
@@ -185,10 +222,10 @@ ipcMain.handle('dsk-defrag-file', async (_, dskUint8Array: Uint8Array, entry: Ds
   }
 });
 
-// 2d. Create a fresh blank 35-track RS-DOS .dsk image
-ipcMain.handle('dsk-new-blank', async () => {
+// 2d. Create a fresh blank RS-DOS .dsk image. tracks: 35 (standard DECB) or 40 (JDOS/CODIMEX).
+ipcMain.handle('dsk-new-blank', async (_, tracks?: number) => {
   try {
-    const img = encodeDsk([]);
+    const img = encodeDsk([], tracks === 40 ? 40 : 35);
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -472,10 +509,22 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
   }
 });
 
-// 3c2. Sort a .dsk image's directory entries alphabetically (A→Z)
+// 3c2. Sort a .dsk image's directory entries alphabetically (A→Z). Routes RS-DOS vs Dragon by format.
 ipcMain.handle('dsk-sort-directory', async (_, dskUint8Array: Uint8Array) => {
   try {
-    const img = sortDskDirectory(Buffer.from(dskUint8Array));
+    const buf = Buffer.from(dskUint8Array);
+    const img = looksDragon(buf) ? sortDragonDirectory(buf) : sortDskDirectory(buf);
+    return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 3c2b. Defragment a WHOLE Dragon DOS disk (rewrites files contiguously + rebuilds bitmap/directory).
+// RS-DOS defrag stays per-file (dsk-defrag-file, animated client-side); Dragon has no granule FAT.
+ipcMain.handle('dsk-defrag-dragon', async (_, dskUint8Array: Uint8Array) => {
+  try {
+    const img = defragDragonDisk(Buffer.from(dskUint8Array));
     return { success: true, image: new Uint8Array(img) };
   } catch (error: any) {
     return { success: false, error: error.message };

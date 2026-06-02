@@ -10,6 +10,48 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.11 — 2026-06-02
+--------------------------------------------------------------------------------
+ADICIONADO (Dragon DOS — ordenar, desfragmentar, DS/80T)
+  • ORDENAR (A-Z) e DESFRAGMENTAR discos Dragon (antes bloqueados). Sort reescreve só o
+    diretório (não move dados); defrag de disco inteiro reescreve os arquivos contíguos +
+    regrava bitmap/diretório. Validado em auto-teste (dados/geometria preservados).
+  • Suporte Dragon DUPLA-FACE (DS) e 80 TRILHAS: detecção/leitura/escrita generalizadas por
+    geometria (SS spt=18 / DS spt=36; setor de formato em LSN 20×spt). Baseado nas specs do
+    Greaseweazle (todos os formatos Dragon = 18 setores/cabeça, 256B; DS = 36 setores/trilha
+    lógicos, imagem em ordem LSN plana). Auto-testado em 40T-DS, 80T-SS, 80T-DS.
+ADICIONADO (Discos 40 trilhas + formato por painel)
+  • Criar disco novo de 40T (JDOS/CODIMEX) — encodeDsk parametrizado (35/40T; 78 grânulos no 40T).
+  • FORMATO DE "NOVO DISCO" POR PAINEL: cada painel tem seu seletor (CoCo 35T / CoCo 40T / Dragon
+    40T), persistente; o "Novo" cria com o formato do painel ativo; ao ABRIR uma imagem, o seletor
+    se auto-ajusta ao formato lido. (Removido o seletor global "Novo: 35T/40T".) Drop num painel
+    vazio cria a imagem no formato escolhido do painel.
+  • TROCAR o formato (35↔40) de uma imagem já com arquivos: recria no novo formato MANTENDO os
+    arquivos (aborta sem alterar se algo não couber). CoCo↔Dragon avisa que precisa do conversor.
+ADICIONADO (Arrastar para fora / UI da toolbar)
+  • DRAG-OUT nativo: alça "⠿" em cada arquivo arrasta o arquivo para o Windows Explorer
+    (Electron startDrag). Corrigido o aninhamento <span> dentro de <tr draggable> (que impedia o
+    arraste partir da alça) e o ícone do startDrag.
+  • Arraste interno A→B com a convenção do Windows: Shift=mover (remove da origem), Ctrl=copiar,
+    com feedback de cursor (dropEffect). Botão "Recortar" removido (mover é por Shift+arrastar).
+  • Toolbar da aba DSK agora é CONTEXTUAL: os botões de arquivo (Copiar/Excluir/Editar/Extrair/
+    Comparar/Converter) só aparecem com arquivo selecionado; os de disco ficam sempre visíveis.
+    (Removido o menu kebab "⋯ Mais".)
+ADICIONADO (Editor BASIC)
+  • Toggle "Vel.Export.Código" (persistente): Rápido (12ms/tecla) ou Padrão (25ms). O xroar.html
+    passou a SEMPRE digitar caractere-a-caractere (o envio em bloco fazia o CoCo descartar a 1ª
+    linha) — auditado a 3s/tecla com log por tecla.
+  • Opção "ENTER ao final" (persistente): dá um ENTER quando a última linha é código sem quebra.
+  • "Rodar com reset" NÃO injeta NEW (o hard reset já limpa a RAM); hint do NEW explica que só vale
+    sem reset. CoCo sem prime; Dragon manda um espaço (dispensa o "pressione uma tecla" da ROM).
+  • Toggle "32 colunas" (modos VDG): quebra na largura real do CoCo; a tela vira um quadro 32×16
+    CENTRALIZADO num bezel escuro, auto-ajustando à fonte. Seletor de ESCALA (P/M/G) no VDG 6847.
+  • "Negrito" desabilitado no VDG 6847 (fonte bitmap fixa do MC6847).
+CORRIGIDO
+  • "Salvar Como" de imagem Dragon agora oferece .VDK (formato nativo), além de .dsk.
+  • VDG 6847: minúsculas (vídeo inverso) na 1ª digitação e seleção que revelava a fonte do sistema.
+
+--------------------------------------------------------------------------------
 v1.0.10 — 2026-06-01
 --------------------------------------------------------------------------------
 ADICIONADO (Conversor CoCo → Dragon, experimental)

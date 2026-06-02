@@ -32,11 +32,14 @@ DRAGON / VDK (multi-formato)
     Criação de disco Dragon novo (40T SS em branco) implementada.
 [FEITO v1.0.9] Edição/gravação Dragon: adicionar/excluir/salvar + gravação GW
     ciente do formato (dragon.40ss/...). Engine com bitmap+SAB+continuação, validado.
-[ ] Dragon: ORDENAR (A-Z) e DESFRAGMENTAR (ainda bloqueados na UI).
-[ ] Dragon DS (2 lados / 80T): hoje só single-sided (18 sec/trilha) é detectado/escrito.
-[ ] Arrastar arquivo do painel PARA o Explorer (drag-out nativo, Electron
-    startDrag) — "opção 2", pausada a pedido do usuário. (Explorer→painel já
-    funciona; e há o botão Extrair p/ salvar em pasta.)
+[FEITO v1.0.11] Dragon: ORDENAR (A-Z) e DESFRAGMENTAR (engine própria; sort não move
+    dados, defrag de disco inteiro; UI desbloqueada).
+[FEITO v1.0.11] Dragon DS (2 lados) e 80 TRILHAS: detecção/leitura/escrita generalizadas
+    por geometria (SS spt=18 / DS spt=36). Baseado nas specs do Greaseweazle. Auto-testado
+    (40T-DS, 80T-SS, 80T-DS). FALTA: validar byte-a-byte contra uma .vdk DS/80T REAL; e um
+    botão "Novo Dragon DS".
+[FEITO v1.0.11] Arrastar arquivo do painel PARA o Explorer (drag-out nativo, Electron
+    startDrag, via alça "⠿"). Validado pelo usuário.
 [FEITO v1.0.10] Conversor CoCo→Dragon (casos 1 e 2: header-reformat / stub
     relocador) + fluxo testar-antes-de-salvar. Validado: ~30-43% dos pares reais
     ("ports preguiçosos") convertem; o resto foi reescrito.
@@ -68,7 +71,8 @@ DISCOS 40 TRILHAS (JDOS / CODIMEX)
     • Opções: (a) um .dsk real em amostras/ (ideal, via GW c/ coco.decb.40t ou
       gerado); (b) rodar a ROM JDOS no XRoar e extrair um disco; (c) disassemblar
       a ROM (4jdos111.ccc / 3codimex.Bin) p/ achar as constantes de formato.
-[ ] Criar disco NOVO de 40T no app (encodeDsk/dskNewBlank hoje só gera 35T).
+[FEITO v1.0.11] Criar disco NOVO de 40T no app (encodeDsk parametrizado 35/40T) +
+    formato de Novo disco POR PAINEL (CoCo 35T/40T/Dragon) + trocar 35↔40 mantendo arquivos.
 
 
 --------------------------------------------------------------------------------
@@ -76,10 +80,10 @@ UI — TOOLBAR DA ABA DSK (tende a crescer)
 --------------------------------------------------------------------------------
 [FEITO] Só ícones (removidos os labels de texto; todos já têm tooltip) + ícone
     distinto p/ "Salvar Como".
-[ ] Menu de excedente "⋯ Mais" (kebab, NÃO hambúrguer) para as ações menos usadas
-    (Ordenar, Ordenar Tudo, Extrair, Comparar, Editar, A→B, e o futuro Conversor),
-    deixando visíveis as frequentes (Novo, Copiar/Recortar/Colar/Excluir, Salvar,
-    Testar, GW). Idealmente overflow automático (só aparece quando falta espaço).
+[FEITO v1.0.11] Em vez do kebab, adotada TOOLBAR CONTEXTUAL: botões de arquivo só
+    aparecem com arquivo selecionado; os de disco ficam sempre visíveis. Recortar removido
+    (mover = Shift+arrastar; copiar = Ctrl). (Menu de contexto por botão-direito = futuro.)
+[ ] (Opcional) Menu de contexto (botão direito) no arquivo p/ as ações de arquivo.
 [ ] Split-buttons/grupos: "Salvar ▾" (Salvar/Salvar Como) e "Destino ▾"
     (Testar Painel/Gravar GW).
 
@@ -117,9 +121,8 @@ EDITOR BASIC
     PERSISTENTES (Normal/VDG/VDG 6847), todos EDITÁVEIS. O "VDG 6847" usa os glifos
     PIXELADOS reais do MC6847 (char-ROM público em src/renderer/src/mc6847font.ts,
     canvas) + seta-pra-cima (↑) para '^'. NÃO usa o CGS.
-[ ] (Opcional) Ajustar o tamanho/escala do canvas VDG 6847 se o usuário quiser
-    maior/menor; e avaliar quebra em 32 colunas (tela real do CoCo) — hoje é
-    sem-quebra com rolagem horizontal.
+[FEITO v1.0.11] Escala do canvas VDG 6847 (P/M/G) + toggle "32 colunas" (quebra na
+    largura real do CoCo, tela 32×16 centralizada num bezel). Persistentes.
 
 
 --------------------------------------------------------------------------------

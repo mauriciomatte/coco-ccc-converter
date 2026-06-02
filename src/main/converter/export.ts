@@ -112,11 +112,16 @@ export interface DskFileInput {
 }
 
 /**
- * Writes one or more machine-language files into a fresh 35-track RS-DOS .dsk image.
- * Files are allocated from granule 0 upward. Round-trips through parseDsk/extractDskFile.
+ * Writes one or more machine-language files into a fresh RS-DOS .dsk image.
+ * `tracks` selects the geometry: 35 (standard DECB, 161,280 B) or 40 (JDOS/CODIMEX, 184,320 B).
+ * The directory track is always 17 and there are 2 granules per track except track 17, so the
+ * granule count is 2×(tracks−1) (68 for 35T, 78 for 40T). Files are allocated from granule 0 up.
+ * Round-trips through parseDsk/extractDskFile (which derive the geometry from the image size).
  */
-export function encodeDsk(files: DskFileInput[]): Buffer {
-  const img = Buffer.alloc(DSK_BYTES, 0x00);
+export function encodeDsk(files: DskFileInput[], tracks = 35): Buffer {
+  if (tracks !== 35 && tracks !== 40) throw new Error(`Unsupported track count ${tracks} (use 35 or 40).`);
+  const totalGranules = (tracks - 1) * 2; // track 17 reserved → 68 (35T) or 78 (40T)
+  const img = Buffer.alloc(tracks * BYTES_PER_TRACK, 0x00);
   const fatOffset = 17 * BYTES_PER_TRACK + 256;
   img.fill(0xFF, fatOffset, fatOffset + 256); // 0xFF = free granule
   const dirBase = 17 * BYTES_PER_TRACK + 2 * 256;
@@ -125,8 +130,8 @@ export function encodeDsk(files: DskFileInput[]): Buffer {
   files.forEach((f, fi) => {
     const bin = buildLoadmBin(f.loadAddr, f.execAddr, f.payload);
     const n = Math.max(1, Math.ceil(bin.length / GRANULE_BYTES));
-    if (nextGranule + n > 68) {
-      throw new Error(`Not enough room on a 35-track disk for "${f.name}" (needs ${n} granules; ${68 - nextGranule} free).`);
+    if (nextGranule + n > totalGranules) {
+      throw new Error(`Not enough room on a ${tracks}-track disk for "${f.name}" (needs ${n} granules; ${totalGranules - nextGranule} free).`);
     }
     const first = nextGranule;
 
