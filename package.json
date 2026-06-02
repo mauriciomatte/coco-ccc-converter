@@ -60,6 +60,7 @@
         "AppImage",
         "deb"
       ],
+      "maintainer": "Mauricio Matte <matteadv@gmail.com>",
       "category": "Development"
     },
     "mac": {
