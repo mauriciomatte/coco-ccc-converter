@@ -10,6 +10,17 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.16 — 2026-06-02
+--------------------------------------------------------------------------------
+INFRAESTRUTURA (padronização do nome dos instaladores)
+  • Todos os artefatos (Windows .exe, Linux .AppImage/.deb, macOS .dmg/.zip) agora seguem o mesmo
+    radical: "CoCoDSK&CCCUtility_Setup <versao>.<ext>". Antes, só o instalador do Windows usava esse
+    nome; Linux/macOS saíam com nomes padrão do electron-builder. Feito via "artifactName" global
+    no package.json.
+  • Correção do build .deb (1.0.15 falhou no CI): definido "linux.maintainer" (e-mail exigido pelo
+    electron-builder para empacotar Debian).
+
+--------------------------------------------------------------------------------
 v1.0.15 — 2026-06-02
 --------------------------------------------------------------------------------
 INFRAESTRUTURA (build multi-SO via GitHub Actions)

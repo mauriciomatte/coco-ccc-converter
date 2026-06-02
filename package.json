@@ -1,6 +1,6 @@
 {
   "name": "coco-ccc-converter",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "description": "TRS-80 Color Computer CAS/WAV/DSK to CCC EPROM Converter",
   "main": "./out/main/index.js",
   "author": "Antigravity CoCo Team",
@@ -36,6 +36,7 @@
   "build": {
     "appId": "com.emucoco.cccconverter",
     "productName": "CoCo CCC Converter",
+    "artifactName": "CoCoDSK&CCCUtility_Setup ${version}.${ext}",
     "directories": {
       "output": "dist"
     },

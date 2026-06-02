@@ -10,6 +10,17 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.16 — 2026-06-02
+--------------------------------------------------------------------------------
+INFRASTRUCTURE (installer filename standardization)
+  • All artifacts (Windows .exe, Linux .AppImage/.deb, macOS .dmg/.zip) now share the same stem:
+    "CoCoDSK&CCCUtility_Setup <version>.<ext>". Previously only the Windows installer used this name;
+    Linux/macOS came out with electron-builder default names. Done via a global "artifactName" in
+    package.json.
+  • Fixed the .deb build (1.0.15 failed in CI): set "linux.maintainer" (e-mail required by
+    electron-builder to package Debian).
+
+--------------------------------------------------------------------------------
 v1.0.15 — 2026-06-02
 --------------------------------------------------------------------------------
 INFRASTRUCTURE (multi-OS build via GitHub Actions)
