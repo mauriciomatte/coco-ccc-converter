@@ -120,6 +120,7 @@ export interface Os9Node {
   modified: Os9Date | null;
   children?: Os9Node[];      // present iff isDir
   truncated?: boolean;       // dir not expanded (cycle/depth guard)
+  segs?: Array<{ lsn: number; sectors: number }>; // FD.SEG extents (para mapear arquivo→clusters no painel de mídia)
 }
 export interface ParsedOs9 {
   ident: Os9Ident;
@@ -302,6 +303,7 @@ function buildNode(
   const node: Os9Node = {
     name, fdLsn, isDir: fd.isDir, size: fd.size,
     attrString: fd.attrString, modified: fd.modified,
+    segs: fd.segments.map(s => ({ lsn: s.lsn, sectors: s.sectors })),
   };
   if (!fd.isDir) {
     stats.files++;
@@ -339,6 +341,19 @@ export function countFreeSectors(raw: Buffer, id: Os9Ident, base = 0): number {
   return freeClusters * id.sectorsPerCluster;
 }
 
+/** Lê o bitmap de alocação (LSN1) → bytes do mapa + total/usados de clusters (para o painel de mídia). */
+export function readClusterBitmap(raw: Buffer, base = 0): { totalClusters: number; usedClusters: number; sectorsPerCluster: number; bitmap: number[] } {
+  const id = parseIdent(raw, base);
+  const tot = Math.max(1, Math.ceil(id.totalSectors / Math.max(1, id.sectorsPerCluster)));
+  const bytes = Math.min(id.mapBytes || Math.ceil(tot / 8), Math.ceil(tot / 8) + 1);
+  const start = base + SEC;
+  const bitmap: number[] = new Array(bytes);
+  for (let i = 0; i < bytes; i++) bitmap[i] = r8(raw, start + i);
+  let used = 0;
+  for (let c = 0; c < tot; c++) if (bitmap[c >> 3] & (0x80 >> (c & 7))) used++;
+  return { totalClusters: tot, usedClusters: used, sectorsPerCluster: id.sectorsPerCluster, bitmap };
+}
+
 // ---- top-level --------------------------------------------------------------
 
 export interface ParseOptions { base?: number; maxDepth?: number; }
@@ -374,5 +389,334 @@ export function flattenOs9(root: Os9Node): Array<{ path: string; node: Os9Node }
     }
   };
   walk(root, '/');
+  return out;
+}
+
+// =============================================================================
+//  WRITE ENGINE (RBF) — O1: primitivas | O2: criar disco | O3: renomear / mkdir
+//  Tudo opera num Buffer `raw` (base=0 = o disco/partição inteira), mutando in-place.
+//  Validado por round-trip (escreve → relê com as funções de leitura acima → confere).
+// =============================================================================
+
+// ---- big-endian writers -----------------------------------------------------
+function w8(b: Buffer, o: number, v: number) { b[o] = v & 0xff; }
+function w16(b: Buffer, o: number, v: number) { b[o] = (v >> 8) & 0xff; b[o + 1] = v & 0xff; }
+function w24(b: Buffer, o: number, v: number) { b[o] = (v >> 16) & 0xff; b[o + 1] = (v >> 8) & 0xff; b[o + 2] = v & 0xff; }
+function w32(b: Buffer, o: number, v: number) { b[o] = Math.floor(v / 0x1000000) & 0xff; b[o + 1] = (v >> 16) & 0xff; b[o + 2] = (v >> 8) & 0xff; b[o + 3] = v & 0xff; }
+
+/** Escreve um nome OS-9 (último char com bit-7) em `fieldLen` bytes, zerando o campo antes. */
+function writeOs9Name(buf: Buffer, off: number, fieldLen: number, name: string) {
+  for (let i = 0; i < fieldLen; i++) buf[off + i] = 0;
+  const s = name.slice(0, fieldLen);
+  for (let i = 0; i < s.length; i++) {
+    let c = s.charCodeAt(i) & 0x7f;
+    if (i === s.length - 1) c |= 0x80; // terminador
+    buf[off + i] = c;
+  }
+}
+
+function dateToBytes5(d?: Os9Date | null): number[] {
+  if (!d) return [0, 0, 0, 0, 0];
+  return [(d.year - 1900) & 0xff, d.month & 0xff, d.day & 0xff, d.hour & 0xff, d.minute & 0xff];
+}
+
+// ---- allocation bitmap (LSN1) ----------------------------------------------
+function totalClusters(id: Os9Ident): number { return Math.ceil(id.totalSectors / id.sectorsPerCluster); }
+function clusterUsed(buf: Buffer, base: number, cluster: number): boolean {
+  const o = base + SEC + (cluster >> 3);
+  return (buf[o] & (0x80 >> (cluster & 7))) !== 0;
+}
+function setCluster(buf: Buffer, base: number, cluster: number, used: boolean) {
+  const o = base + SEC + (cluster >> 3);
+  const m = 0x80 >> (cluster & 7);
+  if (used) buf[o] |= m; else buf[o] &= ~m;
+}
+/** Acha um corrido de `n` clusters LIVRES (a partir de `from`); -1 se não houver. */
+function findFreeRun(buf: Buffer, base: number, id: Os9Ident, n: number, from = 0): number {
+  const tot = totalClusters(id);
+  for (let c = Math.max(from, 1); c + n <= tot; c++) {
+    let ok = true;
+    for (let k = 0; k < n; k++) if (clusterUsed(buf, base, c + k)) { ok = false; c += k; break; }
+    if (ok) return c;
+  }
+  return -1;
+}
+function allocRun(buf: Buffer, base: number, id: Os9Ident, n: number): number {
+  const c = findFreeRun(buf, base, id, n);
+  if (c < 0) return -1;
+  for (let k = 0; k < n; k++) setCluster(buf, base, c + k, true);
+  return c;
+}
+
+// ---- File Descriptor write --------------------------------------------------
+export interface NewFD {
+  attributes: number; owner?: number; size: number;
+  modified?: Os9Date | null; created?: Os9Date | null; links: number; segments: Os9Segment[];
+}
+/** Escreve UM setor de File Descriptor (limpa o setor antes). */
+export function writeFDSector(buf: Buffer, base: number, fdLsn: number, fd: NewFD) {
+  const o = base + fdLsn * SEC;
+  buf.fill(0, o, o + SEC);
+  w8(buf, o + FD_ATT, fd.attributes);
+  w16(buf, o + 1, fd.owner ?? 0);
+  const dm = dateToBytes5(fd.modified); for (let i = 0; i < 5; i++) buf[o + FD_DAT + i] = dm[i];
+  w8(buf, o + FD_LNK, fd.links);
+  w32(buf, o + FD_SIZ, fd.size);
+  if (fd.created) { const dc = dateToBytes5(fd.created); for (let i = 0; i < 3; i++) buf[o + FD_DCR + i] = dc[i]; }
+  let so = o + FD_SEG;
+  for (const seg of fd.segments) { w24(buf, so, seg.lsn); w16(buf, so + 3, seg.sectors); so += 5; }
+}
+
+/** Grava `data` nos setores dos segmentos (em ordem). */
+export function writeSegmentsData(buf: Buffer, base: number, segments: Os9Segment[], data: Buffer) {
+  let pos = 0;
+  for (const seg of segments) {
+    for (let s = 0; s < seg.sectors && pos < data.length; s++) {
+      const dst = base + (seg.lsn + s) * SEC;
+      const n = Math.min(SEC, data.length - pos);
+      if (dst + n <= buf.length) data.copy(buf, dst, pos, pos + n);
+      pos += n;
+    }
+  }
+}
+
+// ---- directory entry write --------------------------------------------------
+/** Offsets absolutos de cada slot de 32 bytes do diretório (em todos os segmentos alocados). */
+function dirSlotOffsets(buf: Buffer, base: number, dirFd: Os9FD): number[] {
+  const out: number[] = [];
+  for (const seg of dirFd.segments) {
+    for (let s = 0; s < seg.sectors; s++) {
+      const secOff = base + (seg.lsn + s) * SEC;
+      for (let e = 0; e < 8; e++) out.push(secOff + e * 32);
+    }
+  }
+  return out;
+}
+
+/**
+ * Adiciona uma entrada (nome → targetLsn) num diretório. Reusa um slot livre dentro do tamanho
+ * atual, ou anexa no fim (crescendo FD.SIZ; aloca +1 cluster e estende o segmento se encher).
+ * Retorna true em sucesso.
+ */
+export function addDirEntry(buf: Buffer, base: number, id: Os9Ident, dirFdLsn: number, name: string, targetLsn: number): boolean {
+  let dirFd = readFD(buf, dirFdLsn, base);
+  let slots = dirSlotOffsets(buf, base, dirFd);
+  let writeOff = -1, newSize = dirFd.size;
+  // 1) reusar buraco dentro do tamanho atual (byte0 === 0)
+  for (let i = 0; i * 32 < dirFd.size && i < slots.length; i++) {
+    if (buf[slots[i]] === 0) { writeOff = slots[i]; break; }
+  }
+  // 2) anexar no fim
+  if (writeOff < 0) {
+    const idx = Math.floor(dirFd.size / 32);
+    if (idx < slots.length) { writeOff = slots[idx]; newSize = dirFd.size + 32; }
+    else {
+      // 3) crescer: aloca +1 cluster e estende o último segmento (se contíguo) ou adiciona segmento
+      const c = allocRun(buf, base, id, 1);
+      if (c < 0) return false;
+      const newLsn = c * id.sectorsPerCluster;
+      const last = dirFd.segments[dirFd.segments.length - 1];
+      const o = base + dirFdLsn * SEC;
+      if (last && last.lsn + last.sectors === newLsn) {
+        w16(buf, o + FD_SEG + (dirFd.segments.length - 1) * 5 + 3, last.sectors + id.sectorsPerCluster);
+      } else {
+        const si = dirFd.segments.length;
+        if (FD_SEG + si * 5 + 5 > SEC) return false; // sem espaço p/ mais segmentos
+        w24(buf, o + FD_SEG + si * 5, newLsn);
+        w16(buf, o + FD_SEG + si * 5 + 3, id.sectorsPerCluster);
+      }
+      buf.fill(0, base + newLsn * SEC, base + (newLsn + id.sectorsPerCluster) * SEC);
+      dirFd = readFD(buf, dirFdLsn, base);
+      slots = dirSlotOffsets(buf, base, dirFd);
+      const idx2 = Math.floor(dirFd.size / 32);
+      writeOff = slots[idx2]; newSize = dirFd.size + 32;
+    }
+  }
+  if (writeOff < 0) return false;
+  buf.fill(0, writeOff, writeOff + 32);
+  writeOs9Name(buf, writeOff, 29, name);
+  w24(buf, writeOff + 29, targetLsn);
+  if (newSize !== dirFd.size) w32(buf, base + dirFdLsn * SEC + FD_SIZ, newSize);
+  return true;
+}
+
+/** Renomeia a entrada `oldName` para `newName` num diretório. */
+export function renameDirEntry(buf: Buffer, base: number, dirFdLsn: number, oldName: string, newName: string): boolean {
+  const dirFd = readFD(buf, dirFdLsn, base);
+  for (const off of dirSlotOffsets(buf, base, dirFd)) {
+    if (buf[off] === 0) continue;
+    if (os9Name(buf, off, 29) === oldName) { writeOs9Name(buf, off, 29, newName); return true; }
+  }
+  return false;
+}
+
+// ---- high-level ops ---------------------------------------------------------
+export interface Os9Geom { totalSectors: number; mapBytes: number; format: number; sides: number; bytes: number; }
+/** Geometrias OS-9 padrão (single-density, SPT=18, cluster=1) p/ "Novo OS-9". */
+export const OS9_GEOMETRIES: Record<string, Os9Geom> = {
+  '158k': { totalSectors: 630, mapBytes: 79, format: 0x00, sides: 1, bytes: 161280 },
+  '180k': { totalSectors: 720, mapBytes: 90, format: 0x00, sides: 1, bytes: 184320 },
+  '360k': { totalSectors: 1440, mapBytes: 180, format: 0x01, sides: 2, bytes: 368640 },
+  '720k': { totalSectors: 2880, mapBytes: 360, format: 0x03, sides: 2, bytes: 737280 },
+};
+
+/** O2 — cria um disco OS-9 RBF em branco (replica a estrutura dos blanks canônicos). */
+export function createBlankOs9(geom: Os9Geom, opts?: { name?: string; date?: Os9Date | null }): Buffer {
+  const BIT = 1, TKS = 18, SPT = 18, DIR_SECTORS = 7;
+  // Setores LIVRES = 0xFF (como o DSKINI/format real); a região de SISTEMA (LSN0..último setor do
+  // diretório) é zerada abaixo e recebe as estruturas. Replica o blank canônico byte-a-byte.
+  const buf = Buffer.alloc(geom.bytes, 0xFF);
+  const bitmapSectors = Math.ceil(geom.mapBytes / SEC);
+  const rootFDLsn = 1 + bitmapSectors;
+  const dirLsn = rootFDLsn + 1;
+  const used = dirLsn + DIR_SECTORS;
+  // zera só até a 1ª página do diretório (LSN0..dirLsn); a reserva restante do dir fica 0xFF (como o real)
+  buf.fill(0x00, 0, (dirLsn + 1) * SEC);
+  // LSN0 (ident)
+  w24(buf, 0, geom.totalSectors); w8(buf, 3, TKS); w16(buf, 4, geom.mapBytes); w16(buf, 6, BIT);
+  w24(buf, 8, rootFDLsn); w16(buf, 11, 1); w8(buf, 13, 0); w16(buf, 14, 1); w8(buf, 16, geom.format); w16(buf, 17, SPT);
+  w8(buf, 103, 0x01); // opção do path descriptor (PD.DTP/RBF) — presente no blank canônico
+  if (opts?.name && opts.name.trim()) writeOs9Name(buf, 31, 32, opts.name.toUpperCase()); else buf[31] = 0x80;
+  // bitmap: clusters 0..used-1 usados (LSN0 + bitmap + root FD + diretório)
+  for (let c = 0; c < used; c++) setCluster(buf, 0, c, true);
+  // root FD
+  writeFDSector(buf, 0, rootFDLsn, { attributes: 0xBF, owner: 0, size: 64, modified: opts?.date ?? null, created: opts?.date ?? null, links: 2, segments: [{ lsn: dirLsn, sectors: DIR_SECTORS }] });
+  // root dir data: ".." (entry0) e "." (entry1) → ambos o FD raiz
+  const d = dirLsn * SEC;
+  writeOs9Name(buf, d, 29, '..'); w24(buf, d + 29, rootFDLsn);
+  writeOs9Name(buf, d + 32, 29, '.'); w24(buf, d + 32 + 29, rootFDLsn);
+  return buf;
+}
+
+/** O3 — renomeia um arquivo/dir dentro do diretório `dirFdLsn`. */
+export function os9Rename(raw: Buffer, dirFdLsn: number, oldName: string, newName: string, base = 0): Buffer {
+  const out = Buffer.from(raw);
+  if (!renameDirEntry(out, base, dirFdLsn, oldName, newName)) throw new Error(`Entrada "${oldName}" não encontrada no diretório.`);
+  return out;
+}
+
+/** O3 — cria um subdiretório `name` dentro de `parentFdLsn`. */
+export function os9Mkdir(raw: Buffer, parentFdLsn: number, name: string, base = 0, opts?: { date?: Os9Date | null }): Buffer {
+  const out = Buffer.from(raw);
+  const id = parseIdent(out, base);
+  // aloca 1 cluster p/ o FD do novo dir + 1 cluster p/ os dados do dir
+  const fdC = allocRun(out, base, id, 1); if (fdC < 0) throw new Error('Sem espaço para o FD do diretório.');
+  const newFdLsn = fdC * id.sectorsPerCluster;
+  const dataC = allocRun(out, base, id, 1); if (dataC < 0) throw new Error('Sem espaço para os dados do diretório.');
+  const newDataLsn = dataC * id.sectorsPerCluster;
+  // FD do novo dir
+  writeFDSector(out, base, newFdLsn, { attributes: 0xBF, owner: 0, size: 64, modified: opts?.date ?? null, created: opts?.date ?? null, links: 2, segments: [{ lsn: newDataLsn, sectors: id.sectorsPerCluster }] });
+  // dados: ".." → pai, "." → o próprio
+  const d = base + newDataLsn * SEC;
+  out.fill(0, d, d + id.sectorsPerCluster * SEC);
+  writeOs9Name(out, d, 29, '..'); w24(out, d + 29, parentFdLsn);
+  writeOs9Name(out, d + 32, 29, '.'); w24(out, d + 32 + 29, newFdLsn);
+  // entrada no pai + incrementa o link count do pai (por causa do ".." do novo dir)
+  if (!addDirEntry(out, base, id, parentFdLsn, name, newFdLsn)) throw new Error('Diretório pai cheio (falha ao adicionar a entrada).');
+  const po = base + parentFdLsn * SEC;
+  w8(out, po + FD_LNK, (out[po + FD_LNK] + 1) & 0xff);
+  return out;
+}
+
+// ---- O4: inserir / excluir arquivo -----------------------------------------
+
+/** Aloca `clustersNeeded` clusters, preferindo corridas contíguas (fragmenta se preciso). Devolve
+ *  os segmentos (em setores) ou null se não couber; em falha desfaz toda a alocação. Máx. 48 segmentos. */
+function allocSegments(buf: Buffer, base: number, id: Os9Ident, clustersNeeded: number): Os9Segment[] | null {
+  const spc = id.sectorsPerCluster;
+  const segs: Os9Segment[] = [];
+  const undo = () => { for (const s of segs) for (let k = 0; k < s.sectors / spc; k++) setCluster(buf, base, s.lsn / spc + k, false); };
+  let remaining = clustersNeeded, from = 0;
+  while (remaining > 0) {
+    let placed = false;
+    for (let want = remaining; want >= 1; want--) {
+      const c = findFreeRun(buf, base, id, want, from);
+      if (c < 0) continue;
+      for (let k = 0; k < want; k++) setCluster(buf, base, c + k, true);
+      segs.push({ lsn: c * spc, sectors: want * spc });
+      remaining -= want; from = c + want; placed = true; break;
+    }
+    if (!placed || segs.length > 48) { undo(); return null; }
+  }
+  return segs;
+}
+
+/** Localiza a entrada `name` num diretório → seu FD LSN, ou -1. */
+function findDirEntry(buf: Buffer, base: number, dirFd: Os9FD, name: string): number {
+  for (const off of dirSlotOffsets(buf, base, dirFd)) {
+    if (buf[off] === 0) continue;
+    if (os9Name(buf, off, 29) === name) return r24(buf, off + 29);
+  }
+  return -1;
+}
+
+/** Remove a entrada `name` (marca byte0=0, como o OS-9). Devolve o FD LSN removido, ou -1. */
+function removeDirEntry(buf: Buffer, base: number, dirFdLsn: number, name: string): number {
+  const dirFd = readFD(buf, dirFdLsn, base);
+  for (const off of dirSlotOffsets(buf, base, dirFd)) {
+    if (buf[off] === 0) continue;
+    if (os9Name(buf, off, 29) === name) { const t = r24(buf, off + 29); buf[off] = 0; return t; }
+  }
+  return -1;
+}
+
+/** O4 — insere um arquivo regular (`data`) em `parentFdLsn` com o nome `name`. Devolve nova imagem. */
+export function os9Insert(raw: Buffer, parentFdLsn: number, name: string, data: Buffer, base = 0, opts?: { date?: Os9Date | null; attributes?: number }): Buffer {
+  const out = Buffer.from(raw);
+  const id = parseIdent(out, base);
+  const parent = readFD(out, parentFdLsn, base);
+  if (!parent.isDir) throw new Error('O destino não é um diretório.');
+  if (findDirEntry(out, base, parent, name) >= 0) throw new Error(`Já existe "${name}" no diretório.`);
+  const spc = id.sectorsPerCluster;
+  // 1) FD do arquivo (1 cluster)
+  const fdC = allocRun(out, base, id, 1); if (fdC < 0) throw new Error('Sem espaço para o FD do arquivo.');
+  const fdLsn = fdC * spc;
+  // 2) clusters de dados (fragmenta se preciso)
+  const dataClusters = Math.ceil(Math.ceil(data.length / SEC) / spc);
+  let segs: Os9Segment[] = [];
+  if (dataClusters > 0) {
+    const s = allocSegments(out, base, id, dataClusters);
+    if (!s) { setCluster(out, base, fdC, false); throw new Error('Sem espaço contíguo suficiente para os dados.'); }
+    segs = s;
+  }
+  // 3) FD + dados
+  writeFDSector(out, base, fdLsn, { attributes: opts?.attributes ?? 0x03, owner: 0, size: data.length, modified: opts?.date ?? null, created: opts?.date ?? null, links: 1, segments: segs });
+  if (data.length) writeSegmentsData(out, base, segs, data);
+  // 4) entrada no diretório pai (cresce o dir se preciso)
+  if (!addDirEntry(out, base, id, parentFdLsn, name, fdLsn)) {
+    setCluster(out, base, fdC, false);
+    for (const sg of segs) for (let k = 0; k < sg.sectors / spc; k++) setCluster(out, base, sg.lsn / spc + k, false);
+    throw new Error('Diretório pai cheio (falha ao adicionar a entrada).');
+  }
+  return out;
+}
+
+/** O4 — exclui um arquivo, ou um diretório VAZIO, de `parentFdLsn`. Libera os clusters. Devolve nova imagem. */
+export function os9Delete(raw: Buffer, parentFdLsn: number, name: string, base = 0): Buffer {
+  if (name === '.' || name === '..') throw new Error('Não é permitido excluir "." ou "..".');
+  const out = Buffer.from(raw);
+  const id = parseIdent(out, base);
+  const parent = readFD(out, parentFdLsn, base);
+  const targetLsn = findDirEntry(out, base, parent, name);
+  if (targetLsn < 0) throw new Error(`"${name}" não encontrado no diretório.`);
+  const fd = readFD(out, targetLsn, base);
+  if (fd.isDir) {
+    // só permite excluir diretório VAZIO (apenas "." e "..")
+    let realEntries = 0;
+    for (const off of dirSlotOffsets(out, base, fd)) {
+      if (out[off] === 0) continue;
+      const nm = os9Name(out, off, 29);
+      if (nm !== '.' && nm !== '..') realEntries++;
+    }
+    if (realEntries > 0) throw new Error('Diretório não está vazio.');
+  }
+  // libera clusters dos dados + do próprio FD
+  const spc = id.sectorsPerCluster;
+  for (const sg of fd.segments) for (let k = 0; k < Math.ceil(sg.sectors / spc); k++) setCluster(out, base, Math.floor(sg.lsn / spc) + k, false);
+  setCluster(out, base, Math.floor(targetLsn / spc), false);
+  // remove a entrada do pai
+  removeDirEntry(out, base, parentFdLsn, name);
+  // se era diretório, o ".." dele apontava p/ o pai → decrementa o link count do pai
+  if (fd.isDir) { const po = base + parentFdLsn * SEC; if (out[po + FD_LNK] > 0) w8(out, po + FD_LNK, out[po + FD_LNK] - 1); }
   return out;
 }

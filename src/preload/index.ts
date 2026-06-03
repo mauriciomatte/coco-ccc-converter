@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { DskFileEntry } from '../main/converter/dsk';
 import { BootstrapConfig } from '../main/converter/bootstrap';
 
@@ -41,6 +41,23 @@ const api = {
   os9Extract: (filePath: string, base: number, fdLsn: number, defaultName: string) =>
     ipcRenderer.invoke('os9-extract', filePath, base, fdLsn, defaultName),
 
+  // OS-9 escrita (buffer em memória — discos .os9 editáveis no navegador)
+  os9CreateBlank: (geomKey: string, name?: string) => ipcRenderer.invoke('os9-create-blank', geomKey, name),
+  os9PickBuffer: () => ipcRenderer.invoke('os9-pick-buffer'),
+  os9ParseBuffer: (buffer: Uint8Array) => ipcRenderer.invoke('os9-parse-buffer', buffer),
+  os9MkdirBuffer: (buffer: Uint8Array, parentFdLsn: number, name: string) => ipcRenderer.invoke('os9-mkdir-buffer', buffer, parentFdLsn, name),
+  os9RenameBuffer: (buffer: Uint8Array, dirFdLsn: number, oldName: string, newName: string) => ipcRenderer.invoke('os9-rename-buffer', buffer, dirFdLsn, oldName, newName),
+  os9InsertBuffer: (buffer: Uint8Array, parentFdLsn: number, opts?: { name?: string; data?: Uint8Array; srcPath?: string }) => ipcRenderer.invoke('os9-insert-buffer', buffer, parentFdLsn, opts),
+  os9DeleteBuffer: (buffer: Uint8Array, parentFdLsn: number, name: string) => ipcRenderer.invoke('os9-delete-buffer', buffer, parentFdLsn, name),
+  os9OpenPath: (filePath: string) => ipcRenderer.invoke('os9-open-path', filePath),
+  os9ReadFileBuffer: (buffer: Uint8Array, fdLsn: number) => ipcRenderer.invoke('os9-readfile-buffer', buffer, fdLsn),
+  os9ReadFilePath: (filePath: string, base: number, fdLsn: number) => ipcRenderer.invoke('os9-readfile-path', filePath, base, fdLsn),
+  // resolve o caminho real de um File arrastado (Electron ≥30 webUtils; fallback p/ file.path)
+  getPathForFile: (file: File) => { try { return webUtils.getPathForFile(file); } catch { return (file as any).path || ''; } },
+  os9ExtractBuffer: (buffer: Uint8Array, fdLsn: number, defaultName: string) => ipcRenderer.invoke('os9-extract-buffer', buffer, fdLsn, defaultName),
+  os9SaveBuffer: (buffer: Uint8Array, defaultName: string) => ipcRenderer.invoke('os9-save-buffer', buffer, defaultName),
+  os9SaveOverwrite: (filePath: string, buffer: Uint8Array) => ipcRenderer.invoke('os9-save-overwrite', filePath, buffer),
+
   onImageProgress: (cb: (p: any) => void) => {
     const listener = (_e: any, p: any) => cb(p);
     ipcRenderer.on('image-progress', listener);
@@ -64,6 +81,18 @@ const api = {
 
   dskNewBlank: (tracks?: number) =>
     ipcRenderer.invoke('dsk-new-blank', tracks),
+
+  // Formata a imagem RS-DOS do buffer: 'quick' (só FAT+diretório) ou 'full' (imagem toda).
+  dskFormat: (dskBuffer: Uint8Array, mode: 'quick' | 'full') =>
+    ipcRenderer.invoke('dsk-format', dskBuffer, mode),
+
+  // Seleciona um .dsk (35T RS-DOS) para inserir num slot vazio da MiniIDE.
+  pickDiskImage: () =>
+    ipcRenderer.invoke('pick-disk-image'),
+
+  // Grava/renomeia o nome do drive SIDEKICK (LSN 322) numa imagem de-doubled.
+  dskSetSidekickName: (dskBuffer: Uint8Array, name: string) =>
+    ipcRenderer.invoke('dsk-set-sidekick-name', dskBuffer, name),
 
   dskNewBlankDragon: () =>
     ipcRenderer.invoke('dsk-new-blank-dragon'),

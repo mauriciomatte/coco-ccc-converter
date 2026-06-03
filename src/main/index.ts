@@ -1,13 +1,13 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
-import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData } from './converter/os9';
+import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -34,12 +34,16 @@ function readFileWithProgress(filePath: string, total: number, phase: string): B
 }
 
 function createWindow() {
+  // Remove o menu padrão do Electron (File/Edit/View/Window/Help) — o app tem sua própria UI.
+  Menu.setApplicationMenu(null);
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
     show: false,
+    autoHideMenuBar: true, // sem barra de menu (nem ao pressionar Alt)
     title: 'CoCo CCC Converter',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
@@ -58,6 +62,13 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
+
+  // Sem o menu padrão, os atalhos de DevTools sumiriam — registramos F12 / Ctrl+Shift+I à mão.
+  mainWindow.webContents.on('before-input-event', (_e, input) => {
+    if (input.type !== 'keyDown') return;
+    const k = input.key?.toLowerCase();
+    if (k === 'f12' || (input.control && input.shift && k === 'i')) mainWindow?.webContents.toggleDevTools();
+  });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.maximize(); // abre maximizado, preenchendo a tela
@@ -154,6 +165,47 @@ ipcMain.handle('read-dsk-directory', async (_, dskUint8Array: Uint8Array) => {
     // normalmente, mas marca somente-leitura e bloqueia edições (round-trip de escrita ainda não validado).
     const hasArt = parsed.files.some(f => f.hasGraphics);
     return { success: true, format: 'rsdos', files: parsed.files, freeGranules: parsed.freeGranules, totalGranules: parsed.totalGranules, hasArt, rsdos };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2b3. Escolhe um arquivo .dsk (35T RS-DOS) para INSERIR num slot vazio da MiniIDE. Devolve os bytes
+// crus + valida que é um disco RS-DOS de 35 trilhas (161.280 B) — o único que cabe no slot doubled.
+ipcMain.handle('pick-disk-image', async () => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Inserir imagem de disco (.dsk 35 trilhas RS-DOS)',
+    properties: ['openFile'],
+    filters: [{ name: 'Disco RS-DOS 35T', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return { cancelled: true };
+  try {
+    const data = fs.readFileSync(result.filePaths[0]);
+    const ok = data.length === 161280 && isRsDosDisk(data);
+    return { success: true, name: path.basename(result.filePaths[0]), data: new Uint8Array(data), valid35tRsdos: ok, size: data.length };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2c. Formata uma imagem RS-DOS (apaga dados). 'quick' = só FAT+diretório; 'full' = imagem toda (0xFF).
+// Retorna o buffer formatado; o renderer aplica e salva pelo fluxo normal (em MiniIDE, preserva o
+// nome SIDEKICK restaurando o setor LSN 322 antes de salvar).
+ipcMain.handle('dsk-format', async (_, dskUint8Array: Uint8Array, mode: 'quick' | 'full') => {
+  try {
+    const out = formatRsDosDisk(Buffer.from(dskUint8Array), mode === 'full' ? 'full' : 'quick');
+    return { success: true, image: new Uint8Array(out) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2d. Grava/renomeia o NOME do drive SIDEKICK numa imagem RS-DOS de-doubled (LSN 322). Retorna o buffer.
+ipcMain.handle('dsk-set-sidekick-name', async (_, dskUint8Array: Uint8Array, name: string) => {
+  try {
+    const out = writeSidekickName(Buffer.from(dskUint8Array), String(name || ''));
+    return { success: true, image: new Uint8Array(out) };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
@@ -417,10 +469,10 @@ ipcMain.handle('xroar-pick-file', async () => {
 ipcMain.handle('image-analyze', async () => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Abrir imagem (MiniIDE / CoCoSDC / .dsk / .vdk)',
+    title: 'Abrir imagem (MiniIDE / CoCoSDC / OS-9 / .dsk / .vdk)',
     properties: ['openFile'],
     filters: [
-      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'vdk', 'jvc', 'dmk', 'ima', 'bin', 'raw', 'vhd'] },
+      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'os9', 'vdk', 'jvc', 'dmk', 'ima', 'bin', 'raw', 'vhd'] },
       { name: 'All Files', extensions: ['*'] },
     ],
   });
@@ -559,6 +611,7 @@ ipcMain.handle('os9-read', async (_, filePath: string, base = 0) => {
         success: true, ident: parsed.ident, root: parsed.root,
         totalFiles: parsed.totalFiles, totalDirs: parsed.totalDirs,
         freeBytes: parsed.freeBytes, usedSectors: parsed.usedSectors,
+        usage: readClusterBitmap(buf, 0),
       };
     } finally { fs.closeSync(fd); }
   } catch (error: any) {
@@ -598,6 +651,144 @@ ipcMain.handle('os9-extract', async (_, filePath: string, base: number, fdLsn: n
   }
 });
 
+// === OS-9 ESCRITA (em BUFFER — para discos .os9 avulsos editáveis no navegador) ===
+// 3c1f. Cria um disco OS-9 em branco (158K/180K/360K/720K) → retorna o buffer.
+ipcMain.handle('os9-create-blank', async (_, geomKey: string, name?: string) => {
+  try {
+    const geom = OS9_GEOMETRIES[geomKey];
+    if (!geom) return { success: false, error: `Geometria OS-9 desconhecida: ${geomKey}` };
+    const buf = createBlankOs9(geom, { name });
+    return { success: true, image: new Uint8Array(buf) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1f2. Escolhe um arquivo .os9/.dsk OS-9 e devolve o BUFFER (para edição na aba OS-9). Valida OS-9.
+ipcMain.handle('os9-pick-buffer', async () => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Abrir disco OS-9 (.os9 / .dsk)',
+    properties: ['openFile'],
+    filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk'] }, { name: 'All Files', extensions: ['*'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return { cancelled: true };
+  try {
+    const data = fs.readFileSync(result.filePaths[0]);
+    if (!isOs9DiskStrict(data, 0)) return { success: false, error: 'Não é um disco OS-9 (RBF) válido.' };
+    return { success: true, image: new Uint8Array(data), fileName: path.basename(result.filePaths[0]), filePath: result.filePaths[0] };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1j2. Sobrescreve um arquivo .os9 existente com o buffer (botão "Salvar", sem diálogo).
+ipcMain.handle('os9-save-overwrite', async (_, filePath: string, bufU8: Uint8Array) => {
+  try {
+    fs.writeFileSync(filePath, Buffer.from(bufU8));
+    return { success: true, path: filePath };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1g. Parseia um buffer OS-9 → árvore (para o navegador editável trabalhar em memória).
+ipcMain.handle('os9-parse-buffer', async (_, bufU8: Uint8Array) => {
+  try {
+    const buf = Buffer.from(bufU8);
+    const p = parseOs9(buf, {});
+    return { success: true, ident: p.ident, root: p.root, totalFiles: p.totalFiles, totalDirs: p.totalDirs, freeBytes: p.freeBytes, usage: readClusterBitmap(buf, 0) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1h. mkdir / rename num buffer OS-9 → retorna o buffer modificado.
+ipcMain.handle('os9-mkdir-buffer', async (_, bufU8: Uint8Array, parentFdLsn: number, name: string) => {
+  try { return { success: true, image: new Uint8Array(os9Mkdir(Buffer.from(bufU8), parentFdLsn, String(name))) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('os9-rename-buffer', async (_, bufU8: Uint8Array, dirFdLsn: number, oldName: string, newName: string) => {
+  try { return { success: true, image: new Uint8Array(os9Rename(Buffer.from(bufU8), dirFdLsn, String(oldName), String(newName))) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1k. O4 — inserir/excluir arquivo num buffer OS-9 (editável). Devolve o buffer modificado.
+const nowOs9Date = () => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() + 1, day: d.getDate(), hour: d.getHours(), minute: d.getMinutes() }; };
+const os9NameFromFilename = (raw: string) => {
+  const base = String(raw).split(/[\\/]/).pop() || 'FILE';
+  const clean = base.replace(/[^\x20-\x7e]/g, '').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '_').trim();
+  return (clean || 'FILE').slice(0, 28);
+};
+ipcMain.handle('os9-insert-buffer', async (_, bufU8: Uint8Array, parentFdLsn: number, opts?: { name?: string; data?: Uint8Array; srcPath?: string }) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    let data: Buffer, srcName: string;
+    if (opts?.data) { data = Buffer.from(opts.data); srcName = String(opts.name || 'FILE'); }
+    else {
+      let p = opts?.srcPath;
+      if (!p) {
+        const r = await dialog.showOpenDialog(mainWindow, { title: 'Inserir arquivo no disco OS-9', properties: ['openFile'] });
+        if (r.canceled || !r.filePaths[0]) return { cancelled: true };
+        p = r.filePaths[0];
+      }
+      data = fs.readFileSync(p);
+      srcName = opts?.name || p;
+    }
+    const name = os9NameFromFilename(srcName);
+    const image = os9Insert(Buffer.from(bufU8), parentFdLsn, name, data, 0, { date: nowOs9Date() });
+    return { success: true, image: new Uint8Array(image), name, size: data.length };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('os9-delete-buffer', async (_, bufU8: Uint8Array, parentFdLsn: number, name: string) => {
+  try { return { success: true, image: new Uint8Array(os9Delete(Buffer.from(bufU8), parentFdLsn, String(name))) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1l. Abre um arquivo OS-9 por caminho (drag-and-drop) → bytes p/ a aba OS-9.
+ipcMain.handle('os9-open-path', async (_, filePath: string) => {
+  try {
+    const data = fs.readFileSync(filePath);
+    return { success: true, image: new Uint8Array(data), fileName: filePath.split(/[\\/]/).pop() || 'DISCO.OS9', filePath };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1m. Lê os BYTES de um arquivo OS-9 (sem salvar em disco) — p/ copiar entre discos (duplo-explorer).
+ipcMain.handle('os9-readfile-buffer', async (_, bufU8: Uint8Array, fdLsn: number) => {
+  try {
+    const buf = Buffer.from(bufU8);
+    const data = readFileData(buf, readFD(buf, fdLsn, 0), 0);
+    return { success: true, data: new Uint8Array(data) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('os9-readfile-path', async (_, filePath: string, base: number, fdLsn: number) => {
+  try {
+    const buf = fs.readFileSync(filePath);
+    const data = readFileData(buf, readFD(buf, fdLsn, base), base);
+    return { success: true, data: new Uint8Array(data) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1i. Extrai um arquivo de um buffer OS-9 (segue FD.SEG) → salva no PC.
+ipcMain.handle('os9-extract-buffer', async (_, bufU8: Uint8Array, fdLsn: number, defaultName: string) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    const buf = Buffer.from(bufU8);
+    const fd = readFD(buf, fdLsn, 0);
+    const data = readFileData(buf, fd, 0);
+    const res = await dialog.showSaveDialog(mainWindow, { title: 'Extrair arquivo OS-9', defaultPath: defaultName });
+    if (res.canceled || !res.filePath) return { cancelled: true };
+    fs.writeFileSync(res.filePath, data);
+    return { success: true, path: res.filePath, size: data.length };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1j. Salva um buffer OS-9 como arquivo .os9 (Salvar Como).
+ipcMain.handle('os9-save-buffer', async (_, bufU8: Uint8Array, defaultName: string) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: 'Salvar disco OS-9', defaultPath: defaultName,
+      filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk'] }],
+    });
+    if (res.canceled || !res.filePath) return { cancelled: true };
+    fs.writeFileSync(res.filePath, Buffer.from(bufU8));
+    return { success: true, path: res.filePath };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
 // 3c1c2. Write ONE MiniIDE disk back IN PLACE into the .img at its slot offset. The disk must be a
 // standard 161,280-byte (35-track) RS-DOS image; the slot is 322,560 (sector-doubled).
 //   SAFETY: read tests on real .img show the doubled "odd" sub-sectors are NOT identical copies (raw
@@ -623,8 +814,18 @@ ipcMain.handle('image-write-slot', async (_, filePath: string, offset: number, d
       for (let i = 0; i < sectors; i++) disk.copy(slot, i * 2 * 256, i * 256, i * 256 + 256); // só os pares
       fs.writeSync(fd, slot, 0, SLOT, offset);
       fs.fsyncSync(fd);
+      // Validação ROUND-TRIP (Fase A): relê o slot do arquivo e confere que cada setor de-doubled
+      // (metade PAR) bate exatamente com o disco gravado. Pega gravação parcial / disco/SO com problema
+      // ANTES do usuário levar o .img para o cartão real.
+      const verify = Buffer.alloc(SLOT);
+      fs.readSync(fd, verify, 0, SLOT, offset);
+      for (let i = 0; i < sectors; i++) {
+        if (Buffer.compare(verify.subarray(i * 2 * 256, i * 2 * 256 + 256), disk.subarray(i * 256, i * 256 + 256)) !== 0) {
+          return { success: false, error: `Verificação pós-gravação falhou no setor ${i} (round-trip não confere) — a gravação pode estar corrompida.` };
+        }
+      }
     } finally { fs.closeSync(fd); }
-    return { success: true };
+    return { success: true, verified: true };
   } catch (error: any) {
     return { success: false, error: error.message };
   }

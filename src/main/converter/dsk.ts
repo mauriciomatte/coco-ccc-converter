@@ -595,3 +595,63 @@ export function deleteDskFile(dskBuffer: Buffer, entry: DskFileEntry): Buffer {
   }
   return img;
 }
+
+// O SIDEKICK guarda o nome do drive na trilha 17, setor ~17 (LSN 322), como um "catálogo": entradas
+// de 16 B em passo de 32 B (16 dados + 16 zeros), com a ENTRADA 0 carregando o nome (8 chars + NUL).
+const SK_NAME_LSN = 322; // de-doubled offset 82.432
+
+/** Um setor está "em branco" (drive sem nome) se é só 0xFF/0x00? */
+function isBlankSector(buf: Buffer, off: number): boolean {
+  for (let i = 0; i < 256; i++) { const v = buf[off + i]; if (v !== 0xFF && v !== 0x00) return false; }
+  return true;
+}
+
+/**
+ * Escreve/renomeia o NOME do drive SIDEKICK numa imagem RS-DOS DE-DOUBLED (161.280 B). Retorna NOVO
+ * buffer. Se o drive já tem nome (catálogo existe em LSN 322), sobrescreve SÓ o nome (seguro). Se está
+ * sem nome (LSN 322 todo 0xFF), CONSTRÓI o catálogo replicando a estrutura observada do SIDEKICK
+ * (1ªs 8 entradas do diretório real, 16 B cada, passo 32 B) com a entrada 0 levando o nome.
+ * (O caso "sem nome" é EXPERIMENTAL — validar no hardware antes de confiar.)
+ */
+export function writeSidekickName(disk: Buffer, name: string): Buffer {
+  const off = SK_NAME_LSN * 256; // 82.432
+  if (disk.length < off + 256) throw new Error('Imagem pequena demais para o nome SIDEKICK.');
+  const out = Buffer.from(disk);
+  const nm = (name || '').toUpperCase().replace(/[^\x20-\x7e]/g, '').slice(0, 8);
+  if (isBlankSector(out, off)) {
+    // sem catálogo → construir: copia as 8 primeiras entradas do diretório real (16 B cada).
+    out.fill(0x00, off, off + 256);
+    const dirBase = 17 * 18 * 256 + 2 * 256; // trilha 17 setor 3 (LSN 308)
+    for (let e = 0; e < 8; e++) {
+      const src = dirBase + e * 32;
+      if (src + 16 <= out.length) out.copy(out, off + e * 32, src, src + 16);
+    }
+  }
+  // entrada 0: grava o nome (bytes 0–7), null-padded; preserva o resto do catálogo.
+  for (let i = 0; i < 8; i++) out[off + i] = i < nm.length ? nm.charCodeAt(i) : 0x00;
+  return out;
+}
+
+/**
+ * Formata uma imagem RS-DOS, retornando um NOVO buffer (a entrada não é mutada).
+ *  - 'full'  : disco em branco INTEIRO = tudo 0xFF (como o DSKINI/DECB FORMAT — FAT livre, diretório
+ *              vazio, dados apagados). Apaga TUDO.
+ *  - 'quick' : só zera as REFERÊNCIAS — reseta a FAT (granules → 0xFF livres) e o diretório (entradas
+ *              → 0xFF) na trilha 17; os DADOS dos granules permanecem (não-referenciados). Rápido.
+ * Observação: NÃO toca a trilha 17 setor ~17 (LSN 322 — onde o SIDEKICK guarda o nome do drive), então
+ * o 'quick' preserva o nome automaticamente; no 'full', o chamador restaura o setor do nome se desejar.
+ */
+export function formatRsDosDisk(dskBuffer: Buffer, mode: 'quick' | 'full'): Buffer {
+  const BPT = 18 * 256; // 4608
+  if (dskBuffer.length < 18 * BPT || dskBuffer.length % BPT !== 0) {
+    throw new Error(`Imagem RS-DOS inválida para formatar: ${dskBuffer.length} bytes (esperado múltiplo de 4.608).`);
+  }
+  if (mode === 'full') return Buffer.alloc(dskBuffer.length, 0xFF);
+  const tracks = dskBuffer.length / BPT;
+  const totalGranules = (tracks - 1) * 2;
+  const out = Buffer.from(dskBuffer);              // preserva os dados; reseta só FAT + diretório
+  const fatOffset = 17 * BPT + 256;                // trilha 17, setor 2
+  for (let g = 0; g < totalGranules; g++) out[fatOffset + g] = 0xFF; // granules livres
+  out.fill(0xFF, 17 * BPT + 2 * 256, 17 * BPT + 11 * 256);           // diretório vazio (entradas 0xFF)
+  return out;
+}
