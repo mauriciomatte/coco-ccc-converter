@@ -52,6 +52,8 @@ import { Os9Tab, Os9Doc } from './components/Os9Tab';
 // Changelog (histórico de versões) embutido no build a partir dos arquivos da raiz do repo.
 import changelogPt from '../../../VERSOES.TXT?raw';
 import changelogEn from '../../../VERSIONS_EN.TXT?raw';
+// Versão exibida no cabeçalho — vem do package.json, então acompanha o bump automaticamente.
+import { version as APP_VERSION } from '../../../package.json';
 import { detokenizeBasic } from './basicDetokenize';
 import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
 
@@ -3733,7 +3735,10 @@ export default function App() {
         <div className="app-logo">
           <Cpu className="text-[var(--primary)] glow-text-primary" size={28} />
           <div>
-            <h1 className="app-title-text" style={{ fontSize: '1.2rem', lineHeight: 1 }}>{t('title')}</h1>
+            <div className="flex items-end gap-1.5">
+              <h1 className="app-title-text" style={{ fontSize: '1.2rem', lineHeight: 1 }}>{t('title')}</h1>
+              <span className="app-title-text" style={{ fontSize: '0.6rem', lineHeight: 1.6, opacity: 0.6 }}>{APP_VERSION}</span>
+            </div>
             <p className="text-[10px] text-[var(--text-secondary)] font-medium tracking-wide">{t('subtitle')}</p>
           </div>
         </div>

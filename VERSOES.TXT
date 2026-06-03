@@ -10,6 +10,14 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.20 — 2026-06-03
+--------------------------------------------------------------------------------
+NOVO — Número da versão no cabeçalho
+  • A versão (ex.: "1.0.20") agora aparece ao lado do nome do app, na mesma fonte do título e com
+    metade do tamanho. Vem direto do package.json, então acompanha o bump automaticamente — número
+    exibido, changelog ("?") e instalador sempre parelhos a cada release.
+
+--------------------------------------------------------------------------------
 v1.0.19 — 2026-06-03
 --------------------------------------------------------------------------------
 MELHORADO — Aba OS-9

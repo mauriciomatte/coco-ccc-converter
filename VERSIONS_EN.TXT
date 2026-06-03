@@ -10,6 +10,14 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.20 — 2026-06-03
+--------------------------------------------------------------------------------
+NEW — Version number in the header
+  • The version (e.g. "1.0.20") now appears next to the app name, in the title's font at half the
+    size. It comes straight from package.json, so it follows the bump automatically — the displayed
+    number, the changelog ("?") and the installer stay in sync on every release.
+
+--------------------------------------------------------------------------------
 v1.0.19 — 2026-06-03
 --------------------------------------------------------------------------------
 IMPROVED — OS-9 tab
