@@ -466,7 +466,9 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
 
       {/* STATUS BAR — esquerda: volume/contagens/aviso · direita: cartão do disco + ocupação */}
       <div className="flex items-center gap-3 px-3 py-1.5 border-t border-[var(--border)] flex-shrink-0" style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-        {ident && <span>{ident.name?.trim() || '(sem volume)'} · {ident.sides === 2 ? (pt ? '2 lados' : '2 sides') : (pt ? '1 lado' : '1 side')}</span>}
+        {ident && (() => { const tk = Math.round(ident.totalSectors * 256 / 1024); return (
+          <span>{ident.name?.trim() || '(sem volume)'} · {tk >= 1024 ? (tk / 1024).toFixed(1) + ' MB' : tk + ' KB'} · {ident.sides === 2 ? (pt ? '2 lados' : '2 sides') : (pt ? '1 lado' : '1 side')}</span>
+        ); })()}
         {stats && <span>{stats.files} {pt ? 'arq' : 'files'} · {stats.dirs} dirs · {(stats.freeBytes / 1024).toFixed(0)}K {pt ? 'livres' : 'free'}</span>}
         <span style={{ color: note.toLowerCase().includes(pt ? 'erro' : 'error') ? '#f87171' : 'inherit' }}>{note}</span>
         {usage && <span className="ml-auto"><Os9MediaLegend lang={lang} /></span>}

@@ -10,6 +10,14 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.21 — 2026-06-03
+--------------------------------------------------------------------------------
+MELHORADO — Aba OS-9 (informações da mídia)
+  • As infos de volume/tamanho/lados saíram do cartão do mapa de mídia (não ficam mais repetidas) e
+    foram CONSOLIDADAS na barra de status: "volume · tamanho · lados · arquivos · pastas · livres".
+  • O cartão do mapa agora mostra só o nome do arquivo + estado (editável/leitura/não-salvo).
+
+--------------------------------------------------------------------------------
 v1.0.20 — 2026-06-03
 --------------------------------------------------------------------------------
 NOVO — Número da versão no cabeçalho

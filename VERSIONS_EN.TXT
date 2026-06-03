@@ -10,6 +10,14 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.21 — 2026-06-03
+--------------------------------------------------------------------------------
+IMPROVED — OS-9 tab (media info)
+  • Volume/size/sides moved out of the media-map card (no longer duplicated) and CONSOLIDATED into
+    the status bar: "volume · size · sides · files · folders · free".
+  • The media-map card now shows only the file name + state (editable/read-only/unsaved).
+
+--------------------------------------------------------------------------------
 v1.0.20 — 2026-06-03
 --------------------------------------------------------------------------------
 NEW — Version number in the header

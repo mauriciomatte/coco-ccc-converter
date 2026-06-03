@@ -94,17 +94,14 @@ export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, h
 
   return (
     <div style={{ width: 252, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
-      {/* cartão do disco */}
+      {/* cartão do disco — só o nome do arquivo + estado (volume/tamanho/lados ficam na barra de status) */}
       <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
-        <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
+        <div className="flex items-center gap-2">
           <HardDrive size={16} className="text-[var(--primary)]" />
           <b style={{ color: '#c4b5fd', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fileName}</b>
           <span style={{ marginLeft: 'auto', fontSize: 9, color: editable ? (dirty ? '#fbbf24' : '#34d399') : '#a78bfa', border: `1px solid ${editable ? (dirty ? '#fbbf2455' : '#34d39955') : '#a78bfa55'}`, borderRadius: 4, padding: '0 5px' }}>
             {editable ? (dirty ? (pt ? 'não salvo' : 'unsaved') : (pt ? 'editável' : 'editable')) : (pt ? 'leitura' : 'read-only')}
           </span>
-        </div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
-          {ident?.name?.trim() || '(sem volume)'} · {totKB >= 1024 ? (totKB / 1024).toFixed(1) + ' MB' : totKB + ' KB'} · {ident?.sides === 2 ? (pt ? '2 lados' : '2 sides') : (pt ? '1 lado' : '1 side')}
         </div>
       </div>
 
