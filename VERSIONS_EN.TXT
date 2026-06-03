@@ -10,6 +10,28 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.17 — 2026-06-03
+--------------------------------------------------------------------------------
+NEW — OS-9 / NitrOS-9 (RBF) support — READ
+  • Hierarchical OS-9 browser (read-only): opens OS-9 .dsk/.os9 and the OS-9 PARTITION that lives at
+    offset 0 of MiniIDE / CoCoSDC.VHD images. Browses directories (breadcrumb), shows attributes,
+    size, dates, and EXTRACTS files to the PC (follows the FD.SEG segment list).
+  • OS-9 detected BEFORE RS-DOS (an OS-9 disk also passes the RS-DOS test) — fixes classification
+    (e.g. CoCoSDC.VHD = a NitrOS-9 partition, not an "empty MiniIDE").
+
+FIXED / IMPROVED — MiniIDE (RS-DOS / SIDEKICK region)
+  • FULL 000–255 navigation: the disk selector now covers all 256 physical slots like SIDEKICK
+    (occupied / empty / non-RS-DOS), numbering matching the hardware. It used to stop at the last one.
+  • OFF-BY-ONE fix: the scanner no longer drops disks with semigraphic "DIR art" names — it used to
+    skip some slots and shift the numbering of every disk after them.
+  • parseDsk is now LOSSLESS: it keeps the EXACT filename bytes (no corruption, no vanishing files
+    with non-standard names — e.g. a semigraphic file between two normal ones). Graphic bytes show as
+    ▓ on screen, but the bytes written to the image are the real hexadecimal.
+  • "DIR art" disks (e.g. CHATWIG, CITY BOMBER) now LIST and EXTRACT, tagged "🎨 art · 🔒 read-only",
+    with editing blocked (so the artwork order isn't scrambled).
+  • SIDEKICK drive name (editable label) read and shown when present; search by slot number.
+
+--------------------------------------------------------------------------------
 v1.0.16 — 2026-06-02
 --------------------------------------------------------------------------------
 INFRASTRUCTURE (installer filename standardization)

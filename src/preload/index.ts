@@ -33,6 +33,14 @@ const api = {
   imageExtract: (filePath: string, locator: any) =>
     ipcRenderer.invoke('image-extract', filePath, locator),
 
+  // OS-9 / NitrOS-9 (RBF) — somente-leitura. os9Read devolve a árvore hierárquica; os9Extract
+  // salva um arquivo (seguindo FD.SEG) num caminho escolhido pelo usuário.
+  os9Read: (filePath: string, base = 0) =>
+    ipcRenderer.invoke('os9-read', filePath, base),
+
+  os9Extract: (filePath: string, base: number, fdLsn: number, defaultName: string) =>
+    ipcRenderer.invoke('os9-extract', filePath, base, fdLsn, defaultName),
+
   onImageProgress: (cb: (p: any) => void) => {
     const listener = (_e: any, p: any) => cb(p);
     ipcRenderer.on('image-progress', listener);

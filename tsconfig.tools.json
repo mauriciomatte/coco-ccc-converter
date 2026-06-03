@@ -14,11 +14,14 @@
   },
   "include": [
     "tools/inspect.ts",
+    "tools/os9probe.ts",
     "src/main/converter/cas.ts",
     "src/main/converter/dsk.ts",
     "src/main/converter/bin.ts",
     "src/main/converter/wav.ts",
     "src/main/converter/bootstrap.ts",
-    "src/main/converter/export.ts"
+    "src/main/converter/export.ts",
+    "src/main/converter/os9.ts",
+    "src/main/converter/dragondos.ts"
   ]
 }

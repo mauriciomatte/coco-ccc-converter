@@ -48,6 +48,7 @@ import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
 import DiskMap, { DiskLegend } from './components/DiskMap';
 import FileCompareModal from './components/FileCompareModal';
+import { Os9Browser } from './components/Os9Browser';
 // Changelog (histórico de versões) embutido no build a partir dos arquivos da raiz do repo.
 import changelogPt from '../../../VERSOES.TXT?raw';
 import changelogEn from '../../../VERSIONS_EN.TXT?raw';
@@ -624,6 +625,7 @@ export default function App() {
   }, [hexSel, showDisasm, disasmOrigin, loadAddr]);
   const [isExitModalOpen, setIsExitModalOpen] = useState<boolean>(false);
   const [showChangelog, setShowChangelog] = useState<boolean>(false); // modal "?" com o histórico de versões
+  const [os9Browser, setOs9Browser] = useState<{ filePath: string; base: number; fileName: string } | null>(null); // browser hierárquico OS-9 (RBF), somente-leitura
   const [modalBuffer, setModalBuffer] = useState<Uint8Array | null>(null);
   const [modalFileName, setModalFileName] = useState<string>('');
   // Marcas código/dados do disassembly PERSISTEM por arquivo (localStorage), chaveadas por
@@ -1342,6 +1344,18 @@ export default function App() {
   const markDirty = (which: 'A' | 'B') => setDskDirty(d => ({ ...d, [which]: true }));
   const clearDirty = (which: 'A' | 'B') => setDskDirty(d => ({ ...d, [which]: false }));
 
+  // Discos com NOMES de arte (semigráficos) são somente-leitura: listáveis e extraíveis, mas o
+  // round-trip de escrita ainda não foi validado, então qualquer reescrita de diretório (excluir,
+  // ordenar, adicionar, soltar arquivos) é BLOQUEADA para não corromper o disco no hardware real.
+  const guardEditable = (which: 'A' | 'B'): boolean => {
+    if (getPane(which)?.readOnly) {
+      addLog('Disco somente-leitura (nomes de arte/semigráficos). Edição bloqueada para não corromper — extração é permitida.',
+             'Read-only disk (art / semigraphic names). Editing blocked to avoid corruption — extraction is allowed.', 'warn');
+      return false;
+    }
+    return true;
+  };
+
   const STD_DISK = 161280; // disco RS-DOS padrão (35 trilhas)
 
   const isDragonPane = (which: 'A' | 'B'): boolean => getPane(which)?.format === 'dragon';
@@ -1390,6 +1404,7 @@ export default function App() {
       // Caminho do arquivo de origem só para imagem ÚNICA (não-contêiner) → habilita "Salvar" (sobrescrever).
       sourcePath: count > 1 ? undefined : sourcePath,
       files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules,
+      readOnly: !!res.hasArt, // disco com nomes de arte → somente-leitura (extrai, não edita)
       // Formato do disco (RS-DOS x Dragon DOS) + geometria/setores (Dragon é somente leitura).
       format: res.format, geom: res.geom, totalSectors: res.totalSectors, usedSectors: res.usedSectors, freeSectors: res.freeSectors,
       container: count > 1 ? {
@@ -1447,25 +1462,48 @@ export default function App() {
       }
     } catch (err: any) { addLog(`Trocar disco: ${err.message}`, `Switch disk: ${err.message}`, 'error'); return; }
     const res = await window.cocoApi.readDskDirectory(slice);
-    // Disco ILEGÍVEL (formato não-RS-DOS: OS-9/JVC/dupla-face/etc.): NÃO trava a navegação nem mostra
-    // lixo — navega para ele com a lista vazia e um aviso claro. (Antes: erro duro travava no disco 316.)
-    const unreadable = !res.success || isGarbledDir(res.files || []);
+    // ILEGÍVEL = só quando NÃO é RS-DOS de verdade (OS-9 / dupla-face / JVC → res.rsdos === false ou
+    // parse falhou). Um RS-DOS válido com NOMES de arte (semigráficos) NÃO é ilegível: lista normalmente,
+    // mas entra em SOMENTE-LEITURA (round-trip de escrita ainda não validado) → edições bloqueadas.
+    const entryState = c.entries?.[index]?.state;
+    const emptySlot = entryState === 'empty';
+    const unreadable = !res.success || res.rsdos === false;
+    const readOnly = !unreadable && !!res.hasArt;
     if (selectedDsk?.pane === which) setSelectedDsk(null);
     setPane(which, {
       ...pane, buffer: slice, size: slice.length, fileName: label,
       files: unreadable ? [] : res.files,
       freeGranules: res.freeGranules || 0, totalGranules: res.totalGranules || 0,
       format: res.format, geom: res.geom, totalSectors: res.totalSectors, usedSectors: res.usedSectors, freeSectors: res.freeSectors,
-      diskUnreadable: unreadable,
+      diskUnreadable: unreadable, readOnly, emptySlot,
       diskUnreadableReason: !res.success ? (res.error || 'erro') : (unreadable ? 'garbled' : undefined),
       container: { ...c, index }
     });
     clearDirty(which); // trocou para outro disco (limpo)
-    if (unreadable) {
-      const why = !res.success ? res.error : (currentLang === 'pt-br' ? 'nomes ilegíveis (provável OS-9 / dupla-face / .dsk com cabeçalho)' : 'garbled names (likely OS-9 / double-sided / headered .dsk)');
-      addLog(`Disco ${index}: formato não suportado — ${why}. Navegação continua; este disco não é editável.`,
-             `Disk ${index}: unsupported format — ${why}. Navigation continues; this disk isn't editable.`, 'warn');
+    const slotN = c.entries?.[index]?.slot ?? index;
+    if (emptySlot && !unreadable) {
+      addLog(`Disco ${slotN}: slot VAZIO (000–255). Disponível para formatar ou inserir uma imagem.`,
+             `Disk ${slotN}: EMPTY slot (000–255). Available to format or insert an image.`, 'info');
+    } else if (unreadable) {
+      const why = !res.success ? (res.os9 ? 'OS-9' : res.error) : (currentLang === 'pt-br' ? 'não é RS-DOS (provável OS-9 / dupla-face / .dsk com cabeçalho)' : 'not RS-DOS (likely OS-9 / double-sided / headered .dsk)');
+      addLog(`Disco ${slotN}: formato não suportado — ${why}. Navegação continua; este disco não é editável.`,
+             `Disk ${slotN}: unsupported format — ${why}. Navigation continues; this disk isn't editable.`, 'warn');
+    } else if (readOnly) {
+      addLog(`Disco ${slotN}: contém nomes não-padrão (arte semigráfica no DIR). Listável e extraível, mas em SOMENTE-LEITURA (edição bloqueada para não corromper).`,
+             `Disk ${slotN}: has non-standard names (semigraphic DIR art). Listable and extractable, but READ-ONLY (editing blocked to avoid corruption).`, 'info');
     }
+  };
+
+  // Navega para o disco cujo SLOT FÍSICO é `slot`. Na MiniIDE os drives são numerados 000–255
+  // (com lacunas/vazios), então o nº digitado é físico; achamos a entry correspondente (ou a mais
+  // próxima). Em DriveWire/CoCoSDC, slot == posição, então cai no índice direto.
+  const selectContainerSlot = async (which: 'A' | 'B', slot: number) => {
+    const c = getPane(which)?.container;
+    if (!c?.entries?.length) return;
+    let pos = c.entries.findIndex((e: any) => (e.slot ?? e.id) === slot);
+    if (pos < 0) pos = c.entries.reduce((best: number, e: any, i: number) =>
+      Math.abs((e.slot ?? i) - slot) < Math.abs((c.entries[best].slot ?? best) - slot) ? i : best, 0);
+    await handleSelectContainerDisk(which, pos);
   };
 
   const containerKey = (c: any) => `${c.kind}|${c.fileName || ''}|${c.count}`;
@@ -1772,6 +1810,7 @@ export default function App() {
 
   const handleDskDelete = async () => {
     if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione arquivo(s) para excluir.', 'Select file(s) to delete.', 'warn'); return; }
+    if (!guardEditable(selectedDsk.pane)) return;
     const pane = getPane(selectedDsk.pane);
     if (!pane) return;
     pushDskUndo();
@@ -1791,6 +1830,7 @@ export default function App() {
 
   const handleDskInject = async () => {
     if (!getPane(activePane)) { addLog('Abra ou crie uma imagem no painel ativo primeiro.', 'Open or create an image in the active pane first.', 'warn'); return; }
+    if (!guardEditable(activePane)) return;
     try {
       const res = await window.cocoApi.pickCocoFile();
       if (res.cancelled) return;
@@ -1809,6 +1849,7 @@ export default function App() {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     if (!pane.files.length) { addLog('Não há arquivos para ordenar.', 'No files to sort.', 'warn'); return; }
+    if (!guardEditable(activePane)) return; // ordenar embaralharia o desenho do DIR de arte
     pushDskUndo();
     try {
       const res = await window.cocoApi.dskSortDirectory(pane.buffer);
@@ -1833,6 +1874,7 @@ export default function App() {
       const full = new Uint8Array(pane.container.full);
       let sorted = 0;
       for (let i = 0; i < pane.container.count; i++) {
+        if (pane.container.entries?.[i]?.graphicsArt) continue; // não ordenar discos de arte (embaralharia o desenho)
         const slice = full.slice(i * STD_DISK, (i + 1) * STD_DISK);
         const res = await window.cocoApi.dskSortDirectory(slice);
         if (!res.success) { addLog(`DSK Ordenar (disco ${i}): ${res.error}`, `DSK Sort (disk ${i}): ${res.error}`, 'error'); continue; }
@@ -1900,6 +1942,15 @@ export default function App() {
       if (res?.cancelled) return;
       if (!res?.success) { addLog(`Imagem: ${res?.error}`, `Image: ${res?.error}`, 'error'); return; }
 
+      // Partição OS-9 / NitrOS-9 (RBF): abre o browser hierárquico dedicado (somente-leitura).
+      // Cobre .dsk/.os9 OS-9 avulsos e a partição OS-9 raw no offset 0 do CoCoSDC.VHD.
+      if (res.kind === 'os9') {
+        setOs9Browser({ filePath: res.filePath, base: res.os9Base ?? 0, fileName: res.fileName });
+        addLog(`OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} aberto no navegador hierárquico (somente-leitura).`,
+               `OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} opened in the hierarchical browser (read-only).`, 'success');
+        return;
+      }
+
       if (res.kind === 'dsk') {
         // .dsk simples ou contêiner DriveWire (em memória; passa pelo guard de contêiner)
         const ex = await window.cocoApi.imageExtract(res.filePath, { kind: 'dsk' });
@@ -1916,11 +1967,14 @@ export default function App() {
       const dir = await window.cocoApi.readDskDirectory(buf);
       if (!dir.success) { addLog(`Imagem: ${dir.error}`, `Image: ${dir.error}`, 'error'); return; }
       if (selectedDsk?.pane === which) setSelectedDsk(null);
+      const firstUnreadable = dir.rsdos === false;
+      const firstReadOnly = !firstUnreadable && !!dir.hasArt;
       setPane(which, {
         buffer: buf, fileName: res.entries[0].label, size: buf.length,
-        files: dir.files, freeGranules: dir.freeGranules, totalGranules: dir.totalGranules,
+        files: firstUnreadable ? [] : dir.files, freeGranules: dir.freeGranules, totalGranules: dir.totalGranules,
         format: dir.format, geom: dir.geom, totalSectors: dir.totalSectors, usedSectors: dir.usedSectors, freeSectors: dir.freeSectors,
-        container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0, suspect: !!res.suspect },
+        diskUnreadable: firstUnreadable, readOnly: firstReadOnly,
+        container: { source: 'file', kind: res.kind, fileName: res.fileName, filePath: res.filePath, entries: res.entries, count: res.entries.length, index: 0, suspect: !!res.suspect, os9Base: res.os9Base ?? null, os9Volume: res.os9Volume || '' },
       });
       clearDirty(which);
       // O "Novo" do painel acompanha o formato dos discos do contêiner (MiniIDE/CoCoSDC = RS-DOS),
@@ -1929,13 +1983,22 @@ export default function App() {
       setActivePane(which);
       const noun = res.kind === 'cocosdc' ? '.dsk' : (currentLang === 'pt-br' ? 'discos' : 'disks');
       const kindLabel = res.kind === 'cocosdc' ? 'CoCoSDC' : res.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
-      addLog(`Contêiner (${kindLabel}) "${res.fileName}": ${res.entries.length} ${noun}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
-             `Container (${kindLabel}) "${res.fileName}": ${res.entries.length} ${noun}. Navigate with the pane ${which} selector (◀ ▶ or 🔍 Search).`, 'success');
+      // MiniIDE: a régua agora cobre os 256 slots (000–255); informa quantos estão OCUPADOS.
+      const countMsg = res.kind === 'miniide' && typeof res.occupiedCount === 'number'
+        ? `${res.occupiedCount} discos ocupados em ${res.entries.length} slots (000–255)`
+        : `${res.entries.length} ${noun}`;
+      addLog(`Contêiner (${kindLabel}) "${res.fileName}": ${countMsg}. Navegue pelo seletor do painel ${which} (◀ ▶ ou 🔍 Buscar).`,
+             `Container (${kindLabel}) "${res.fileName}": ${countMsg}. Navigate with the pane ${which} selector (◀ ▶ or 🔍 Search).`, 'success');
       // Aviso de formato NÃO totalmente suportado: a maioria dos discos veio com nomes ilegíveis →
       // o layout não casa com o nosso leitor (ex.: imagem "VHD" do CoCoSDC-no-VCC). Não recomendado salvar.
       if (res.suspect) {
         addLog('⚠ Formato de imagem NÃO totalmente suportado: vários discos aparecem com nomes ilegíveis (o mapeamento de setores desta imagem é diferente). Use apenas para inspecionar; NÃO é recomendado salvar.',
                '⚠ Image format NOT fully supported: several disks show garbled file names (this image\'s sector mapping differs). For inspection only; saving is NOT recommended.', 'warn');
+      }
+      // A MiniIDE tem também uma partição OS-9 raw no offset 0 (além dos discos RS-DOS). Oferece o botão "OS-9".
+      if (res.os9Base != null) {
+        addLog(`Esta imagem também contém uma partição OS-9${res.os9Volume ? ` ("${res.os9Volume}")` : ''}. Clique no botão "OS-9" no painel ${which} para navegá-la (somente-leitura).`,
+               `This image also contains an OS-9 partition${res.os9Volume ? ` ("${res.os9Volume}")` : ''}. Click the "OS-9" button in pane ${which} to browse it (read-only).`, 'info');
       }
     } catch (err: any) { addLog(`Imagem: ${err.message}`, `Image: ${err.message}`, 'error'); }
     finally { setImageBusy(false); setImageProgress(null); }
@@ -2571,6 +2634,8 @@ export default function App() {
   // Drop interno: `move=true` (Shift) move (remove da origem após copiar); senão copia (Ctrl/padrão).
   const handleDskInternalDrop = async (targetWhich: 'A' | 'B', source: { pane: 'A' | 'B'; entries: any[]; srcBuffer?: Uint8Array }, move = false) => {
     if (source.pane === targetWhich) return;
+    if (!guardEditable(targetWhich)) return; // não soltar arquivos num disco de arte (somente-leitura)
+    if (move && !guardEditable(source.pane)) return; // mover removeria da origem → bloqueia se origem é arte
     const src = getPane(source.pane);
     if (!src) return;
     // Usa o disco EXATO capturado no início do arraste (não o buffer "vivo" do painel, que pode
@@ -3310,22 +3375,41 @@ export default function App() {
                   {pane.container && (
                     <div className="flex flex-col gap-1.5 bg-slate-950/40 rounded p-2 border border-[#a78bfa]/40 w-full" style={{ maxWidth: 172 }} onClick={(e) => e.stopPropagation()}>
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#c4b5fd] text-center">{currentLang === 'pt-br' ? 'Disco' : 'Disk'}</span>
+                      {(() => {
+                        const ents = pane.container.entries || [];
+                        const cur = ents[pane.container.index];
+                        const curSlot = cur?.slot ?? pane.container.index;            // nº FÍSICO do drive
+                        const maxSlot = ents.length ? (ents[ents.length - 1].slot ?? pane.container.count - 1) : pane.container.count - 1;
+                        return (
                       <div className="flex items-center justify-center gap-1">
                         <button onClick={() => handleSelectContainerDisk(which, pane.container.index - 1)} disabled={imageBusy || pane.container.index <= 0} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Disco anterior' : 'Previous disk'}>◀</button>
                         <input
-                          key={pane.container.index}
-                          type="number" min={0} max={pane.container.count - 1} defaultValue={pane.container.index}
+                          key={curSlot}
+                          type="number" min={0} max={maxSlot} defaultValue={curSlot}
                           onClick={(e) => e.currentTarget.select()}
-                          onKeyDown={(e) => { if (e.key === 'Enter') { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); handleSelectContainerDisk(which, v); } }}
-                          onBlur={(e) => { const v = Math.max(0, Math.min(pane.container.count - 1, parseInt(e.currentTarget.value) || 0)); if (v !== pane.container.index) handleSelectContainerDisk(which, v); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { const v = Math.max(0, Math.min(maxSlot, parseInt(e.currentTarget.value) || 0)); selectContainerSlot(which, v); } }}
+                          onBlur={(e) => { const v = Math.max(0, Math.min(maxSlot, parseInt(e.currentTarget.value) || 0)); if (v !== curSlot) selectContainerSlot(which, v); }}
                           className="input-text py-0.5 text-[11px] text-center font-mono"
                           style={{ width: 46 }}
-                          title={currentLang === 'pt-br' ? 'Digite o nº do disco e Enter para ir direto' : 'Type the disk # and Enter to jump'}
+                          title={currentLang === 'pt-br' ? 'Digite o nº FÍSICO do disco (000–255) e Enter' : 'Type the PHYSICAL disk # (000–255) and Enter'}
                         />
-                        <span className="text-[10px] font-mono text-[var(--text-muted)]">/{pane.container.count - 1}</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)]">/{maxSlot}</span>
                         <button onClick={() => handleSelectContainerDisk(which, pane.container.index + 1)} disabled={imageBusy || pane.container.index >= pane.container.count - 1} className="dsk-tool" style={{ padding: '2px 6px' }} title={currentLang === 'pt-br' ? 'Próximo disco' : 'Next disk'}>▶</button>
                         <button onClick={() => { setActivePane(which); setImageFilter(''); setDiskPicker({ which }); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '3px 6px' }} title={t('dskSearchDisk')} aria-label={t('dskSearchDisk')}><Search size={12} /></button>
                       </div>
+                        );
+                      })()}
+                      {pane.container.entries?.[pane.container.index]?.graphicsArt && (
+                        <span className="text-[9px] font-bold text-center rounded px-1 py-0.5" style={{ color: '#fbbf24', border: '1px solid #fbbf2455' }} title={currentLang === 'pt-br' ? 'DIR com arte em caracteres semigráficos do VDG — listável e extraível, mas somente-leitura' : 'DIR art using VDG semigraphic characters — listable and extractable, but read-only'}>🎨 {currentLang === 'pt-br' ? 'arte · 🔒 leitura' : 'art · 🔒 read-only'}</span>
+                      )}
+                      {pane.container.os9Base != null && (
+                        <button
+                          onClick={() => setOs9Browser({ filePath: pane.container.filePath, base: pane.container.os9Base, fileName: pane.container.fileName })}
+                          className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide"
+                          style={{ padding: '3px 6px', color: '#c4b5fd', borderColor: '#a78bfa55' }}
+                          title={currentLang === 'pt-br' ? 'Navegar a partição OS-9 desta imagem (somente-leitura)' : 'Browse this image\'s OS-9 partition (read-only)'}
+                        >OS-9{pane.container.os9Volume ? ` · ${pane.container.os9Volume}` : ''}</button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -3346,6 +3430,16 @@ export default function App() {
                 {pane.diskUnreadableReason && pane.diskUnreadableReason !== 'garbled' && (
                   <span className="text-[10px] text-[var(--text-muted)] font-mono">{pane.diskUnreadableReason}</span>
                 )}
+              </div>
+            ) : pane && pane.emptySlot ? (
+              <div className="h-full flex flex-col items-center justify-center gap-2 p-6 text-center">
+                <span className="text-3xl">📭</span>
+                <span className="text-sm font-bold text-amber-300">{currentLang === 'pt-br' ? 'Slot vazio' : 'Empty slot'}</span>
+                <span className="text-[11px] text-[var(--text-secondary)] leading-relaxed max-w-[420px]">
+                  {currentLang === 'pt-br'
+                    ? 'Este slot (000–255) não contém disco. Está disponível para FORMATAR ou INSERIR uma imagem (recurso planejado). Use ◀ ▶ para navegar pelos slots.'
+                    : 'This slot (000–255) holds no disk. It is available to FORMAT or INSERT an image (planned feature). Use ◀ ▶ to browse slots.'}
+                </span>
               </div>
             ) : pane ? (
               <table className="w-full text-left border-collapse text-[11px]">
@@ -4522,6 +4616,16 @@ export default function App() {
       )}
 
       {/* Changelog ("?") — histórico de versões (PT/EN), rolável. Conteúdo vem do VERSOES.TXT / VERSIONS_EN.TXT. */}
+      {os9Browser && (
+        <Os9Browser
+          filePath={os9Browser.filePath}
+          base={os9Browser.base}
+          fileName={os9Browser.fileName}
+          lang={currentLang}
+          onClose={() => setOs9Browser(null)}
+        />
+      )}
+
       {showChangelog && (
         <div className="glass-modal-overlay" onClick={() => setShowChangelog(false)}>
           <div
@@ -4989,7 +5093,8 @@ export default function App() {
         const q = imageFilter.trim().toLowerCase();
         const idxMap = (fileIndex && fileIndex.key === containerKey(c)) ? fileIndex.map : {};
         const fileMatch = (e: any): string | undefined => { const ns = idxMap[e.id]; return ns ? ns.find((n: string) => n.toLowerCase().includes(q)) : undefined; };
-        const list = q ? entries.filter((e: any) => `${e.label} ${e.sub || ''}`.toLowerCase().includes(q) || !!fileMatch(e)) : entries;
+        const slotStr = (e: any) => String(e.slot ?? e.id).padStart(3, '0');
+        const list = q ? entries.filter((e: any) => `${slotStr(e)} ${e.label} ${e.sub || ''}`.toLowerCase().includes(q) || !!fileMatch(e)) : entries;
         const indexing = fileIndex && fileIndex.key === containerKey(c) && fileIndex.building;
         const kindLabel = c.kind === 'cocosdc' ? 'CoCoSDC' : c.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
         return (
@@ -5029,9 +5134,9 @@ export default function App() {
                     return (
                       <button key={e.id} onClick={async () => { await handleSelectContainerDisk(diskPicker.which, e.id); setDiskPicker(null); }} disabled={imageBusy}
                         className={`w-full text-left flex items-center gap-3 px-3 py-2 rounded-lg transition-colors disabled:opacity-50 border ${active ? 'bg-cyan-950/40 border-[var(--primary)]/40' : 'border-transparent hover:bg-slate-800/70 hover:border-[var(--primary)]/30'}`}>
-                        <span className="text-[10px] font-mono text-[var(--text-muted)] w-9 flex-shrink-0">#{e.id}</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)] w-9 flex-shrink-0">#{slotStr(e)}</span>
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs font-bold text-white font-mono truncate">{e.label}</div>
+                          <div className="text-xs font-bold text-white font-mono truncate">{e.graphicsArt ? '🎨 ' : ''}{e.label}</div>
                           {e.sub && <div className="text-[10px] text-[var(--text-secondary)] truncate">{e.sub}</div>}
                           {q && (() => {
                             const fm = fileMatch(e);

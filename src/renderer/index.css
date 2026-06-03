@@ -975,3 +975,7 @@ input[type="number"] {
   background-color: var(--primary);
   box-shadow: 0 0 10px var(--primary);
 }
+
+/* spin para loaders (ex.: Os9Browser) */
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

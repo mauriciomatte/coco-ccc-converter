@@ -1,7 +1,10 @@
 export interface DskFileEntry {
-  name: string;
-  ext: string;
-  fullName: string;
+  name: string;      // display name (printable kept, non-ASCII bytes shown as ▓)
+  ext: string;       // display extension
+  fullName: string;  // `${name}.${ext}` for display
+  rawName: number[]; // EXACT 8 filename bytes (lossless — for byte-perfect write-back)
+  rawExt: number[];  // EXACT 3 extension bytes
+  hasGraphics: boolean; // filename/ext uses non-ASCII (VDG semigraphic / "DIR art") bytes
   fileType: number; // 0=BASIC, 1=Data, 2=Machine Code, 3=Source
   fileTypeName: string;
   asciiFlag: number; // 0=Binary, 0xFF=ASCII
@@ -67,18 +70,19 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
       continue;
     }
 
-    // Clean up filename and extension
-    const rawName = entry.slice(0, 8);
-    const rawExt = entry.slice(8, 11);
-    const name = rawName.toString('ascii').trim();
-    const ext = rawExt.toString('ascii').trim();
+    // Filename & extension. We KEEP the exact bytes (rawName/rawExt) for lossless write-back, and
+    // build a sanitized DISPLAY string. We do NOT use 'ascii' (which masks bit 7 and corrupts VDG
+    // semigraphic "DIR art" names), and we do NOT drop entries with non-printable names — a real
+    // file is identified by its valid granule chain (checked below), not by a readable name.
+    // Dropping/mangling here silently lost files (e.g. a semigraphic-named file between two normal
+    // ones) and corrupted them on any directory rewrite.
+    const rawNameBytes = Array.from(entry.slice(0, 8));
+    const rawExtBytes = Array.from(entry.slice(8, 11));
+    const sanitize = (bytes: number[]) => bytes.map(b => (b >= 0x20 && b <= 0x7e) ? String.fromCharCode(b) : '▓').join('');
+    const name = sanitize(rawNameBytes).replace(/\s+$/, '');
+    const ext = sanitize(rawExtBytes).replace(/\s+$/, '');
     const fullName = `${name}.${ext}`;
-
-    // Validate that the filename has at least some printable characters to prevent garbage parsing
-    const hasPrintable = /[\x20-\x7E]/.test(name);
-    if (!hasPrintable || name.length === 0) {
-      continue;
-    }
+    const hasGraphics = rawNameBytes.concat(rawExtBytes).some(b => b !== 0x20 && (b < 0x20 || b > 0x7e));
 
     const fileType = entry[11];
     const asciiFlag = entry[12];
@@ -140,6 +144,9 @@ export function parseDsk(dskBuffer: Buffer): ParsedDsk {
       name,
       ext,
       fullName,
+      rawName: rawNameBytes,
+      rawExt: rawExtBytes,
+      hasGraphics,
       fileType,
       fileTypeName,
       asciiFlag,
@@ -227,6 +234,11 @@ export function reDoubleDisk(buf: Buffer): Buffer {
 const DBL_FAT_OFF = 614 * 256;   // 157,184
 const DBL_DIR_OFF = 616 * 256;   // 157,696
 const DBL_SLOT = 2 * 35 * 18 * 256; // 322,560 (a doubled 35-track single-sided disk)
+// SIDEKICK stores the drive name (8 bytes) at de-doubled LSN 322 (track 17, sector 17 — unused by
+// standard RS-DOS, so it is never file data). In the DOUBLED slot that is byte offset 322*512.
+const DBL_NAME_OFF = 322 * 512;  // 164,864
+// HDBDOS addresses RS-DOS/Dragon virtual disks as drives 000–255 (a fixed 256-slot grid).
+const MINIIDE_MAX_SLOTS = 256;
 
 /**
  * Cheap probe: is there a sector-doubled 35-track RS-DOS disk starting at `off` in `buf`?
@@ -257,12 +269,72 @@ export function isDoubledRsDosDiskAt(buf: Buffer, off: number): boolean {
   return false;
 }
 
+/**
+ * Relaxed sibling of {@link isDoubledRsDosDiskAt}: recognizes a doubled RS-DOS disk by a valid FAT
+ * plus at least one real directory entry, WITHOUT requiring a printable filename. Some HDBDOS
+ * disks use VDG semigraphic / control bytes in their filenames to draw "art" in the DIR (a trick
+ * borrowed from 8-bit machines like the C64); the strict probe drops them, which both hides those
+ * disks AND shifts the numbering of every disk after them. This probe keeps them.
+ */
+export function looksDoubledRsDosSlot(buf: Buffer, off: number): boolean {
+  if (off < 0 || off + DBL_SLOT > buf.length) return false;
+  for (let g = 0; g < 68; g++) {
+    const v = buf[off + DBL_FAT_OFF + g];
+    if (v === 0xFF) continue;
+    if (v < 68) continue;
+    if (v >= 0xC0 && v <= 0xC9) continue;
+    return false;
+  }
+  for (let e = 0; e < 8; e++) {
+    const o = off + DBL_DIR_OFF + e * 32;
+    const b0 = buf[o];
+    if (b0 === 0x00 || b0 === 0xFF) continue; // unused / deleted slot
+    if (buf[o + 11] <= 3) return true;        // a real file entry — any filename bytes allowed
+  }
+  return false;
+}
+
+/**
+ * Read the SIDEKICK drive name (8-byte field at the start of de-doubled LSN 322). Returns a trimmed
+ * ASCII name, or null when the slot has no name (most drives are unnamed → caller falls back to
+ * filenames). Defensive: a single non-printable byte makes it null, so non-SIDEKICK images degrade
+ * gracefully instead of showing garbage.
+ */
+export function readSidekickName(buf: Buffer, off: number): string | null {
+  const o = off + DBL_NAME_OFF;
+  if (o + 8 > buf.length) return null;
+  let s = '';
+  for (let i = 0; i < 8; i++) {
+    const c = buf[o + i];
+    if (c === 0x00 || c === 0xFF) break;
+    if (c < 0x20 || c > 0x7e) return null; // not a clean ASCII name
+    s += String.fromCharCode(c);
+  }
+  s = s.trim();
+  return s || null;
+}
+
 export interface MiniIdeDisk {
-  index: number;
-  offset: number;     // byte offset of the doubled slot in the source image
-  label: string;      // first few file names, for display
+  slot: number;            // physical drive number 0..255 (matches SIDEKICK / hardware)
+  offset: number;          // byte offset of the doubled slot in the source image
+  state: 'occupied' | 'empty' | 'nonrsdos'; // disk present / blank slot / non-RS-DOS leftover
+  name: string | null;     // SIDEKICK drive name, if the drive was named
+  label: string;           // best display label: name → filenames → "(arte gráfica)" / "(vazio)"
+  filePreview: string;     // sanitized first filenames (for a secondary line)
+  graphicsArt: boolean;    // directory uses non-ASCII / semigraphic filenames ("DIR art")
   fileCount: number;
   freeGranules: number;
+}
+
+/** Structural validity of a doubled slot's FAT (68 granules), without requiring any directory entry. */
+function doubledFatValid(buf: Buffer, off: number): boolean {
+  if (off < 0 || off + DBL_SLOT > buf.length) return false;
+  for (let g = 0; g < 68; g++) {
+    const v = buf[off + DBL_FAT_OFF + g];
+    if (v === 0xFF || v < 68 || (v >= 0xC0 && v <= 0xC9)) continue;
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -288,26 +360,33 @@ export function scanMiniIdeImage(buf: Buffer, onProgress?: (loaded: number, tota
   }
   if (anchor < 0) return [];
 
-  // 2) Walk the whole image on the grid (phase = anchor mod S) and validate each slot with a
-  //    full parse. Grid points inside the OS-9 partition or past the HDBDOS region don't parse
-  //    as RS-DOS, so they drop out; this catches the boot/system disk and every game disk,
-  //    tolerating empty slots in between.
-  const phase = anchor % S;
+  // 2) Walk the FULL FIXED 256-slot region from the anchor (= physical drive 0). Return ONE entry per
+  //    physical slot — occupied, empty (blank/formatted) OR non-RS-DOS — so the UI can navigate the
+  //    whole 000–255 range exactly like SIDEKICK (and surface empty slots for format/insert). Indexing
+  //    by physical slot also means an empty/skipped slot never shifts the numbering after it.
+  const sanitize = (s: string) => s.replace(/[^\x20-\x7e]/g, '').trim();
   const disks: MiniIdeDisk[] = [];
-  let idx = 0;
-  for (let off = phase; off + S <= buf.length; off += S) {
+  for (let slot = 0; slot < MINIIDE_MAX_SLOTS; slot++) {
+    const off = anchor + slot * S;
+    if (off + S > buf.length) break;
     if (onProgress && off >= nextReport) { onProgress(off, buf.length); nextReport += step; }
-    if (!isDoubledRsDosDiskAt(buf, off)) continue;
+    const name = readSidekickName(buf, off);
+    if (!looksDoubledRsDosSlot(buf, off)) {
+      // No listable directory: a blank slot (valid-ish FAT, no files) or non-RS-DOS leftover.
+      const state: MiniIdeDisk['state'] = doubledFatValid(buf, off) ? 'empty' : 'nonrsdos';
+      disks.push({ slot, offset: off, state, name, label: name || (state === 'empty' ? '(vazio)' : '(não-RS-DOS)'), filePreview: '', graphicsArt: false, fileCount: 0, freeGranules: 0 });
+      continue;
+    }
+    const graphicsArt = !isDoubledRsDosDiskAt(buf, off); // present but no printable filename
+    let fileCount = 0, freeGranules = 0, fileLabel = '';
     try {
       const p = parseDsk(deDoubleDisk(buf.subarray(off, off + S)));
-      if (p.files.length >= 1) {
-        disks.push({
-          index: idx++, offset: off,
-          label: p.files.slice(0, 4).map(f => f.fullName).join(', '),
-          fileCount: p.files.length, freeGranules: p.freeGranules,
-        });
-      }
-    } catch { /* not a clean disk here */ }
+      fileCount = p.files.length;
+      freeGranules = p.freeGranules;
+      fileLabel = p.files.slice(0, 4).map(f => sanitize(f.fullName)).filter(Boolean).join(', ');
+    } catch { /* art / odd disk — FAT is valid but parse may be partial */ }
+    const label = name || (graphicsArt ? '(arte gráfica)' : (fileLabel || `Disco ${slot}`));
+    disks.push({ slot, offset: off, state: 'occupied', name, label, filePreview: fileLabel, graphicsArt, fileCount, freeGranules });
   }
   return disks;
 }
@@ -475,9 +554,11 @@ export function sortDskDirectory(dskBuffer: Buffer): Buffer {
     const first = img[offset];
     if (first === 0x00 || first === 0xFF) continue; // empty / deleted slot
 
-    const name = img.slice(offset, offset + 8).toString('ascii').trim();
-    const ext = img.slice(offset + 8, offset + 11).toString('ascii').trim();
-    if (!/[\x20-\x7E]/.test(name) || name.length === 0) continue; // skip garbage
+    // Sort key from the raw bytes (latin1 = byte-preserving). We do NOT drop entries with
+    // non-printable names — they are real files (e.g. semigraphic "DIR art") and the 32-byte
+    // record is copied VERBATIM below, so every filename byte round-trips losslessly.
+    const name = img.slice(offset, offset + 8).toString('latin1');
+    const ext = img.slice(offset + 8, offset + 11).toString('latin1');
 
     active.push({
       key: `${name.toUpperCase()}.${ext.toUpperCase()}`,

@@ -5,3 +5,8 @@ declare module '*?raw' {
   const content: string;
   export default content;
 }
+
+// Ponte do preload (exposta via contextBridge). Tipada como any para casar com o uso atual do app.
+interface Window {
+  cocoApi: any;
+}

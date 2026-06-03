@@ -7,6 +7,7 @@ import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
+import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -142,8 +143,17 @@ ipcMain.handle('read-dsk-directory', async (_, dskUint8Array: Uint8Array) => {
     // bitmap). Detect them first; otherwise fall back to the standard RS-DOS parser.
     const dragon = readDragonDirectory(buffer);
     if (dragon) return dragon;
+    // OS-9 ANTES do RS-DOS: um disco OS-9 também passa em isRsDosDisk (ambiguidade comprovada). Sem
+    // isto, um .dsk OS-9 (ex.: dentro do CoCoSDC) seria lido como RS-DOS e mostraria lixo.
+    if (isOs9DiskStrict(buffer, 0)) return { success: false, error: 'OS-9', os9: true };
+    // rsdos: FAT válida? Distingue um RS-DOS de verdade (mesmo com "arte" no DIR) de um disco
+    // não-RS-DOS (dupla-face / JVC / lixo), que deve aparecer como "não suportado".
+    const rsdos = isRsDosDisk(buffer);
     const parsed = parseDsk(buffer);
-    return { success: true, format: 'rsdos', files: parsed.files, freeGranules: parsed.freeGranules, totalGranules: parsed.totalGranules };
+    // hasArt: o disco tem nomes não-padrão (semigráficos/"arte no DIR"). O renderer LISTA e EXTRAI
+    // normalmente, mas marca somente-leitura e bloqueia edições (round-trip de escrita ainda não validado).
+    const hasArt = parsed.files.some(f => f.hasGraphics);
+    return { success: true, format: 'rsdos', files: parsed.files, freeGranules: parsed.freeGranules, totalGranules: parsed.totalGranules, hasArt, rsdos };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
@@ -462,18 +472,33 @@ ipcMain.handle('image-analyze', async () => {
       const buf = readFileWithProgress(filePath, stat.size, 'read');
       const disks = scanMiniIdeImage(buf, (loaded, total) =>
         mainWindow?.webContents.send('image-progress', { phase: 'scan', loaded, total }));
-      if (disks.length >= 2) {
+      // An OS-9/NitrOS-9 partition lives RAW at offset 0 in MiniIDE and CoCoSDC.VHD images (proven by
+      // re-analysis). Detect it with the STRICT check (a plain OS-9 disk also passes isRsDosDisk, so
+      // this must precede the RS-DOS path). For MiniIDE we still surface the RS-DOS disks, just flag
+      // that an OS-9 partition is also present so the UI can offer to browse it.
+      const os9Here = isOs9DiskStrict(buf, 0, buf.length);
+      const os9Volume = os9Here ? parseIdent(buf, 0).name.trim() : '';
+      const occupied = disks.filter(d => d.state === 'occupied');
+      if (occupied.length >= 2) {
+        // UMA entry por SLOT FÍSICO (000–255): ocupado, vazio ou não-RS-DOS. id == slot (contíguo) →
+        // a régua percorre todos os 256 como no SIDEKICK e os vazios ficam visíveis p/ formatar/inserir.
         const entries = disks.map(d => ({
-          id: d.index, label: `Disco ${d.index}`,
-          info: `${d.fileCount} arq · ${d.freeGranules} livres`, sub: d.label,
+          id: d.slot, slot: d.slot, state: d.state, label: d.label,
+          info: d.state === 'occupied' ? `${d.fileCount} arq · ${d.freeGranules} livres`
+              : d.state === 'empty' ? 'slot vazio — disponível p/ formatar/inserir' : 'não-RS-DOS (sobra/lixo)',
+          sub: d.state === 'occupied' ? (d.name ? d.filePreview : '') : '',
+          graphicsArt: d.graphicsArt,
           locator: { kind: 'miniide', offset: d.offset },
         }));
-        // Heurística de "formato não totalmente suportado": se a maioria dos discos tem nomes de
-        // arquivo ILEGÍVEIS (chars não-imprimíveis nos rótulos), o layout não casa com o nosso
-        // MiniIDE (sector-doubled) — ex.: a imagem "VHD" do CoCoSDC-no-VCC. Avisamos no renderer.
-        const garbled = disks.filter(d => /[^\x20-\x7E]/.test(d.label || '')).length;
-        const suspect = disks.length > 0 && garbled / disks.length > 0.35;
-        return { success: true, kind: 'miniide', filePath, fileName, entries, suspect };
+        // "suspect" (mapeamento de setores diferente, ex.: VHD do CoCoSDC-no-VCC): com discos de ARTE já
+        // reconhecidos, o sinal é a ausência de QUALQUER nome legível entre os OCUPADOS.
+        const garbled = occupied.filter(d => !d.name && d.graphicsArt && !d.filePreview).length;
+        const suspect = occupied.length > 0 && garbled / occupied.length > 0.5;
+        return { success: true, kind: 'miniide', filePath, fileName, entries, suspect, os9Base: os9Here ? 0 : null, os9Volume, occupiedCount: occupied.length };
+      }
+      // No RS-DOS disk grid, but offset 0 IS an OS-9 partition (e.g. CoCoSDC.VHD, or a loose .os9/.dsk).
+      if (os9Here) {
+        return { success: true, kind: 'os9', filePath, fileName, os9Base: 0, os9Volume, entries: [] };
       }
     }
 
@@ -509,6 +534,65 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
     const total = fs.statSync(filePath).size;
     const buf = readFileWithProgress(filePath, total, 'read');
     return { success: true, image: new Uint8Array(buf) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 3c1d. Read an OS-9 / NitrOS-9 (RBF) partition at `base` and return its hierarchical directory
+// tree (read-only). `base` is 0 for a loose .dsk/.os9 or for the OS-9 partition that lives at
+// offset 0 inside a MiniIDE / CoCoSDC.VHD image. We read at most the partition's own size (capped).
+ipcMain.handle('os9-read', async (_, filePath: string, base = 0) => {
+  try {
+    const stat = fs.statSync(filePath);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const head = Buffer.alloc(256);
+      fs.readSync(fd, head, 0, 256, base);
+      const id = parseIdent(head, 0);
+      const CAP = 256 * 1024 * 1024;
+      const need = Math.min(id.totalSectors * 256, stat.size - base, CAP);
+      const buf = Buffer.alloc(need);
+      fs.readSync(fd, buf, 0, need, base);
+      const parsed = parseOs9(buf, { base: 0 });
+      return {
+        success: true, ident: parsed.ident, root: parsed.root,
+        totalFiles: parsed.totalFiles, totalDirs: parsed.totalDirs,
+        freeBytes: parsed.freeBytes, usedSectors: parsed.usedSectors,
+      };
+    } finally { fs.closeSync(fd); }
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 3c1e. Extract ONE file from an OS-9 partition by following its FD segment list, then save it to a
+// user-chosen path. Targeted reads only (no full-partition slurp).
+ipcMain.handle('os9-extract', async (_, filePath: string, base: number, fdLsn: number, defaultName: string) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    const fd = fs.openSync(filePath, 'r');
+    let data: Buffer;
+    try {
+      const fdSec = Buffer.alloc(256);
+      fs.readSync(fd, fdSec, 0, 256, base + fdLsn * 256);
+      const meta = readFD(fdSec, 0, 0); // size + segment list from the FD sector
+      data = Buffer.alloc(meta.size);
+      let pos = 0;
+      for (const seg of meta.segments) {
+        const want = Math.min(seg.sectors * 256, meta.size - pos);
+        if (want <= 0) break;
+        const chunk = Buffer.alloc(want);
+        fs.readSync(fd, chunk, 0, want, base + seg.lsn * 256);
+        chunk.copy(data, pos);
+        pos += want;
+        if (pos >= meta.size) break;
+      }
+    } finally { fs.closeSync(fd); }
+    const res = await dialog.showSaveDialog(mainWindow, { title: 'Extrair arquivo OS-9', defaultPath: defaultName });
+    if (res.canceled || !res.filePath) return { cancelled: true };
+    fs.writeFileSync(res.filePath, data);
+    return { success: true, path: res.filePath, size: data.length };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
