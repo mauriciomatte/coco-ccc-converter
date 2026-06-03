@@ -720,3 +720,57 @@ export function os9Delete(raw: Buffer, parentFdLsn: number, name: string, base =
   if (fd.isDir) { const po = base + parentFdLsn * SEC; if (out[po + FD_LNK] > 0) w8(out, po + FD_LNK, out[po + FD_LNK] - 1); }
   return out;
 }
+
+// ---- Defrag (compactar segmentos fragmentados) -----------------------------
+
+/** Quantos segmentos REAIS (sectors>0) um FD tem. */
+function realSegments(fd: Os9FD): Os9Segment[] { return fd.segments.filter(s => s.sectors > 0); }
+
+/**
+ * Defragmenta UM arquivo: move seus dados para um único run contíguo de clusters e reescreve a
+ * lista de segmentos do FD com 1 segmento (preserva todo o resto do FD: attr/owner/datas/tamanho).
+ * Não toca diretórios nem o LSN do FD (entradas de diretório continuam válidas).
+ * Devolve { image, changed, reason } — `changed=false` se já contíguo (reason='contiguous') ou
+ * sem espaço contíguo (reason='no-space', e nesse caso NADA é alterado).
+ */
+export function os9DefragFile(raw: Buffer, fdLsn: number, base = 0): { image: Buffer; changed: boolean; reason?: string } {
+  const out = Buffer.from(raw);
+  const id = parseIdent(out, base);
+  const spc = id.sectorsPerCluster;
+  const fd = readFD(out, fdLsn, base);
+  if (fd.isDir) return { image: out, changed: false, reason: 'dir' };
+  const segs = realSegments(fd);
+  if (segs.length <= 1) return { image: out, changed: false, reason: 'contiguous' };
+  const data = readFileData(out, fd, base);                          // já truncado a FD.SIZ
+  const clustersNeeded = Math.max(1, Math.ceil(Math.ceil(data.length / SEC) / spc));
+  const freeOld = () => { for (const s of segs) for (let k = 0; k < Math.ceil(s.sectors / spc); k++) setCluster(out, base, Math.floor(s.lsn / spc) + k, false); };
+  const allocOld = () => { for (const s of segs) for (let k = 0; k < Math.ceil(s.sectors / spc); k++) setCluster(out, base, Math.floor(s.lsn / spc) + k, true); };
+  // libera os clusters atuais p/ que o run contíguo possa reaproveitá-los
+  freeOld();
+  const c = findFreeRun(out, base, id, clustersNeeded);
+  if (c < 0) { allocOld(); return { image: out, changed: false, reason: 'no-space' }; } // restaura, nada muda
+  for (let k = 0; k < clustersNeeded; k++) setCluster(out, base, c + k, true);
+  const newSeg: Os9Segment = { lsn: c * spc, sectors: clustersNeeded * spc };
+  writeSegmentsData(out, base, [newSeg], data);                      // `data` está em buffer próprio (ok se sobrepor o antigo)
+  // reescreve SÓ a lista de segmentos (FD.SEG..fim do setor) — preserva o cabeçalho do FD
+  const o = base + fdLsn * SEC;
+  out.fill(0, o + FD_SEG, o + SEC);
+  w24(out, o + FD_SEG, newSeg.lsn); w16(out, o + FD_SEG + 3, newSeg.sectors);
+  return { image: out, changed: true };
+}
+
+/** Defragmenta TODOS os arquivos fragmentados do disco. Devolve a imagem + contagens. */
+export function os9DefragAll(raw: Buffer, base = 0): { image: Buffer; defragged: number; failed: number; alreadyOk: number } {
+  let out: Buffer = Buffer.from(raw);
+  const flat = flattenOs9(parseOs9(out, { base }).root);
+  let defragged = 0, failed = 0, alreadyOk = 0;
+  for (const { node } of flat) {
+    if (node.isDir) continue;
+    if (!node.segs || node.segs.length <= 1) { alreadyOk++; continue; }
+    const r = os9DefragFile(out, node.fdLsn, base);
+    if (r.changed) { out = r.image; defragged++; }
+    else if (r.reason === 'no-space') failed++;
+    else alreadyOk++;
+  }
+  return { image: out, defragged, failed, alreadyOk };
+}

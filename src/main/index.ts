@@ -7,7 +7,7 @@ import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
-import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
+import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -734,6 +734,16 @@ ipcMain.handle('os9-insert-buffer', async (_, bufU8: Uint8Array, parentFdLsn: nu
 });
 ipcMain.handle('os9-delete-buffer', async (_, bufU8: Uint8Array, parentFdLsn: number, name: string) => {
   try { return { success: true, image: new Uint8Array(os9Delete(Buffer.from(bufU8), parentFdLsn, String(name))) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1n. Defrag OS-9 — compacta os segmentos fragmentados (1 arquivo, ou todos).
+ipcMain.handle('os9-defrag-file-buffer', async (_, bufU8: Uint8Array, fdLsn: number) => {
+  try { const r = os9DefragFile(Buffer.from(bufU8), fdLsn, 0); return { success: true, image: new Uint8Array(r.image), changed: r.changed, reason: r.reason }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('os9-defrag-all-buffer', async (_, bufU8: Uint8Array) => {
+  try { const r = os9DefragAll(Buffer.from(bufU8), 0); return { success: true, image: new Uint8Array(r.image), defragged: r.defragged, failed: r.failed, alreadyOk: r.alreadyOk }; }
   catch (error: any) { return { success: false, error: error.message }; }
 });
 

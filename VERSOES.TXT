@@ -10,6 +10,23 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.22 — 2026-06-03
+--------------------------------------------------------------------------------
+NOVO — Defrag OS-9 (compactar fragmentação)
+  • Dois botões no painel de mídia (abaixo do mapa): "Defrag" (disco inteiro) e "Defrag arquivo"
+    (o selecionado). Compactam os segmentos fragmentados de cada arquivo num único run contíguo,
+    reusando o motor de escrita O4. O botão "Defrag" mostra quantos arquivos estão fragmentados.
+  • Seguro: valida byte-a-byte (não corrompe dados), nunca perde espaço livre e, se não houver run
+    contíguo grande o bastante, não altera nada (avisa "sem espaço"). Só em discos editáveis.
+
+MELHORADO — Cabeçalho mais compacto
+  • Reduzido o espaçamento entre os controles globais (HEX/DISASM, CoCo/Dragon, BR/US, ?, Sair) com
+    divisórias finas — abre espaço para futuras abas (ex.: EPROM, FujiNet).
+
+REGISTRO
+  • Adicionado PENDENCIAS.md (backlog ativo: OS-9 O5/O6, defrag de pastas, Dragon edição, etc.).
+
+--------------------------------------------------------------------------------
 v1.0.21 — 2026-06-03
 --------------------------------------------------------------------------------
 MELHORADO — Aba OS-9 (informações da mídia)

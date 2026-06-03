@@ -100,6 +100,14 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     walk(root, [root.fdLsn]);
     return m;
   }, [root, spc]);
+  // arquivos fragmentados (mais de 1 segmento) — para os botões de defrag
+  const fragCount = React.useMemo(() => {
+    let n = 0;
+    const walk = (x?: Os9Node | null) => { if (!x) return; if (!x.isDir && (x.segs?.length || 0) > 1) n++; x.children?.forEach(walk); };
+    walk(root);
+    return n;
+  }, [root]);
+
   // clusters realçados = item sob o mouse > item selecionado > pasta selecionada
   const activeFd = hoverFd ?? (selItem >= 0 ? selItem : selDir >= 0 ? selDir : -1);
   const highlightClusters = React.useMemo(() => {
@@ -300,6 +308,28 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
       const nb = new Uint8Array(r.image); setBuf(nb); setDirty(true); setSelItem(-1); await reparse(nb); setNote((pt ? 'Excluído: ' : 'Deleted: ') + node.name);
     } finally { setBusy(false); }
   };
+  // Defrag — compacta o arquivo selecionado, ou todos os fragmentados do disco.
+  const doDefragFile = async () => {
+    if (!buf || selItem < 0) return;
+    setBusy(true);
+    try {
+      const r = await window.cocoApi.os9DefragFileBuffer(buf, selItem);
+      if (!r.success) { setNote((pt ? 'Erro: ' : 'Error: ') + r.error); return; }
+      if (!r.changed) { setNote(r.reason === 'no-space' ? (pt ? 'Sem espaço contíguo para compactar.' : 'No contiguous space to compact.') : (pt ? 'Arquivo já está contíguo.' : 'File already contiguous.')); return; }
+      const nb = new Uint8Array(r.image); setBuf(nb); setDirty(true); await reparse(nb); setNote(pt ? 'Arquivo compactado (defrag).' : 'File compacted (defrag).');
+    } finally { setBusy(false); }
+  };
+  const doDefragDisk = async () => {
+    if (!buf) return;
+    setBusy(true);
+    try {
+      const r = await window.cocoApi.os9DefragAllBuffer(buf);
+      if (!r.success) { setNote((pt ? 'Erro: ' : 'Error: ') + r.error); return; }
+      if (r.defragged === 0) { setNote(r.failed > 0 ? (pt ? `Sem espaço para compactar ${r.failed} arquivo(s).` : `No space to compact ${r.failed} file(s).`) : (pt ? 'Nada a desfragmentar.' : 'Nothing to defragment.')); return; }
+      const nb = new Uint8Array(r.image); setBuf(nb); setDirty(true); await reparse(nb);
+      setNote(pt ? `Defrag: ${r.defragged} compactado(s)${r.failed ? `, ${r.failed} sem espaço` : ''}.` : `Defrag: ${r.defragged} compacted${r.failed ? `, ${r.failed} no space` : ''}.`);
+    } finally { setBusy(false); }
+  };
   // Salvar Como (diálogo) → retorna true se gravou (atualiza o caminho de origem p/ "Salvar").
   const doSave = async (): Promise<boolean> => {
     if (!buf) return false; setBusy(true);
@@ -459,7 +489,8 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
                 </tbody>
               </table>
             </div>
-            <Os9MediaPanel usage={usage} ident={ident} fileName={src?.fileName || ''} editable={editable} dirty={dirty} lang={lang} highlight={highlightClusters} onPickCell={pickCell} />
+            <Os9MediaPanel usage={usage} ident={ident} fileName={src?.fileName || ''} editable={editable} dirty={dirty} lang={lang} highlight={highlightClusters} onPickCell={pickCell}
+              onDefragDisk={doDefragDisk} onDefragFile={doDefragFile} fragCount={fragCount} canDefragFile={!!(selItemNode && !selItemNode.isDir && (selItemNode.segs?.length || 0) > 1)} busy={busy} />
           </>
         )}
       </div>

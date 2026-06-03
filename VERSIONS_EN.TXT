@@ -10,6 +10,23 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.22 — 2026-06-03
+--------------------------------------------------------------------------------
+NEW — OS-9 defrag (compact fragmentation)
+  • Two buttons on the media panel (below the map): "Defrag" (whole disk) and "Defrag file" (the
+    selected one). They compact each file's fragmented segments into a single contiguous run,
+    reusing the O4 write engine. The "Defrag" button shows how many files are fragmented.
+  • Safe: byte-for-byte validated (no data corruption), never loses free space, and if there's no
+    large-enough contiguous run it changes nothing (reports "no space"). Editable disks only.
+
+IMPROVED — More compact header
+  • Tightened the spacing between the global controls (HEX/DISASM, CoCo/Dragon, BR/US, ?, Exit) with
+    thin dividers — making room for future tabs (e.g. EPROM, FujiNet).
+
+RECORD
+  • Added PENDENCIAS.md (active backlog: OS-9 O5/O6, folder defrag, Dragon editing, etc.).
+
+--------------------------------------------------------------------------------
 v1.0.21 — 2026-06-03
 --------------------------------------------------------------------------------
 IMPROVED — OS-9 tab (media info)

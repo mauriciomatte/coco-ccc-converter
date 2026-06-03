@@ -3786,8 +3786,8 @@ export default function App() {
           */}
         </div>
 
-        {/* Global Toolbar (hex editor + language + exit) */}
-        <div className="flex items-center gap-3 bg-slate-900/40 border border-[var(--border)] p-1.5 px-3 rounded-xl backdrop-blur-md">
+        {/* Global Toolbar (hex editor + language + exit) — compacto p/ deixar espaço a mais abas */}
+        <div className="flex items-center gap-1.5 bg-slate-900/40 border border-[var(--border)] p-1.5 px-2 rounded-xl backdrop-blur-md">
           {/* Hex Editor (global) — escuro quando fechado, verde quando o modal está aberto */}
           <button
             onClick={handleOpenHexEditor}
@@ -3800,7 +3800,7 @@ export default function App() {
           >
             <Binary size={13} /> HEX/DISASM
           </button>
-          <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+          <div className="w-[1px] h-5 bg-[var(--border)]" />
 
           {/* Plataforma-alvo (CoCo / Dragon) — persistente; define padrão de Novo disco, máquina
               do XRoar e formato GW. Cada disco aberto ainda respeita o seu formato real. */}
@@ -3823,7 +3823,7 @@ export default function App() {
               style={platform === 'dragon' ? { background: '#22d3ee', boxShadow: '0 0 10px rgba(34,211,238,0.7)' } : undefined}
             >Dragon</button>
           </div>
-          <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+          <div className="w-[1px] h-5 bg-[var(--border)]" />
 
           {/* BR and US Buttons */}
           <button
@@ -3850,7 +3850,7 @@ export default function App() {
           </button>
 
           {/* Divider */}
-          <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
+          <div className="w-[1px] h-5 bg-[var(--border)]" />
 
           {/* "?" — novidades / histórico de versões (changelog) */}
           <button

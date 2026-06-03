@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { HardDrive } from 'lucide-react';
+import { HardDrive, Wand2 } from 'lucide-react';
 
 // Painel de MÍDIA da aba OS-9 (lado direito): cartão do disco + "platter" de ocupação por CLUSTER +
 // estatísticas. Adota a ideia do DiskMap (aba DSK), mas para o bitmap de alocação do RBF, que escala
@@ -16,9 +16,11 @@ function arcPath(cx: number, cy: number, rIn: number, rOut: number, a0: number, 
   return `M${pt(rOut, a0)} A${rOut},${rOut} 0 ${large} 1 ${pt(rOut, a1)} L${pt(rIn, a1)} A${rIn},${rIn} 0 ${large} 0 ${pt(rIn, a0)} Z`;
 }
 
-export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, highlight, onPickCell }:
+export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, highlight, onPickCell,
+  onDefragDisk, onDefragFile, fragCount = 0, canDefragFile = false, busy = false }:
   { usage: Usage | null; ident: Ident | null; fileName: string; editable: boolean; dirty: boolean; lang: string;
-    highlight?: Set<number> | null; onPickCell?: (start: number, end: number) => void }) {
+    highlight?: Set<number> | null; onPickCell?: (start: number, end: number) => void;
+    onDefragDisk?: () => void; onDefragFile?: () => void; fragCount?: number; canDefragFile?: boolean; busy?: boolean }) {
   const pt = lang === 'pt-br';
   const [hover, setHover] = useState<{ k: number; x: number; y: number } | null>(null);
 
@@ -124,6 +126,24 @@ export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, h
           </div>
         )}
       </div>
+
+      {/* ações de defrag (só quando editável) — compacta segmentos fragmentados */}
+      {editable && (onDefragDisk || onDefragFile) && (() => {
+        const btn = (enabled: boolean): React.CSSProperties => ({ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, padding: '3px 8px', borderRadius: 5, border: '1px solid var(--border)', background: 'transparent', color: enabled ? '#c4b5fd' : 'var(--text-muted)', cursor: enabled ? 'pointer' : 'default', opacity: enabled ? 1 : 0.5, whiteSpace: 'nowrap' });
+        const diskOn = !busy && fragCount > 0, fileOn = !busy && canDefragFile;
+        return (
+          <div style={{ padding: '0 10px 8px', display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button onClick={() => diskOn && onDefragDisk?.()} disabled={!diskOn} style={btn(diskOn)}
+              title={fragCount > 0 ? (pt ? `Compactar ${fragCount} arquivo(s) fragmentado(s)` : `Compact ${fragCount} fragmented file(s)`) : (pt ? 'Disco sem fragmentação' : 'Disk not fragmented')}>
+              <Wand2 size={12} />{pt ? 'Defrag' : 'Defrag'}{fragCount > 0 ? ` (${fragCount})` : ''}
+            </button>
+            <button onClick={() => fileOn && onDefragFile?.()} disabled={!fileOn} style={btn(fileOn)}
+              title={pt ? 'Compactar o arquivo selecionado (se fragmentado)' : 'Compact the selected file (if fragmented)'}>
+              <Wand2 size={12} />{pt ? 'Defrag arquivo' : 'Defrag file'}
+            </button>
+          </div>
+        );
+      })()}
 
       {/* estatísticas */}
       <div style={{ padding: '6px 12px', borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text-secondary)', display: 'grid', gridTemplateColumns: '1fr 1fr', rowGap: 3, columnGap: 8 }}>
