@@ -10,6 +10,66 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.19 — 2026-06-03
+--------------------------------------------------------------------------------
+IMPROVED — OS-9 tab
+  • OS-9 formats REMOVED from the DSK panes' "New" dropdown — since OS-9 has its own tab, creating
+    an OS-9 disk is now done only there ("＋ New…": 158K/180K/360K/720K).
+  • The media-map legend (USED / PARTIAL / FREE) moved to the STATUS BAR — on large images it used
+    to spill below the bottom explorer. The space under the map is reserved for future actions
+    (defrag). The media panel scrolls internally so it never overflows.
+
+INFRASTRUCTURE — More resilient Release publishing (CI)
+  • The GitHub Release job now uses the gh CLI IDEMPOTENTLY, with RETRY (up to 5 attempts + backoff)
+    and --clobber — fixing the transient "other side closed" failure that interrupted the ~440 MB
+    installer upload. Filenames with spaces/"&" handled safely (NUL-delimited array); 30-min timeout.
+
+RECORD
+  • Version history ("?") updated: the v1.0.18 section had been left out of the 1.0.18 build and is
+    now included alongside this one.
+
+--------------------------------------------------------------------------------
+v1.0.18 — 2026-06-03
+--------------------------------------------------------------------------------
+NEW — Dedicated OS-9 tab (Windows-Explorer-style dual explorer)
+  • OS-9 operations moved out of the modal into their own TAB, between DSK and XRoar, with TWO
+    stacked explorers (TOP and BOTTOM) and a draggable splitter. Each opens/creates its own disk.
+  • Folder tree on the left, files on the right, toolbar on top, status bar at the bottom.
+  • Create new OS-9 disks from the tab itself ("＋ New…" button: 158K, 180K, 360K, 720K).
+
+NEW — OS-9 file editing (RBF write support)
+  • Make folder, rename, EXTRACT, INSERT (a file from the PC) and DELETE (file or empty folder),
+    with fragmented cluster allocation, directory growth and allocation-bitmap accounting —
+    validated byte-perfect via round-trip. "Save" / "Save As" write the .os9.
+  • COPY files between the two disks by drag-and-drop (extract from source, insert into target,
+    all in memory).
+
+NEW — OS-9 media panel (occupancy map)
+  • Circular per-CLUSTER occupancy "platter" (aggregates clusters on large images), with % used,
+    disk card (name/volume/size/editable) and stats.
+  • Hover a file to HIGHLIGHT its clusters on the map; click a cluster to SELECT the file that owns
+    it. The legend now lives in the status bar.
+
+NEW — Drag-and-drop to open
+  • Drop a .os9/.dsk from any Windows folder onto the OS-9 tab to open it (in either explorer).
+    Parsing happens before swapping state — an invalid file won't break the current disk and it
+    respects unsaved changes.
+
+FIXED / IMPROVED — UI and robustness
+  • Default Electron menu (File/Edit/View…) REMOVED (DevTools shortcut F12/Ctrl+Shift+I kept).
+  • Header: smaller title font; author credit consolidated into the subtitle
+    ("IMAGE MANAGER. By Mauricio Matte (c) 2026").
+  • Welcome console message rewritten + FULL list of supported formats.
+  • "PANE A/B" badge no longer wraps in PT-BR; "ACTIVE PANE" badge removed (the active pane is
+    already highlighted in orange). OS-9 status bar slimmed down.
+  • DSK and OS-9 file drag: ESC / drop-outside now clear the state (no stuck overlay, no disk copy
+    retained in memory); dragging within the SAME pane no longer offers "copy".
+
+DOCUMENTATION
+  • ROADMAP_WAV.md: future .WAV (cassette audio) export from .CAS/.DSK — the encoder mirrors the
+    existing decodeWav.
+
+--------------------------------------------------------------------------------
 v1.0.17 — 2026-06-03
 --------------------------------------------------------------------------------
 NEW — OS-9 / NitrOS-9 (RBF) support — READ

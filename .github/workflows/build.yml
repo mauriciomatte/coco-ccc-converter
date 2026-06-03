@@ -64,15 +64,41 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    timeout-minutes: 30   # não fica pendurado se a conexão estagnar ("other side closed")
     steps:
-      - name: Baixar todos os artefatos
+      - name: Baixar todos os artefatos (com retry)
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true   # junta installers-win/linux/mac numa pasta só (evita aninhamento)
 
-      - name: Criar GitHub Release com os instaladores
-        uses: softprops/action-gh-release@v2
-        with:
-          files: artifacts/**/*
-          fail_on_unmatched_files: false
-          generate_release_notes: true
+      # Publicação idempotente via gh CLI (sem ação de terceiros) + retry com backoff.
+      # O job de Release era o único ponto frágil: upload de ~440 MB sujeito a quedas de
+      # rede transitórias. Cada tentativa usa --clobber, então re-tentar NÃO duplica nem
+      # corrompe assets, e cria o release só uma vez se ele ainda não existir.
+      - name: Publicar GitHub Release (idempotente, com retry)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Array NUL-delimitado: nomes de instalador têm ESPAÇO e '&' ("CoCoDSK&CCCUtility_Setup 1.0.x.exe").
+          mapfile -t -d '' files < <(find artifacts -type f \( -name '*.exe' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.zip' \) -print0)
+          if [ "${#files[@]}" -eq 0 ]; then echo "::error::Nenhum instalador encontrado em artifacts/"; exit 1; fi
+          echo "Instaladores a publicar:"; printf '  %s\n' "${files[@]}"
+          # cria o release uma única vez (idempotente entre re-runs/tentativas)
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --generate-notes
+          fi
+          # upload com até 5 tentativas e backoff crescente; --clobber substitui assets parciais
+          n=0
+          until [ "$n" -ge 5 ]; do
+            if gh release upload "$TAG" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber; then
+              echo "✅ Release $TAG publicado com os instaladores."; exit 0
+            fi
+            n=$((n + 1)); delay=$((n * 20))
+            echo "::warning::Upload falhou (tentativa $n/5). Aguardando ${delay}s e tentando de novo…"
+            sleep "$delay"
+          done
+          echo "::error::Falha ao publicar o Release após 5 tentativas."; exit 1

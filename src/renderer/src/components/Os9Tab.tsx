@@ -3,7 +3,7 @@ import {
   Folder, FolderOpen, FileText, FolderPlus, Pencil, Download, Save, HardDrive,
   ChevronRight, ChevronDown, FolderOpen as OpenIcon, Plus, Loader, FileInput, Trash2,
 } from 'lucide-react';
-import { Os9MediaPanel } from './Os9MediaPanel';
+import { Os9MediaPanel, Os9MediaLegend } from './Os9MediaPanel';
 
 // Aba OS-9 / NitrOS-9 (RBF): DOIS explorers empilhados (Os9Explorer) — estilo Explorer do Windows,
 // ÁRVORE à esquerda, ARQUIVOS à direita, toolbar no topo, status bar embaixo, painel de mídia à direita.
@@ -469,10 +469,11 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
         {ident && <span>{ident.name?.trim() || '(sem volume)'} · {ident.sides === 2 ? (pt ? '2 lados' : '2 sides') : (pt ? '1 lado' : '1 side')}</span>}
         {stats && <span>{stats.files} {pt ? 'arq' : 'files'} · {stats.dirs} dirs · {(stats.freeBytes / 1024).toFixed(0)}K {pt ? 'livres' : 'free'}</span>}
         <span style={{ color: note.toLowerCase().includes(pt ? 'erro' : 'error') ? '#f87171' : 'inherit' }}>{note}</span>
+        {usage && <span className="ml-auto"><Os9MediaLegend lang={lang} /></span>}
         {ident && stats && (() => {
           const total = ident.totalSectors * 256, used = Math.max(0, total - stats.freeBytes), pct = total ? Math.round(used / total * 100) : 0;
           return (
-            <span className="ml-auto flex items-center gap-2">
+            <span className="flex items-center gap-2">
               <HardDrive size={13} className="text-[var(--primary)]" />
               {editable
                 ? <span style={{ color: dirty ? '#fbbf24' : '#34d399' }}>● {dirty ? (pt ? 'não salvo' : 'unsaved') : (pt ? 'salvo' : 'saved')}</span>

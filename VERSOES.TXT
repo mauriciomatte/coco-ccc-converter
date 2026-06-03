@@ -10,6 +10,67 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.19 — 2026-06-03
+--------------------------------------------------------------------------------
+MELHORADO — Aba OS-9
+  • Formatos OS-9 REMOVIDOS do dropdown "Nova" dos painéis DSK — como a operação OS-9 tem aba
+    própria, criar disco OS-9 agora é só por lá ("＋ Novo…": 158K/180K/360K/720K).
+  • A legenda do mapa de mídia (USO / PARCIAL / LIVRE) foi para a BARRA DE STATUS — antes, em
+    imagens grandes, escapava para baixo do explorer de baixo. O espaço sob o mapa fica reservado
+    para futuras ações (defrag). Painel de mídia com rolagem interna para nunca transbordar.
+
+INFRAESTRUTURA — Publicação de Release (CI) mais resistente
+  • O job que publica o GitHub Release passou a usar o gh CLI de forma IDEMPOTENTE, com RETRY
+    (até 5 tentativas + backoff) e --clobber — corrige a falha transitória "other side closed" que
+    interrompia o upload dos ~440 MB de instaladores. Nomes com espaço/"&" tratados com segurança
+    (array NUL-delimitado); timeout de 30 min para não ficar pendurado.
+
+REGISTRO
+  • Histórico de versões ("?") atualizado: a seção v1.0.18 havia ficado de fora do build do 1.0.18
+    e foi incorporada agora, junto desta.
+
+--------------------------------------------------------------------------------
+v1.0.18 — 2026-06-03
+--------------------------------------------------------------------------------
+NOVO — Aba OS-9 dedicada (duplo-explorer estilo Windows Explorer)
+  • Operação OS-9 saiu do modal e ganhou ABA própria, entre DSK e XRoar, com DOIS explorers
+    empilhados (TOPO e BASE) e divisória arrastável. Cada um abre/cria seu próprio disco.
+  • Árvore de pastas à esquerda, arquivos à direita, toolbar no topo e barra de status embaixo.
+  • Crie discos OS-9 novos pela própria aba (botão "＋ Novo…": 158K, 180K, 360K, 720K).
+
+NOVO — Edição de arquivos OS-9 (escrita no sistema RBF)
+  • Criar pasta, renomear, EXTRAIR, INSERIR (arquivo do PC) e EXCLUIR (arquivo ou pasta vazia),
+    com alocação fragmentada de clusters, crescimento de diretório e contabilidade do bitmap —
+    validado byte-a-byte por round-trip. "Salvar" / "Salvar Como" gravam o .os9.
+  • COPIAR arquivos entre os dois discos por arrastar-e-soltar (extrai do disco de origem e
+    insere no de destino, tudo em memória).
+
+NOVO — Painel de mídia OS-9 (mapa de ocupação)
+  • "Platter" circular de ocupação por CLUSTER (agrega clusters em imagens grandes), com % de uso,
+    cartão do disco (nome/volume/tamanho/editável) e estatísticas.
+  • Passe o mouse sobre um arquivo para REALÇAR seus clusters no mapa; clique num cluster para
+    SELECIONAR o arquivo que o ocupa. Legenda fica na barra de status.
+
+NOVO — Arrastar-e-soltar para abrir
+  • Solte um .os9/.dsk de qualquer pasta do Windows na aba OS-9 para abri-lo (em qualquer um dos
+    dois explorers). O parse é feito antes de trocar o estado — arquivo inválido não quebra o disco
+    atual e respeita alterações "não salvas".
+
+CORRIGIDO / MELHORADO — Interface e robustez
+  • Menu padrão do Electron (File/Edit/View…) REMOVIDO (atalho de DevTools F12/Ctrl+Shift+I mantido).
+  • Cabeçalho: fonte do título reduzida; crédito do autor consolidado no subtítulo
+    ("MANIPULADOR DE IMAGENS. Por Mauricio Matte (c) 2026").
+  • Mensagem de boas-vindas no console reescrita + lista COMPLETA de formatos suportados.
+  • Badge "PAINEL A/B" não quebra mais linha em PT-BR; badge "ACTIVE PANE" removido (o painel ativo
+    já é destacado em laranja). Crédito/▓ na barra de status do OS-9 enxugados.
+  • Arrasto de arquivo no DSK e no OS-9: ESC / soltar-fora agora limpam o estado (sem "travar" o
+    overlay nem reter cópia do disco na memória); arrastar no MESMO painel não oferece mais "copiar".
+
+DOCUMENTAÇÃO
+  • ROADMAP_WAV.md: exportação futura de .WAV (áudio de fita) a partir de .CAS/.DSK — o encoder é o
+    espelho do decodeWav já existente.
+
+--------------------------------------------------------------------------------
 v1.0.17 — 2026-06-03
 --------------------------------------------------------------------------------
 NOVO — Suporte a OS-9 / NitrOS-9 (RBF) — LEITURA

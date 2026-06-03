@@ -93,7 +93,7 @@ export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, h
   const L = (a: string, b: string) => (pt ? a : b);
 
   return (
-    <div style={{ width: 252, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <div style={{ width: 252, flexShrink: 0, borderLeft: '1px solid var(--border)', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'auto' }}>
       {/* cartão do disco */}
       <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
         <div className="flex items-center gap-2" style={{ marginBottom: 4 }}>
@@ -118,12 +118,7 @@ export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, h
             <text x={cx} y={cy + rIn * 0.5} textAnchor="middle" fontSize={rIn * 0.3} fill="#94a3b8">{L('cheio', 'full')}</text>
           </svg>
         ) : <div style={{ height: S, display: 'flex', alignItems: 'center', color: 'var(--text-muted)', fontSize: 11 }}>{pt ? '(sem mídia)' : '(no media)'}</div>}
-        {/* legenda */}
-        <div style={{ display: 'flex', gap: 10, fontSize: 9, color: '#94a3b8' }}>
-          {[[C.used, L('USO', 'USED')], [C.part, L('PARCIAL', 'PARTIAL')], [C.free, L('LIVRE', 'FREE')]].map(([c, l]) => (
-            <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, background: c, borderRadius: 1 }} />{l}</span>
-          ))}
-        </div>
+        {/* legenda foi p/ a barra de status (Os9MediaLegend) — aqui em baixo do platter fica livre p/ ações (defrag, futuro) */}
         {hover && view && (
           <div style={{ position: 'absolute', left: Math.min(hover.x + 10, S - 8), top: hover.y + 10, zIndex: 10, pointerEvents: 'none', background: 'rgba(2,6,12,0.96)', border: '1px solid rgba(20,250,200,0.5)', borderRadius: 4, padding: '3px 6px', fontSize: 9, color: '#7dd3fc', whiteSpace: 'nowrap' }}>
             {view.cpc > 1
@@ -141,5 +136,18 @@ export function Os9MediaPanel({ usage, ident, fileName, editable, dirty, lang, h
         <span>{L('Cluster', 'Cluster')}: {usage?.sectorsPerCluster} {L('set', 'sct')} ({clKB}K)</span>
       </div>
     </div>
+  );
+}
+
+// Legenda do platter (movida p/ a barra de status do explorer — evita transbordar sob o painel de baixo).
+export function Os9MediaLegend({ lang }: { lang: string }) {
+  const pt = lang === 'pt-br';
+  const L = (a: string, b: string) => (pt ? a : b);
+  return (
+    <span style={{ display: 'inline-flex', gap: 8, fontSize: 9, color: '#94a3b8', alignItems: 'center' }}>
+      {([[C.used, L('USO', 'USED')], [C.part, L('PARCIAL', 'PARTIAL')], [C.free, L('LIVRE', 'FREE')]] as [string, string][]).map(([c, l]) => (
+        <span key={l} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><span style={{ width: 8, height: 8, background: c, borderRadius: 1 }} />{l}</span>
+      ))}
+    </span>
   );
 }

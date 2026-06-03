@@ -509,7 +509,7 @@ export default function App() {
   // Formato do "Novo disco" POR PAINEL (persistente): 'coco35' (DECB), 'coco40' (JDOS/CODIMEX) ou
   // 'dragon' (Dragon 40T SS). Permite, ex., abrir jogos 35T no painel A e criar um 40T no painel B.
   // Ao ABRIR uma imagem, o formato do painel se auto-ajusta ao disco lido.
-  type PaneFmt = 'coco35' | 'coco40' | 'dragon' | 'os9-158' | 'os9-180' | 'os9-360' | 'os9-720';
+  type PaneFmt = 'coco35' | 'coco40' | 'dragon';
   const [paneNewFormat, setPaneNewFormat] = useState<{ A: PaneFmt; B: PaneFmt }>({ A: 'coco35', B: 'coco35' });
   const paneFormatKey = (format: string, size: number): PaneFmt => format === 'dragon' ? 'dragon' : size === 184320 ? 'coco40' : 'coco35';
 
@@ -2443,26 +2443,11 @@ export default function App() {
   // "Novo" disco (por painel): se o painel já tem imagem, confirma antes (vai descartá-la).
   const handleDskNew = (which: 'A' | 'B' = activePane) => {
     setActivePane(which);
-    if (paneNewFormat[which].startsWith('os9-')) { doDskNew(which); return; } // OS-9 abre no navegador (não substitui o painel)
     if (getPane(which)) { setDskNewConfirm(which); return; }
     doDskNew(which);
   };
   const doDskNew = async (which: 'A' | 'B') => {
     setDskNewConfirm(null);
-    // Novo OS-9: cria um disco RBF em branco e abre no NAVEGADOR editável (não vira painel RS-DOS).
-    const newFmt = paneNewFormat[which];
-    if (newFmt.startsWith('os9-')) {
-      try {
-        const geomKey = newFmt.replace('os9-', '') + 'k'; // 'os9-158' → '158k'
-        const r = await window.cocoApi.os9CreateBlank(geomKey);
-        if (!r.success) { addLog(`Novo OS-9: ${r.error}`, `New OS-9: ${r.error}`, 'error'); return; }
-        const fname = which === 'A' ? 'NOVO_A.OS9' : 'NOVO_B.OS9';
-        openOs9Doc({ buffer: new Uint8Array(r.image), fileName: fname, editable: true });
-        addLog(`Novo disco OS-9 (${newFmt.replace('os9-', '')}K) criado — editável no navegador. Use "Salvar Como" para gravar o .os9.`,
-               `New OS-9 disk (${newFmt.replace('os9-', '')}K) created — editable in the browser. Use "Save As" to write the .os9.`, 'success');
-      } catch (err: any) { addLog(`Novo OS-9: ${err.message}`, `New OS-9: ${err.message}`, 'error'); }
-      return;
-    }
     pushDskUndo();
     try {
       // O formato do "Novo disco" vem do seletor DESTE painel (não mais global): CoCo 35T/40T ou Dragon 40T.
@@ -2489,7 +2474,6 @@ export default function App() {
   //  • CoCo↔Dragon (conteúdo diferente) → avisa que precisa do conversor; mantém a imagem e o seletor.
   const handlePaneFormatChange = (which: 'A' | 'B', newFmt: PaneFmt) => {
     if (newFmt === paneNewFormat[which]) return;
-    if (newFmt.startsWith('os9-')) { setPaneNewFormat(p => ({ ...p, [which]: newFmt })); return; } // OS-9: só preferência (não reformata painel)
     const pane = getPane(which);
     const hasFiles = !!(pane && pane.files?.length);
     if (!hasFiles) { setPaneNewFormat(p => ({ ...p, [which]: newFmt })); return; } // só preferência
@@ -3719,10 +3703,6 @@ export default function App() {
               <option value="coco35">CoCo 35T</option>
               <option value="coco40">CoCo 40T (JDOS)</option>
               <option value="dragon">Dragon 40T</option>
-              <option value="os9-158">OS-9 158K (35T)</option>
-              <option value="os9-180">OS-9 180K (40T)</option>
-              <option value="os9-360">OS-9 360K (DS)</option>
-              <option value="os9-720">OS-9 720K (DS)</option>
             </select>
             <button onClick={(e) => { e.stopPropagation(); handleDskNew(which); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '2px 5px' }} title={currentLang === 'pt-br' ? `Criar nova imagem no Painel ${which}` : `Create new image in Pane ${which}`} aria-label={currentLang === 'pt-br' ? 'Nova imagem' : 'New image'}>
               <Plus size={13} />
