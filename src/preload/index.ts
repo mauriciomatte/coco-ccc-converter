@@ -26,8 +26,8 @@ const api = {
   dskDetectContainer: (dskBuffer: Uint8Array, stdDisk: number) =>
     ipcRenderer.invoke('dsk-detect-container', dskBuffer, stdDisk),
 
-  xroarPickFile: () =>
-    ipcRenderer.invoke('xroar-pick-file'),
+  xroarPickFile: (kind?: string) =>
+    ipcRenderer.invoke('xroar-pick-file', kind),
 
   imageAnalyze: () =>
     ipcRenderer.invoke('image-analyze'),

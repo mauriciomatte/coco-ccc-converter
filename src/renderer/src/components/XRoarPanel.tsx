@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3 } from 'lucide-react';
+import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3, Music, ToggleLeft, ToggleRight } from 'lucide-react';
 
-// Discos vão para uma drive via insert_disk; o resto (cas/bin/rom/sna…) via load_file auto.
+// Discos vão para uma drive via insert_disk; FITA (.cas/.wav) vai pro deck via insert_tape;
+// o resto (bin/rom/sna…) via load_file auto.
 const DISK_EXTS = ['dsk', 'vdk', 'jvc', 'dmk'];
+const CASSETTE_EXTS = ['cas', 'wav'];
 
 const MACHINES = [
   { id: 'coco3', label: 'Tandy CoCo 3 (NTSC)' },
@@ -70,6 +72,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState('');
   const [drives, setDrives] = useState<string[]>(['', '', '', '']);
+  const [tapeName, setTapeName] = useState('');                                  // fita montada (.cas/.wav)
+  const [tapeAutorun, setTapeAutorun] = useState(false);                          // CLOAD(M) automático: ON=XRoar roda sozinho; OFF=espera o usuário
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [loaded, setLoaded] = useState(false); // config carregada? (evita salvar antes da carga)
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
@@ -103,20 +107,43 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
 
   const loadToDrive = (drive: number, name: string, ext: string, data: Uint8Array) => {
     const arr = Array.from(data);
-    if (DISK_EXTS.includes(ext.toLowerCase())) {
+    const e = ext.toLowerCase();
+    // Feedback de carga vai para o LOG (não para o indicador ao lado de "XRoar", que mostra só o estado).
+    if (DISK_EXTS.includes(e)) {
       sendCmd('insert_disk', { drive, fileName: name, fileData: arr });
       setDrives(d => { const n = [...d]; n[drive] = name; return n; });
-      setStatus(`D${drive}: ${name}`);
+      onLog?.(`D${drive}: ${name}`, `D${drive}: ${name}`, 'info');
+    } else if (CASSETTE_EXTS.includes(e)) {
+      // Toggle CLOAD(M): ON → tipo 1 (XRoar roda CLOAD/CLOADM sozinho); OFF → tipo 0 (só anexa, espera o usuário).
+      sendCmd('load_file', { fileName: name, fileData: arr, loadType: tapeAutorun ? 1 : 0, drive: 0 });
+      setTapeName(name);
+      onLog?.(tapeAutorun ? `Fita: ${name} (auto)` : `Fita anexada: ${name} — dê CLOAD/CLOADM`,
+              tapeAutorun ? `Tape: ${name} (auto)` : `Tape attached: ${name} — run CLOAD/CLOADM`, 'info');
     } else {
       sendCmd('load_file', { fileName: name, fileData: arr, loadType: 0, drive });
-      setStatus(t(`Carregado: ${name}`, `Loaded: ${name}`));
+      onLog?.(`Carregado: ${name}`, `Loaded: ${name}`, 'info');
     }
     setTimeout(focusEmu, 60);
   };
 
+  // ─── Fita (K7) — usa o deck de cassete já exposto pelo bridge do XRoar ───
+  const openTape = async () => {
+    try {
+      const res = await window.cocoApi.xroarPickFile('tape');   // filtro só de fita (.cas/.wav/.c10)
+      if (res?.cancelled) return;
+      if (!res?.success) { onLog?.(`XRoar: ${res?.error}`, `XRoar: ${res?.error}`, 'error'); return; }
+      sendCmd('load_file', { fileName: res.name, fileData: Array.from(new Uint8Array(res.data)), loadType: tapeAutorun ? 1 : 0, drive: 0 });
+      setTapeName(res.name);
+      onLog?.(tapeAutorun ? `Fita: ${res.name} (auto)` : `Fita anexada: ${res.name} — dê CLOAD/CLOADM`,
+              tapeAutorun ? `Tape: ${res.name} (auto)` : `Tape attached: ${res.name} — run CLOAD/CLOADM`, 'info');
+      setTimeout(focusEmu, 60);
+    } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
+  };
+  const tapeEject = () => { sendCmd('eject_tape'); setTapeName(''); };
+
   const openToDrive = async (drive: number) => {
     try {
-      const res = await window.cocoApi.xroarPickFile();
+      const res = await window.cocoApi.xroarPickFile('disk');   // filtro só de disco (.dsk/.vdk/.jvc/.dmk)
       if (res?.cancelled) return;
       if (!res?.success) { onLog?.(`XRoar: ${res?.error}`, `XRoar: ${res?.error}`, 'error'); return; }
       loadToDrive(drive, res.name, res.ext, new Uint8Array(res.data));
@@ -202,7 +229,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // drives e marca NÃO-pronto até o novo boot reportar 'xroar-ready'. Assim um disco empurrado logo
   // após uma troca de máquina (ex.: "Testar Painel" de um disco Dragon com o XRoar em CoCo) ESPERA
   // a máquina certa subir antes de montar.
-  useEffect(() => { setDrives(['', '', '', '']); if (mounted) setReady(false); }, [machine, tvInput]);
+  useEffect(() => { setDrives(['', '', '', '']); setTapeName(''); if (mounted) setReady(false); }, [machine, tvInput]);
 
   // Aplica TODAS as configurações ao vivo quando o emulador (re)fica pronto — o boot
   // começa nos defaults, então empurramos o estado atual (vídeo, cor, ccr, joysticks).
@@ -330,6 +357,32 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
               <button onClick={() => eject(d)} disabled={!ready || !drives[d]} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Ejetar', 'Eject')}><X size={12} /></button>
             </div>
           ))}
+        </div>
+
+        {/* FITA (K7) — deck de cassete do XRoar. NOTA: este xroar.wasm só exporta load_file + eject de fita;
+            o motor (play/pause/rewind) e o contador não estão neste build → carregamos via load_file (auto). */}
+        <div className="glass-panel p-2.5 flex flex-col gap-1.5">
+          <div className={sectionTitle}>{t('Fita (K7)', 'Tape (K7)')}</div>
+          <div className="flex items-center gap-1.5">
+            <Music size={13} className={tapeName ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'} />
+            <span className="text-[10px] text-[var(--text-secondary)] font-mono truncate flex-1" title={tapeName}>{tapeName || '—'}</span>
+            <button onClick={openTape} disabled={!ready} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Abrir fita (.cas/.wav)', 'Open tape (.cas/.wav)')}><FolderOpen size={12} /></button>
+            <button onClick={tapeEject} disabled={!ready || !tapeName} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Ejetar fita', 'Eject tape')}><X size={12} /></button>
+          </div>
+          <button
+            onClick={() => setTapeAutorun(v => !v)}
+            className="dsk-tool flex items-center gap-1.5 justify-start"
+            style={{ padding: '3px 7px', color: tapeAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
+            title={t('CLOAD(M) automático. LIGADO: o XRoar roda CLOAD/CLOADM sozinho ao abrir a fita. DESLIGADO: a fita só é anexada — você digita CLOAD/CLOADM no emulador.',
+                     'Auto CLOAD(M). ON: XRoar runs CLOAD/CLOADM by itself when the tape is opened. OFF: the tape is only attached — you type CLOAD/CLOADM in the emulator.')}>
+            {tapeAutorun ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
+            <span className="text-[10px] font-bold">CLOAD(M) {tapeAutorun ? t('auto', 'auto') : t('manual', 'manual')}</span>
+          </button>
+          <div className="text-[9px] text-[var(--text-muted)] leading-tight">
+            {tapeAutorun
+              ? t('Auto: abrir a fita já roda CLOAD/CLOADM (XRoar detecta BASIC/máquina).', 'Auto: opening the tape runs CLOAD/CLOADM (XRoar detects BASIC/machine).')
+              : t('Manual: a fita só é anexada. Digite CLOAD (BASIC) ou CLOADM (máquina) + Enter no emulador.', 'Manual: the tape is only attached. Type CLOAD (BASIC) or CLOADM (machine) + Enter in the emulator.')}
+          </div>
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">

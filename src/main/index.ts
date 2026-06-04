@@ -478,16 +478,27 @@ ipcMain.handle('dsk-detect-container', async (_, dskUint8Array: Uint8Array, stdD
   }
 });
 
-// 3c0z. Pick any CoCo/Dragon media file to load into the embedded XRoar emulator.
-ipcMain.handle('xroar-pick-file', async () => {
+// 3c0z. Pick a media file for the embedded XRoar emulator. kind='tape' → só formatos de FITA (K7).
+ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
+  const filters = kind === 'tape'
+    ? [
+        { name: 'Fita K7 (.cas/.wav)', extensions: ['cas', 'wav', 'c10'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]
+    : kind === 'disk'
+    ? [
+        { name: 'Disco (.dsk/.vdk/.jvc/.dmk)', extensions: ['dsk', 'vdk', 'jvc', 'dmk'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]
+    : [
+        { name: 'CoCo/Dragon', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'cas', 'wav', 'bin', 'rom', 'ccc', 'sna', 'asc', 'bas'] },
+        { name: 'All Files', extensions: ['*'] },
+      ];
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Abrir no XRoar',
+    title: kind === 'tape' ? 'Abrir fita K7 no XRoar' : 'Abrir no XRoar',
     properties: ['openFile'],
-    filters: [
-      { name: 'CoCo/Dragon', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'cas', 'wav', 'bin', 'rom', 'ccc', 'sna', 'asc', 'bas'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
+    filters,
   });
   if (result.canceled || !result.filePaths.length) return { cancelled: true };
   const fp = result.filePaths[0];
