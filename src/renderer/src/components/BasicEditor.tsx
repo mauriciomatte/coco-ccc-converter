@@ -1,6 +1,6 @@
 import React, { useRef, useState, useLayoutEffect, useEffect } from 'react';
 import { MC6847_FONT, mc6847Glyph } from '../mc6847font';
-import { Scissors, Copy, Clipboard, Search, Replace, Play, RotateCcw, Save, FolderOpen, Disc, FileCode2 } from 'lucide-react';
+import { Scissors, Copy, Clipboard, Search, Replace, Play, RotateCcw, Save, FolderOpen, Disc, FileCode2, AudioLines } from 'lucide-react';
 import { X } from 'lucide-react';
 
 interface Props {
@@ -25,6 +25,8 @@ interface Props {
   onSaveToDisk: (name: string, program: string) => void;
   // Salva como arquivo de TEXTO (.bas) no sistema de arquivos.
   onSaveTextFile: (name: string, program: string) => void;
+  // Salva como fita .CAS (cassete de emulador) no sistema de arquivos.
+  onSaveCasFile: (name: string, program: string) => void;
   // Abre um arquivo de texto (.bas) do sistema de arquivos para o editor.
   onOpenTextFile: () => void;
   // Rótulo do arquivo aberto a partir de um DSK (ex.: "JOGO.BAS (A)") ou null se não veio de DSK.
@@ -50,7 +52,7 @@ const schemeOf = (k: string) => SCHEMES[k] || SCHEMES['green-black'];
 export default function BasicEditor({
   lang, text, onTextChange, name, onNameChange, pane, onPaneChange, screen, onScreenChange,
   addNew, onAddNewChange, addRun, onAddRunChange, bold, onBoldChange,
-  onRun, onSaveToDisk, onSaveTextFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
+  onRun, onSaveToDisk, onSaveTextFile, onSaveCasFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -286,6 +288,7 @@ export default function BasicEditor({
         {/* Arquivo de TEXTO (.bas) no sistema de arquivos */}
         <button onClick={onOpenTextFile} title={t('Abrir arquivo .BAS (texto)', 'Open .BAS text file')} className={toolBtn}><FolderOpen size={15} /></button>
         <button onClick={() => onSaveTextFile(safeName(), text)} disabled={empty} title={t('Salvar como arquivo .BAS (texto)', 'Save as .BAS text file')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><Save size={15} /></button>
+        <button onClick={() => onSaveCasFile(safeName(), text)} disabled={empty} title={t('Salvar como fita .CAS (cassete de emulador — CLOAD)', 'Save as .CAS tape (emulator cassette — CLOAD)')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><AudioLines size={15} /></button>
         {sep}
         <button onClick={doCut} title={t('Recortar', 'Cut')} className={toolBtn}><Scissors size={15} /></button>
         <button onClick={doCopy} title={t('Copiar', 'Copy')} className={toolBtn}><Copy size={15} /></button>

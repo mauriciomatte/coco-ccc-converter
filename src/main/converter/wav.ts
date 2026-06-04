@@ -170,7 +170,7 @@ export interface DecodeOpts { midUs?: number; minUs?: number; maxUs?: number; mi
 export interface CasDecodeResult {
   sampleRate: number; bitsPerSample: number; channels: number; totalSamples: number; durationSec: number;
   foundSync: boolean; inverted: boolean; bitCount: number; byteCount: number;
-  bytes: number[]; blocks: CasBlock[]; files: CasFileInfo[];
+  bytes: number[]; byteTimes: number[]; blocks: CasBlock[]; files: CasFileInfo[];
 }
 
 /** Lê os SAMPLES (canal 0, -1..1) de um WAV PCM 8/16-bit. */
@@ -227,7 +227,7 @@ export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDeco
   const { samples, sampleRate, bits, channels } = readWavSamples(wavBuffer);
   const base: CasDecodeResult = {
     sampleRate, bitsPerSample: bits, channels, totalSamples: samples.length, durationSec: samples.length / sampleRate,
-    foundSync: false, inverted: false, bitCount: 0, byteCount: 0, bytes: [], blocks: [], files: [],
+    foundSync: false, inverted: false, bitCount: 0, byteCount: 0, bytes: [], byteTimes: [], blocks: [], files: [],
   };
   // up-crossings + pico de amplitude por segmento (gate de ruído via minAmp)
   const cross: number[] = [], segMax: number[] = [];
@@ -237,12 +237,12 @@ export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDeco
     const sign = Math.sign(samples[i]) || 1;
     if (sign !== prevSign) { if (sign > 0 && prevSign < 0) { const f = -samples[i - 1] / (samples[i] - samples[i - 1]); cross.push(i - 1 + f); segMax.push(curMax); curMax = 0; } prevSign = sign; }
   }
-  const bitsArr: number[] = [];
+  const bitsArr: number[] = [], bitPos: number[] = [];           // bitPos[k] = amostra do k-ésimo bit aceito
   for (let i = 1; i < cross.length; i++) {
     if (segMax[i] < minAmp) continue;
     const us = ((cross[i] - cross[i - 1]) / sampleRate) * 1e6;
-    if (us >= minUs && us < midUs) bitsArr.push(1);
-    else if (us >= midUs && us <= maxUs) bitsArr.push(0);
+    if (us >= minUs && us < midUs) { bitsArr.push(1); bitPos.push(cross[i]); }
+    else if (us >= midUs && us <= maxUs) { bitsArr.push(0); bitPos.push(cross[i]); }
   }
   base.bitCount = bitsArr.length;
   if (bitsArr.length < 16) return base;
@@ -252,9 +252,9 @@ export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDeco
     const norm = b1 === 0x55 && b2 === 0x3c, inv = b1 === 0xaa && b2 === 0xc3;
     if (norm || inv) {
       base.foundSync = true; base.inverted = inv;
-      const out: number[] = [];
-      for (let j = i + 8; j < bitsArr.length - 8; j += 8) { let v = 0; for (let b = 0; b < 8; b++) v |= bitsArr[j + b] << b; out.push(inv ? (~v) & 0xff : v); }
-      base.bytes = out; base.byteCount = out.length;
+      const out: number[] = [], times: number[] = [];
+      for (let j = i + 8; j < bitsArr.length - 8; j += 8) { let v = 0; for (let b = 0; b < 8; b++) v |= bitsArr[j + b] << b; out.push(inv ? (~v) & 0xff : v); times.push(bitPos[j] / sampleRate); }
+      base.bytes = out; base.byteCount = out.length; base.byteTimes = times;
       base.blocks = parseCasBlocks(out);
       base.files = filesFromBlocks(base.blocks);
       break;
@@ -278,12 +278,21 @@ export function buildCleanCas(blocks: CasBlock[]): Buffer {
   const out: number[] = [];
   const leader = (n: number) => { for (let k = 0; k < n; k++) out.push(0x55); };
   const block = (type: number, data: number[]) => { out.push(0x3c, type & 0xff, data.length & 0xff); let s = (type + data.length) & 0xff; for (const b of data) { out.push(b & 0xff); s = (s + b) & 0xff; } out.push(s & 0xff); };
-  let firstData = true;
-  leader(128);
+  // Filtra SÓ os blocos válidos (namefile=0 + data=1 até o EOF=0xFF), descartando o lixo que o decoder
+  // produz ao tentar ler o stream turbo/tela após a parte padrão. Sem isso o .cas não abre no XRoar.
+  let namefile: number[] | null = null;
+  const data: number[][] = [];
   for (const b of blocks) {
-    if (b.type === 1 && firstData) { leader(128); firstData = false; }   // leader antes do 1º data block
-    block(b.type, b.data);
+    if (b.type === 0x00) { if (namefile) break; namefile = b.data; }      // 2º namefile = outro arquivo → para
+    else if (b.type === 0x01) { if (namefile) data.push(b.data); }        // data só conta depois do namefile
+    else if (b.type === 0xFF) { if (namefile) break; }                    // EOF → fim do arquivo (ignora o resto)
+    // qualquer outro tipo = lixo de decode → ignora
   }
+  // Estrutura canônica (igual a um .cas que abre no XRoar): leader, namefile, leader, data…, EOF.
+  leader(128);
+  if (namefile) { block(0x00, namefile); leader(128); }
+  for (const d of data) { block(0x01, d); leader(2); }
+  block(0xFF, []);
   leader(2);
   return Buffer.from(out);
 }

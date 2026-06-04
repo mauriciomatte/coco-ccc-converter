@@ -63,6 +63,9 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   }
 
+  // K4 — permite captura de áudio (line-in/microfone) para gravar fita real na aba K7. App local/confiável.
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(true));
+
   // Sem o menu padrão, os atalhos de DevTools sumiriam — registramos F12 / Ctrl+Shift+I à mão.
   mainWindow.webContents.on('before-input-event', (_e, input) => {
     if (input.type !== 'keyDown') return;
@@ -483,7 +486,7 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   const filters = kind === 'tape'
     ? [
-        { name: 'Fita K7 (.cas/.wav)', extensions: ['cas', 'wav', 'c10'] },
+        { name: 'Fita K7 (.wav/.cas/.voc/.c10)', extensions: ['wav', 'cas', 'voc', 'c10'] },
         { name: 'All Files', extensions: ['*'] },
       ]
     : kind === 'disk'
@@ -558,6 +561,62 @@ ipcMain.handle('k7-extract-file', async (_, wavBytes: Uint8Array, opts: any, fil
     if (res.canceled || !res.filePath) return { cancelled: true };
     fs.writeFileSync(res.filePath, data);
     return { success: true, path: res.filePath, size: data.length, name: f.name };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z5. K6 — devolve os BYTES de um arquivo decodificado (sem diálogo) → p/ abrir no editor BASIC.
+ipcMain.handle('k7-file-bytes', async (_, wavBytes: Uint8Array, opts: any, fileIndex: number) => {
+  try {
+    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    const f = r.files[fileIndex || 0];
+    if (!f) return { success: false, error: 'Arquivo não encontrado na fita.' };
+    return { success: true, data: new Uint8Array(extractCasFileData(r.blocks, fileIndex || 0)), name: f.name, ftype: f.ftype };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z5b. K2/UX — devolve o STREAM CRU completo (todos os bytes lidos da fita, do sync ao fim) +
+//   o TEMPO (s) de cada byte. O painel hexadecimal usa isso p/ revelar a leitura conforme o playhead
+//   avança por TODA a fita (header → tela/loader → turbo), não só a parte padrão decodificada.
+ipcMain.handle('k7-stream', async (_, wavBytes: Uint8Array, opts: any) => {
+  try {
+    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    return { success: true, data: new Uint8Array(r.bytes), times: r.byteTimes, durationSec: r.durationSec };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z6. K5 — prepara um arquivo decodificado da fita p/ gravar num painel DSK (RS-DOS).
+//   BASIC/Data: bytes crus (o stream tokenizado da fita É o conteúdo de disco).
+//   ML (tipo 2): embrulha no formato segmentado RS-DOS [00][len:2BE][load:2BE][data][FF][0000][exec:2BE].
+ipcMain.handle('k7-file-for-dsk', async (_, wavBytes: Uint8Array, opts: any, fileIndex: number) => {
+  try {
+    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    const f = r.files[fileIndex || 0];
+    if (!f) return { success: false, error: 'Arquivo não encontrado na fita.' };
+    const raw = Buffer.from(extractCasFileData(r.blocks, fileIndex || 0));
+    let data = raw, ext = 'dat', fileType = 1;
+    if (f.ftype === 0) { ext = 'bas'; fileType = 0; }
+    else if (f.ftype === 2) {
+      ext = 'bin'; fileType = 2;
+      const load = f.loadAddr & 0xFFFF, exec = f.execAddr & 0xFFFF, len = raw.length & 0xFFFF;
+      const seg = Buffer.alloc(5 + raw.length + 5);
+      seg[0] = 0x00; seg.writeUInt16BE(len, 1); seg.writeUInt16BE(load, 3);
+      raw.copy(seg, 5);
+      const tail = 5 + raw.length;
+      seg[tail] = 0xFF; seg[tail + 1] = 0x00; seg[tail + 2] = 0x00; seg.writeUInt16BE(exec, tail + 3);
+      data = seg;
+    }
+    const asciiFlag = f.ascii ? 0xFF : 0x00;
+    const name = (f.name || 'TAPEFILE').replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'TAPEFILE';
+    return { success: true, data: new Uint8Array(data), name, ext, fileType, asciiFlag, ftypeName: f.ftypeName };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z7. K2 — converte um .cas/.c10 (stream de cassete) em WAV (FSK quadrada) para a aba K7
+//   exibir como onda e decodificar pelo mesmo pipeline do WAV.
+ipcMain.handle('k7-cas-to-wav', async (_, casBytes: Uint8Array, sampleRate: number) => {
+  try {
+    const wav = encodeCasToWav(Buffer.from(casBytes), sampleRate || 22050);
+    return { success: true, data: new Uint8Array(wav) };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 

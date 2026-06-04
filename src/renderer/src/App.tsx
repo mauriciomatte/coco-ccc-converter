@@ -2216,12 +2216,72 @@ export default function App() {
     } catch (err: any) { addLog(`Salvar .BAS: ${err.message}`, `Save .BAS: ${err.message}`, 'error'); }
   };
 
+  // Aba BASIC: salva o programa como FITA .CAS (cassete de emulador) no sistema de arquivos.
+  // Embrulha o texto ASCII num CAS (namefile tipo 0 BASIC, flag ASCII 0xFF + blocos de dados) —
+  // carregável em XRoar/MAME via CLOAD e re-importável na aba K7.
+  const handleBasicSaveCasFile = async (name: string, program: string) => {
+    if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    try {
+      const payload = basicTextToAsciiBytes(program);
+      const casName = (name || 'PROGRAM').toUpperCase().replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'PROGRAM';
+      const built = await window.cocoApi.buildEmulatorCas([
+        { name: casName, fileType: 0, asciiFlag: 0xFF, loadAddr: 0, execAddr: 0, payload },
+      ]);
+      if (!built.success) { addLog(`Salvar .CAS: ${built.error}`, `Save .CAS: ${built.error}`, 'error'); return; }
+      const res = await window.cocoApi.saveCartridgeFile(
+        built.image, `${name}.cas`,
+        currentLang === 'pt-br' ? 'Salvar programa BASIC como fita (.cas)' : 'Save BASIC program as tape (.cas)',
+        [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'All Files', extensions: ['*'] }]
+      );
+      if (res.success) addLog(`Fita BASIC salva em: ${res.filePath}`, `BASIC tape saved at: ${res.filePath}`, 'success');
+      else if (res.error) addLog(`Salvar .CAS: ${res.error}`, `Save .CAS: ${res.error}`, 'error');
+    } catch (err: any) { addLog(`Salvar .CAS: ${err.message}`, `Save .CAS: ${err.message}`, 'error'); }
+  };
+
   // Carrega texto no editor BASIC; se o editor já tiver conteúdo, pede confirmação (apaga o atual).
   // source != null quando o programa veio de um arquivo num DSK (habilita o "Salvar" in-place).
   // Nome sugerido a partir da origem (arquivo do painel ou do sistema) → preenche o campo PRG-NOME.
   const suggestNameFrom = (source: BasicSrc | null, label: string): string => {
     const base = source?.entry?.name ? String(source.entry.name) : label.replace(/\.[^.]*$/, '');
     return base.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  };
+  // K6 — abre no editor BASIC um arquivo .BAS lido da FITA (aba K7): detokeniza e carrega.
+  const handleK7OpenBasic = (bytes: Uint8Array, name: string) => {
+    const { text, tokenized } = decodeBasToText(bytes, 0, platform === 'dragon' ? 'dragon' : 'coco');
+    if (tokenized || !text.trim()) { addLog(`"${name}" da fita não pôde ser convertido em texto BASIC.`, `Tape "${name}" could not be converted to BASIC text.`, 'warn'); return; }
+    requestLoadBasic(text, name || 'FITA.BAS', null);
+  };
+
+  // K5 → XRoar: carrega o WAV da fita (atual, editado/remasterizado) direto no emulador como cassete.
+  const handleK7ToXroar = (wavBytes: Uint8Array, name: string) => {
+    const base = (name || 'fita').replace(/\.[^.]+$/, '') || 'fita';
+    setXroarLoad({ name: base + '.wav', ext: 'wav', data: new Uint8Array(wavBytes), key: Date.now(), drive: 0 });
+    setActiveTab('xroar');
+    addLog(`Fita "${base}" enviada ao XRoar (use CLOAD/CLOADM/RUN no emulador).`,
+           `Tape "${base}" sent to XRoar (use CLOAD/CLOADM/RUN in the emulator).`, 'success');
+  };
+
+  // K5 ↔ DSK: decodifica o arquivo da fita e o grava no painel DSK ativo (BASIC cru / ML embrulhado RS-DOS).
+  const handleK7ToDsk = async (wavBytes: Uint8Array, opts: any, fileIndex: number) => {
+    const which = activePane;
+    const pane = getPane(which);
+    if (!pane) { addLog(`Painel ${which} não tem disco carregado.`, `Pane ${which} has no disk loaded.`, 'warn'); return; }
+    if (pane.readOnly) { addLog(`Painel ${which} está somente-leitura.`, `Pane ${which} is read-only.`, 'warn'); return; }
+    try {
+      const prep = await window.cocoApi.k7FileForDsk(wavBytes, opts, fileIndex);
+      if (!prep.success) { addLog(`Enviar fita → DSK: ${prep.error}`, `Send tape → DSK: ${prep.error}`, 'error'); return; }
+      pushDskUndo();
+      const res = await window.cocoApi.dskAddBytes(pane.buffer, prep.name, prep.ext, prep.fileType, prep.asciiFlag, prep.data);
+      if (res.success) {
+        await refreshPane(which, res.image);
+        markDirty(which);
+        setActiveTab('dsk');
+        addLog(`"${prep.name}.${prep.ext}" (${prep.ftypeName}) gravado no Painel ${which}. Salve a imagem (.DSK).`,
+               `"${prep.name}.${prep.ext}" (${prep.ftypeName}) written to Pane ${which}. Save the .DSK image.`, 'success');
+      } else {
+        addLog(`Enviar fita → DSK: ${res.error}`, `Send tape → DSK: ${res.error}`, 'error');
+      }
+    } catch (err: any) { addLog(`Enviar fita → DSK: ${err.message}`, `Send tape → DSK: ${err.message}`, 'error'); }
   };
   const requestLoadBasic = (newText: string, label: string, source: BasicSrc | null = null) => {
     const name = suggestNameFrom(source, label);
@@ -4489,6 +4549,7 @@ export default function App() {
             onRun={handleBasicRun}
             onSaveToDisk={handleBasicSaveToDisk}
             onSaveTextFile={handleBasicSaveTextFile}
+            onSaveCasFile={handleBasicSaveCasFile}
             onOpenTextFile={handleBasicOpenTextFile}
             sourceLabel={basicSource ? `${basicSource.entry.fullName} (${basicSource.pane})` : null}
             onUpdateInDsk={handleBasicUpdateInDsk}
@@ -4578,7 +4639,9 @@ export default function App() {
 
         {/* Aba K7 — sempre montada (display toggle) para preservar o WAV/waveform ao trocar de aba */}
         <div style={{ display: activeTab === 'k7' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <K7Tab lang={currentLang} />
+          <K7Tab lang={currentLang} active={activeTab === 'k7'} platform={platform} onOpenBasic={handleK7OpenBasic}
+            detokenize={(bytes) => decodeBasToText(bytes, undefined, platform === 'dragon' ? 'dragon' : 'coco')}
+            onSendToXroar={handleK7ToXroar} onSendToDsk={handleK7ToDsk} onLog={addLog} />
         </div>
 
         {/* Aba OS-9 — sempre montada (display toggle) para NÃO perder a edição em memória ao trocar de aba */}

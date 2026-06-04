@@ -168,6 +168,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // Mensagens vindas do iframe (ready/log/status)
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
+      if (iframeRef.current && e.source !== iframeRef.current.contentWindow) return; // só o NOSSO iframe (isola da mini-XRoar)
       const d = e.data;
       if (!d || typeof d.type !== 'string' || !d.type.startsWith('xroar')) return;
       if (d.type === 'xroar-ready') { setReady(true); setPaused(false); setStatus(t('pronto', 'ready')); }
@@ -188,7 +189,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     // permanece na drive) e só então digita RUN/LOADM. Sem o reset, o texto iria para o
     // programa em execução e nada carregaria.
     if (pendingLoad.runCmd) {
-      const cmd = pendingLoad.runCmd;
+      // Dragon: a ROM pede "pressione uma tecla" no boot/reset → prefixa um ESPAÇO para dispensar o
+      // prompt antes do comando (no prompt do BASIC o espaço é inócuo). Mesmo critério da injeção de BASIC.
+      const isDragon = machine.startsWith('dragon');
+      const cmd = (isDragon ? ' ' : '') + pendingLoad.runCmd;
       setTimeout(() => sendCmd('hard_reset'), 900);                                  // disco montou → reseta
       setTimeout(() => { sendCmd('type_string', { text: cmd, delayMs: getTypeDelay() }); focusEmu(); }, 3400); // boot pronto → digita
     } else if (pendingLoad.reset) {

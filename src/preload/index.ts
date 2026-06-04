@@ -31,6 +31,10 @@ const api = {
   k7Decode: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('k7-decode', wavBytes, opts),
   k7ExportClean: (wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string) => ipcRenderer.invoke('k7-export-clean', wavBytes, opts, format, sampleRate, defaultName),
   k7ExtractFile: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-extract-file', wavBytes, opts, fileIndex),
+  k7FileBytes: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-bytes', wavBytes, opts, fileIndex),
+  k7Stream: (wavBytes: Uint8Array, opts: any) => ipcRenderer.invoke('k7-stream', wavBytes, opts),
+  k7FileForDsk: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-for-dsk', wavBytes, opts, fileIndex),
+  k7CasToWav: (casBytes: Uint8Array, sampleRate?: number) => ipcRenderer.invoke('k7-cas-to-wav', casBytes, sampleRate),
 
   imageAnalyze: () =>
     ipcRenderer.invoke('image-analyze'),

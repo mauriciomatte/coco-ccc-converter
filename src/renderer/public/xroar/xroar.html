@@ -147,6 +147,12 @@
                 args.push('-joy-left', initLeftJoy);
             }
 
+            // mini-XRoar (aba K7): lê a fita na VELOCIDADE REAL do CoCo (sem carga acelerada), p/ o
+            // CLOAD/CLOADM acompanhar o play/carretéis/hex em tempo real. A aba grande mantém o padrão (rápido).
+            if (urlParams.get('mini') === '1') {
+                args.push('-no-tape-fast');
+            }
+
             return args;
         }
 
@@ -1406,6 +1412,16 @@
         });
 
         document.addEventListener('click', function () { document.getElementById('canvas').focus(); });
+
+        // ─── Atalho da mini-XRoar (aba K7): CTRL+ENTER → RESET TOTAL (hard reset) ──────
+        // Só na instância mini (?mini=1). Captura antes do emulador e evita o Enter no BASIC.
+        window.addEventListener('keydown', function (e) {
+            if (urlParams.get('mini') !== '1') return;
+            if (e.ctrlKey && (e.key === 'Enter' || e.keyCode === 13)) {
+                e.preventDefault(); e.stopPropagation();
+                try { wasm_hard_reset(); _log('xroar-status', 'mini: hard reset (Ctrl+Enter)'); } catch (err) { }
+            }
+        }, true);
 
         // ─── BOOT ────────────────────────────────────────────────────────────────────
         startEmulator().catch(function (e) { _log('xroar-error', 'Fatal: ' + e.message); });

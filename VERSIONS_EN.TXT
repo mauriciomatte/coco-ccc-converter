@@ -10,6 +10,41 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.24 — 2026-06-04
+--------------------------------------------------------------------------------
+NEW — Full K7 (cassette) tab: waveform editor + animated datacorder
+  • Opens .WAV, .CAS, .C10 and .VOC (CoCo/Dragon FSK decode → program).
+  • Animated datacorder (reels, counter, Play/Pause/Stop/Rewind/FF/Eject) with the tape running
+    UNDER the reels; Speed selector: Época (analyzes the tape's CoCo-standard speed), Normal (as
+    recorded), -2×/-4× (slower), ×2/×4.
+  • Waveform with zoom/scroll, selection and editing (cut/copy/paste/delete/trim/normalize —
+    Normalize honors the selection), undo/redo, and REAL tape recording via line-in (K4).
+  • BASIC (detokenized, 32 columns) and Hex panels that "load" as playback advances (reading
+    effect, auto-scroll); adjustable splitters between panels.
+  • "Program" panel: file, extension, system size and program size (CoCo RAM class). K8 sound
+    adjustments (Threshold/Amplitude) with fine +/-.
+
+NEW — Tape export & interop
+  • "→ CAS"/"→ WAV" (normalize/clean), "→ Full tape" (original audio, captures everything),
+    Extract with BIN/BAS/CAS format, and "→ BASIC" (sends the read program to the BASIC editor).
+  • "↔ DSK" (writes the file into a DSK pane, ML wrapped in RS-DOS) and "→ XRoar".
+  • In the BASIC editor: new "Save as .cas" button (emulator tape, CLOAD).
+
+NEW — Embedded mini-XRoar in the K7 tab ("Mirror")
+  • Compact XRoar screen (CoCo 3 or Dragon) next to the panels; on PLAY it resets and auto-runs
+    CLOAD/CLOADM by file type, synchronized (audio starts only after the command is entered).
+    Muted (audio priority to the main instance). CTRL+ENTER = full reset.
+  • Reads the tape at REAL CoCo speed (-no-tape-fast) to track playback.
+  • All K7 tab settings are persistent.
+
+FIXED
+  • "→ CAS" wouldn't open in XRoar: the decoder produced garbage blocks from noise after the
+    standard part and the .cas came out malformed. Now it keeps only valid blocks (namefile +
+    data up to EOF).
+  • XRoar/Dragon: the "press a key" prompt is now dismissed with a leading SPACE before the
+    command, including in tape/disk auto-run.
+
+--------------------------------------------------------------------------------
 v1.0.23 — 2026-06-03
 --------------------------------------------------------------------------------
 NEW — OS-9: writing to a CONTAINER partition (O5)

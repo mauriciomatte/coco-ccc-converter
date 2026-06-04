@@ -10,6 +10,40 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.24 — 2026-06-04
+--------------------------------------------------------------------------------
+NOVO — Aba K7 (Fita cassete) completa: editor de onda + datacorder animado
+  • Abre .WAV, .CAS, .C10 e .VOC (decode FSK do CoCo/Dragon → programa).
+  • Datacorder animado (carretéis, contador, Play/Pausa/Stop/Rebobinar/Avançar/Ejetar) e a
+    fita correndo por baixo dos rolos; seletor de Velocidade: Época (analisa a velocidade-padrão
+    do CoCo da própria fita), Normal (como gravado), -2×/-4× (mais devagar), ×2/×4.
+  • Waveform com zoom/scroll, seleção e edição (recortar/copiar/colar/excluir/trim/normalizar
+    — Normalizar respeita a seleção), desfazer/refazer, e gravação de fita REAL pelo line-in (K4).
+  • Painéis BASIC (detokenizado, 32 colunas) e Hexadecimal que vão "carregando" conforme o play
+    avança (efeito de leitura, com auto-scroll); splitters ajustáveis entre os painéis.
+  • Painel "Programa": arquivo, extensão, tamanho de sistema e tamanho do programa (classe de RAM
+    do CoCo). Ajustes de som K8 (Limiar/Amplitude) com +/- finos.
+
+NOVO — Exportação e interoperabilidade da fita
+  • "→ CAS"/"→ WAV" (normalizar/limpar), "→ Fita completa" (áudio original, captura tudo),
+    Extrair com formato BIN/BAS/CAS, e "→ BASIC" (joga o programa lido no editor BASIC).
+  • "↔ DSK" (grava o arquivo num painel DSK, ML embrulhado em RS-DOS) e "→ XRoar".
+  • No editor BASIC: novo botão "Salvar como .cas" (fita de emulador, CLOAD).
+
+NOVO — mini-XRoar embutido na aba K7 ("Espelhar")
+  • Tela compacta do XRoar (CoCo 3 ou Dragon) ao lado dos painéis; ao dar PLAY, reseta e roda
+    CLOAD/CLOADM automático conforme o tipo do arquivo, sincronizado (toca o áudio só após o
+    comando entrar). Muda (prioridade de som para a instância grande). CTRL+ENTER = reset total.
+  • Lê a fita em velocidade REAL do CoCo (-no-tape-fast) p/ acompanhar o play.
+  • Todas as configurações da aba K7 são persistentes.
+
+CORRIGIDO
+  • "→ CAS" não abria no XRoar: o decoder gerava blocos-lixo do ruído após a parte padrão e o
+    .cas saía malformado. Agora filtra só os blocos válidos (namefile + dados até o EOF).
+  • XRoar/Dragon: o prompt "pressione uma tecla" agora é dispensado com um ESPAÇO antes do
+    comando, também no auto-rodar de fita/disco.
+
+--------------------------------------------------------------------------------
 v1.0.23 — 2026-06-03
 --------------------------------------------------------------------------------
 NOVO — OS-9: escrita na partição de CONTAINER (O5)
