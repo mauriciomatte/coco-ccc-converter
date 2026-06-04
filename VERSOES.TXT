@@ -10,6 +10,38 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.23 — 2026-06-03
+--------------------------------------------------------------------------------
+NOVO — OS-9: escrita na partição de CONTAINER (O5)
+  • Partições OS-9 dentro de MiniIDE/CoCoSDC agora podem ser EDITADAS: botão "Habilitar edição"
+    (com aviso) grava DIRETO no arquivo do container, regravando só os setores alterados.
+  • GUARDA DE SISTEMA: OS9Boot/SYS/CMDS/DEFS (e todo o seu conteúdo) são protegidos — só pastas de
+    USUÁRIO podem ser criadas/renomeadas/excluídas. Cada gravação é validada ANTES de escrever.
+  • `.os9`/`.dsk` OS-9 SOLTO (standalone) aberto pela detecção agora abre EDITÁVEL em memória
+    (Salvar/Salvar Como). Partição de container abre em leitura + "Habilitar edição".
+
+NOVO — OS-9: copiar PASTAS e arrastar para o Windows
+  • Arrastar uma PASTA de um explorer para o outro copia a subárvore inteira (recursivo:
+    pastas, subpastas e arquivos), preservando pastas vazias.
+  • Alça "⠿" nas linhas de arquivo: arraste o arquivo OS-9 direto para uma pasta do Windows.
+
+NOVO — Renomear arquivo (RS-DOS e Dragon)
+  • Botão ✏️ na aba DSK (1 arquivo selecionado) + modal: renomeia só a entrada de diretório
+    (nome 8 + extensão 3), dados intocados. Recusa nome vazio ou colisão. (OS-9 já tinha.)
+
+MELHORADO — Dragon
+  • Ao ABRIR um disco Dragon (.vdk), a plataforma (e a máquina do XRoar) troca sozinha para Dragon
+    (e CoCo ao abrir RS-DOS) — antes só trocava ao testar.
+  • Confirmado: a edição Dragon (adicionar/excluir/ordenar/defrag, 1 e 2 lados) já estava ligada e
+    funcionando (validada por round-trip).
+
+CORRIGIDO
+  • `cursor-grab` não estava definida no CSS (afetava as alças de arraste do DSK e do OS-9) — definida.
+
+DOCUMENTAÇÃO
+  • ROADMAP_CASWAV.md (aba CAS/WAV/VOC para preservação de fita — WAV↔CAS, CAS↔BASIC, JVC, etc.).
+
+--------------------------------------------------------------------------------
 v1.0.22 — 2026-06-03
 --------------------------------------------------------------------------------
 NOVO — Defrag OS-9 (compactar fragmentação)

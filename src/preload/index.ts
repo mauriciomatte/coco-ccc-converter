@@ -17,6 +17,8 @@ const api = {
 
   dskDeleteFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-delete-file', dskBuffer, fileEntry),
+  dskRenameFile: (dskBuffer: Uint8Array, fileEntry: any, newName: string, newExt: string) =>
+    ipcRenderer.invoke('dsk-rename-file', dskBuffer, fileEntry, newName, newExt),
 
   dskSortDirectory: (dskBuffer: Uint8Array) =>
     ipcRenderer.invoke('dsk-sort-directory', dskBuffer),
@@ -51,6 +53,10 @@ const api = {
   os9DeleteBuffer: (buffer: Uint8Array, parentFdLsn: number, name: string) => ipcRenderer.invoke('os9-delete-buffer', buffer, parentFdLsn, name),
   os9DefragFileBuffer: (buffer: Uint8Array, fdLsn: number) => ipcRenderer.invoke('os9-defrag-file-buffer', buffer, fdLsn),
   os9DefragAllBuffer: (buffer: Uint8Array) => ipcRenderer.invoke('os9-defrag-all-buffer', buffer),
+  os9ContainerEdit: (filePath: string, base: number, op: string, args: any) => ipcRenderer.invoke('os9-container-edit', filePath, base, op, args),
+  os9ReadTreeBuffer: (buffer: Uint8Array, fdLsn: number, name: string) => ipcRenderer.invoke('os9-read-tree-buffer', buffer, fdLsn, name),
+  os9ReadTreePath: (filePath: string, base: number, fdLsn: number, name: string) => ipcRenderer.invoke('os9-read-tree-path', filePath, base, fdLsn, name),
+  os9ApplyTreeBuffer: (buffer: Uint8Array, dstParentFdLsn: number, tree: any) => ipcRenderer.invoke('os9-apply-tree-buffer', buffer, dstParentFdLsn, tree),
   os9OpenPath: (filePath: string) => ipcRenderer.invoke('os9-open-path', filePath),
   os9ReadFileBuffer: (buffer: Uint8Array, fdLsn: number) => ipcRenderer.invoke('os9-readfile-buffer', buffer, fdLsn),
   os9ReadFilePath: (filePath: string, base: number, fdLsn: number) => ipcRenderer.invoke('os9-readfile-path', filePath, base, fdLsn),
@@ -115,6 +121,8 @@ const api = {
   // Drag-OUT nativo: extrai o arquivo para um temp e inicia o arrasto do SO (soltar no Explorer).
   startFileDrag: (dskBuffer: Uint8Array, fileEntry: any, fileName: string) =>
     ipcRenderer.send('start-file-drag', dskBuffer, fileEntry, fileName),
+  startOs9FileDrag: (opts: { buf?: Uint8Array; filePath?: string; base?: number; fdLsn: number; name: string }) =>
+    ipcRenderer.send('start-os9-file-drag', opts),
 
   pickCocoFile: () =>
     ipcRenderer.invoke('pick-coco-file'),

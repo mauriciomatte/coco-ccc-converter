@@ -566,6 +566,8 @@ body {
 .select-all { user-select: all; }
 .select-none { user-select: none; }
 .cursor-pointer { cursor: pointer; }
+.cursor-grab { cursor: grab; }
+.cursor-grab:active { cursor: grabbing; }
 .outline-none { outline: none; }
 .whitespace-nowrap { white-space: nowrap; }
 .whitespace-pre { white-space: pre; }

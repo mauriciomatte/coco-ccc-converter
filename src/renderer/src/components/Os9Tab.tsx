@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef, forwardRef, useImperativeHandle } from 'react';
 import {
   Folder, FolderOpen, FileText, FolderPlus, Pencil, Download, Save, HardDrive,
-  ChevronRight, ChevronDown, FolderOpen as OpenIcon, Plus, Loader, FileInput, Trash2,
+  ChevronRight, ChevronDown, FolderOpen as OpenIcon, Plus, Loader, FileInput, Trash2, Unlock, AlertTriangle,
 } from 'lucide-react';
 import { Os9MediaPanel, Os9MediaLegend } from './Os9MediaPanel';
 
@@ -16,8 +16,10 @@ export interface Os9ExplorerHandle {
   getInfo: () => { panelId: string; editable: boolean; hasDisk: boolean; fileName?: string };
   extractFile: (fdLsn: number) => Promise<Uint8Array | null>;
   insertData: (name: string, data: Uint8Array) => Promise<boolean>;
+  readTree: (fdLsn: number, name: string) => Promise<any | null>;
+  applyTree: (tree: any) => Promise<boolean>;
 }
-interface CrossDrop { fromPanelId: string; fdLsn: number; name: string; }
+interface CrossDrop { fromPanelId: string; fdLsn: number; name: string; isDir: boolean; }
 
 interface Os9Date { year: number; month: number; day: number; hour: number; minute: number; }
 interface Os9Node { name: string; fdLsn: number; isDir: boolean; size: number; attrString: string; modified?: Os9Date | null; children?: Os9Node[]; truncated?: boolean; segs?: Array<{ lsn: number; sectors: number }>; }
@@ -65,6 +67,11 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
   const [dragOver, setDragOver] = useState<null | 'open' | 'copy'>(null); // realce ao arrastar (abrir do Windows / copiar entre explorers)
 
   const editable = !!src?.editable;
+  // Partição OS-9 de CONTAINER (filePath+base, sem buffer em memória) → edição grava DIRETO no arquivo (O5).
+  const containerMode = !!(src?.filePath && !buf);
+  const [containerEdit, setContainerEdit] = useState(false); // edição de container habilitada (após aviso)
+  const [containerWarn, setContainerWarn] = useState(false);  // modal de aviso "grava no arquivo"
+  const canEdit = editable || (containerMode && containerEdit);
   const [hoverFd, setHoverFd] = useState<number | null>(null); // item sob o mouse (lista/árvore) → realça clusters
 
   // log de diagnóstico no DevTools (antes não havia referência de OS-9 no console)
@@ -127,6 +134,12 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     }
   };
 
+  // aplica um resultado de parse (mesma forma p/ buffer, os9Read e os9ContainerEdit) ao estado da UI
+  const applyOs9Result = (res: any, keepSel = true) => {
+    setErr(''); setIdent(res.ident); setStats({ files: res.totalFiles, dirs: res.totalDirs, freeBytes: res.freeBytes });
+    setRoot(res.root); setUsage(res.usage);
+    if (!keepSel || selDir < 0 || !findByLsn(res.root, selDir)) { setSelDir(res.root.fdLsn); setExpanded(new Set([res.root.fdLsn])); }
+  };
   // parse o estado atual (buffer ou arquivo) → árvore
   const reparse = async (b?: Uint8Array, keepSel = true) => {
     const res = src?.editable
@@ -134,18 +147,31 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
       : await window.cocoApi.os9Read(src?.filePath, src?.base ?? 0);
     if (!res?.success) { setErr(res?.error || 'erro'); return; }
     logOs9('reparse', res, { editable: src?.editable, base: src?.base });
-    setErr(''); setIdent(res.ident); setStats({ files: res.totalFiles, dirs: res.totalDirs, freeBytes: res.freeBytes });
-    setRoot(res.root); setUsage(res.usage);
-    if (!keepSel || selDir < 0 || !findByLsn(res.root, selDir)) { setSelDir(res.root.fdLsn); setExpanded(new Set([res.root.fdLsn])); }
+    applyOs9Result(res, keepSel);
+  };
+  // O5 — operação de edição numa PARTIÇÃO DE CONTAINER (grava direto no arquivo, com guarda de sistema).
+  const containerEditOp = async (op: string, args: any, okMsg?: string): Promise<boolean> => {
+    if (!src?.filePath) return false;
+    setBusy(true);
+    try {
+      const r = await window.cocoApi.os9ContainerEdit(src.filePath, src.base ?? 0, op, args);
+      if (r?.cancelled) return false;
+      if (!r.success) { setNote((pt ? 'Erro: ' : 'Error: ') + r.error); return false; }
+      logOs9('container ' + op, r, { base: src.base, changedSectors: r.changedSectors });
+      applyOs9Result(r, true); setSelItem(-1); if (okMsg) setNote(okMsg);
+      return true;
+    } finally { setBusy(false); }
   };
 
   // (re)carrega quando o doc externo muda
   useEffect(() => {
     let alive = true;
+    setContainerEdit(false); // novo doc → edição de container começa desabilitada (precisa reconfirmar)
     (async () => {
       if (!doc) { setBuf(null); setSrc(null); setRoot(null); setIdent(null); setDirty(false); return; }
       setLoading(true); setDirty(false); setNote('');
-      setSrc({ filePath: doc.filePath, base: doc.base, editable: doc.editable, fileName: doc.fileName }); setSrcPath(null);
+      setSrc({ filePath: doc.filePath, base: doc.base, editable: doc.editable, fileName: doc.fileName });
+      setSrcPath(doc.editable && doc.buffer && doc.filePath ? doc.filePath : null); // .os9 aberto editável → "Salvar" sobrescreve o arquivo
       const b = doc.buffer ? new Uint8Array(doc.buffer) : null; setBuf(b);
       const res = doc.editable
         ? await window.cocoApi.os9ParseBuffer(b)
@@ -203,7 +229,7 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     e.preventDefault(); setDragOver(null);
     const internal = e.dataTransfer.getData('application/x-os9-file');
     if (internal) { // copiar de outro explorer
-      try { const p = JSON.parse(internal); if (p.panelId !== panelId) onCrossDropFile?.({ fromPanelId: p.panelId, fdLsn: p.fdLsn, name: p.name }); } catch { /* noop */ }
+      try { const p = JSON.parse(internal); if (p.panelId !== panelId) onCrossDropFile?.({ fromPanelId: p.panelId, fdLsn: p.fdLsn, name: p.name, isDir: !!p.isDir }); } catch { /* noop */ }
       dragSrcRef.current = null;
       return;
     }
@@ -245,10 +271,27 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
       const nb = new Uint8Array(r.image); setBuf(nb); setDirty(true); await reparse(nb); setNote((pt ? 'Copiado: ' : 'Copied: ') + r.name); return true;
     } finally { setBusy(false); }
   };
+  const readTreeHere = async (fdLsn: number, name: string): Promise<any | null> => {
+    if (src?.editable && buf) { const r = await window.cocoApi.os9ReadTreeBuffer(buf, fdLsn, name); return r?.success ? r.tree : null; }
+    if (src?.filePath != null) { const r = await window.cocoApi.os9ReadTreePath(src.filePath, src.base ?? 0, fdLsn, name); return r?.success ? r.tree : null; }
+    return null;
+  };
+  const applyTreeHere = async (tree: any): Promise<boolean> => {
+    if (!buf || selDir < 0 || !src?.editable) { setNote(pt ? 'Destino somente-leitura — abra/crie um disco editável aqui.' : 'Read-only target — open/create an editable disk here.'); return false; }
+    setBusy(true);
+    try {
+      const r = await window.cocoApi.os9ApplyTreeBuffer(buf, selDir, tree);
+      if (!r.success) { setNote((pt ? 'Erro ao copiar pasta: ' : 'Folder copy error: ') + r.error); return false; }
+      const nb = new Uint8Array(r.image); setBuf(nb); setDirty(true); await reparse(nb);
+      setNote((pt ? 'Pasta copiada: ' : 'Folder copied: ') + `${tree?.name} (${r.dirs} ${pt ? 'pasta(s)' : 'dir(s)'}, ${r.files} ${pt ? 'arq' : 'files'})`); return true;
+    } finally { setBusy(false); }
+  };
   useImperativeHandle(ref, () => ({
     getInfo: () => ({ panelId, editable: !!src?.editable, hasDisk: !!buf || !!src, fileName: src?.fileName }),
     extractFile: extractFileBytes,
     insertData: insertDataHere,
+    readTree: readTreeHere,
+    applyTree: applyTreeHere,
   }), [buf, src, selDir, panelId]);
 
   const openPick = async () => {
@@ -269,7 +312,9 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     if (p?.success) { logOs9('open/new', p); setIdent(p.ident); setStats({ files: p.totalFiles, dirs: p.totalDirs, freeBytes: p.freeBytes }); setRoot(p.root); setUsage(p.usage); setSelDir(p.root.fdLsn); setExpanded(new Set([p.root.fdLsn])); setErr(''); }
   };
   const doMkdir = async (name: string) => {
-    setMkdirVal(null); const nm = sanitizeName(name); if (!nm || !buf || selDir < 0) return;
+    setMkdirVal(null); const nm = sanitizeName(name); if (!nm || selDir < 0) return;
+    if (containerMode) { await containerEditOp('mkdir', { parentFdLsn: selDir, name: nm }, (pt ? 'Pasta criada (gravada no container): ' : 'Folder created (saved to container): ') + nm); return; }
+    if (!buf) return;
     setBusy(true);
     try {
       const r = await window.cocoApi.os9MkdirBuffer(buf, selDir, nm);
@@ -278,7 +323,9 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     } finally { setBusy(false); }
   };
   const doRename = async (oldName: string, newName: string) => {
-    setRenameVal(null); const nm = sanitizeName(newName); if (!nm || nm === oldName || !buf || selDir < 0) return;
+    setRenameVal(null); const nm = sanitizeName(newName); if (!nm || nm === oldName || selDir < 0) return;
+    if (containerMode) { await containerEditOp('rename', { dirFdLsn: selDir, oldName, newName: nm }, (pt ? 'Renomeado (gravado) → ' : 'Renamed (saved) → ') + nm); return; }
+    if (!buf) return;
     setBusy(true);
     try {
       const r = await window.cocoApi.os9RenameBuffer(buf, selDir, oldName, nm);
@@ -288,7 +335,9 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
   };
   // O4 — inserir arquivo do PC na pasta atual (escolhe o arquivo no diálogo do main) ou via drag-drop (data/srcPath).
   const doInsert = async (opts?: { name?: string; data?: Uint8Array; srcPath?: string }) => {
-    if (!buf || selDir < 0) return;
+    if (selDir < 0) return;
+    if (containerMode) { await containerEditOp('insert', { parentFdLsn: selDir, name: opts?.name, data: opts?.data }, (pt ? 'Inserido (gravado no container).' : 'Inserted (saved to container).')); return; }
+    if (!buf) return;
     setBusy(true);
     try {
       const r = await window.cocoApi.os9InsertBuffer(buf, selDir, opts);
@@ -300,7 +349,9 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
   // O4 — excluir arquivo, ou diretório VAZIO, da pasta atual.
   const doDelete = async (node: Os9Node) => {
     setDelConfirm(null);
-    if (!buf || selDir < 0 || !node) return;
+    if (selDir < 0 || !node) return;
+    if (containerMode) { await containerEditOp('delete', { parentFdLsn: selDir, name: node.name }, (pt ? 'Excluído (gravado no container): ' : 'Deleted (saved to container): ') + node.name); return; }
+    if (!buf) return;
     setBusy(true);
     try {
       const r = await window.cocoApi.os9DeleteBuffer(buf, selDir, node.name);
@@ -422,15 +473,21 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
         <button onClick={doSaveOverwrite} disabled={!editable || busy || !dirty} className="dsk-tool flex items-center gap-1" style={{ color: editable && dirty ? '#34d399' : undefined }} title={srcPath ? (pt ? `Salvar (sobrescrever ${srcPath.split(/[\\/]/).pop()})` : `Save (overwrite ${srcPath.split(/[\\/]/).pop()})`) : (pt ? 'Salvar (abre "Salvar Como" na 1ª vez)' : 'Save (opens "Save As" the first time)')}><Save size={14} /> {pt ? 'Salvar' : 'Save'}</button>
         <button onClick={doSave} disabled={!editable || busy} className="dsk-tool flex items-center gap-1" style={{ color: editable ? '#c4b5fd' : undefined }} title={pt ? 'Salvar como novo .os9' : 'Save as a new .os9'}><Save size={14} /> {pt ? 'Salvar Como' : 'Save As'}</button>
         <div style={{ width: 1, height: 16, background: 'var(--border)' }} />
-        <button onClick={() => setMkdirVal('')} disabled={!editable || busy} className="dsk-tool flex items-center gap-1" style={{ color: editable ? '#34d399' : undefined }} title={pt ? 'Criar pasta na pasta atual' : 'Create folder in current dir'}><FolderPlus size={14} /> {pt ? 'Nova pasta' : 'New folder'}</button>
-        <button onClick={() => selItemNode && setRenameVal({ old: selItemNode.name, val: selItemNode.name })} disabled={!editable || busy || !selItemNode} className="dsk-tool flex items-center gap-1" title={pt ? 'Renomear o item selecionado' : 'Rename selected item'}><Pencil size={14} /> {pt ? 'Renomear' : 'Rename'}</button>
+        <button onClick={() => setMkdirVal('')} disabled={!canEdit || busy} className="dsk-tool flex items-center gap-1" style={{ color: canEdit ? '#34d399' : undefined }} title={pt ? 'Criar pasta na pasta atual' : 'Create folder in current dir'}><FolderPlus size={14} /> {pt ? 'Nova pasta' : 'New folder'}</button>
+        <button onClick={() => selItemNode && setRenameVal({ old: selItemNode.name, val: selItemNode.name })} disabled={!canEdit || busy || !selItemNode} className="dsk-tool flex items-center gap-1" title={pt ? 'Renomear o item selecionado' : 'Rename selected item'}><Pencil size={14} /> {pt ? 'Renomear' : 'Rename'}</button>
         <button onClick={() => selItemNode && !selItemNode.isDir && extract(selItemNode)} disabled={busy || !selItemNode || selItemNode.isDir} className="dsk-tool flex items-center gap-1" title={pt ? 'Extrair o arquivo selecionado' : 'Extract selected file'}><Download size={14} /> {pt ? 'Extrair' : 'Extract'}</button>
-        <button onClick={() => doInsert()} disabled={!editable || busy || selDir < 0} className="dsk-tool flex items-center gap-1" style={{ color: editable ? '#34d399' : undefined }} title={pt ? 'Inserir arquivo do PC na pasta atual' : 'Insert a file from the PC into the current folder'}><FileInput size={14} /> {pt ? 'Inserir' : 'Insert'}</button>
-        <button onClick={() => selItemNode && setDelConfirm(selItemNode)} disabled={!editable || busy || !selItemNode} className="dsk-tool flex items-center gap-1" style={{ color: editable && selItemNode ? '#f87171' : undefined }} title={pt ? 'Excluir o item selecionado' : 'Delete the selected item'}><Trash2 size={14} /> {pt ? 'Excluir' : 'Delete'}</button>
+        <button onClick={() => doInsert()} disabled={!canEdit || busy || selDir < 0} className="dsk-tool flex items-center gap-1" style={{ color: canEdit ? '#34d399' : undefined }} title={pt ? 'Inserir arquivo do PC na pasta atual' : 'Insert a file from the PC into the current folder'}><FileInput size={14} /> {pt ? 'Inserir' : 'Insert'}</button>
+        <button onClick={() => selItemNode && setDelConfirm(selItemNode)} disabled={!canEdit || busy || !selItemNode} className="dsk-tool flex items-center gap-1" style={{ color: canEdit && selItemNode ? '#f87171' : undefined }} title={pt ? 'Excluir o item selecionado' : 'Delete the selected item'}><Trash2 size={14} /> {pt ? 'Excluir' : 'Delete'}</button>
+        {containerMode && !containerEdit && (
+          <button onClick={() => setContainerWarn(true)} disabled={busy} className="dsk-tool flex items-center gap-1" style={{ marginLeft: 'auto', color: '#fbbf24', borderColor: '#fbbf2455' }} title={pt ? 'Habilitar edição da partição (grava DIRETO no arquivo do container)' : 'Enable partition editing (writes DIRECTLY to the container file)'}><Unlock size={14} /> {pt ? 'Habilitar edição' : 'Enable editing'}</button>
+        )}
+        {containerMode && containerEdit && (
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#fbbf24', border: '1px solid #fbbf2455', borderRadius: 4, padding: '2px 7px' }}>⚠ {pt ? 'edição grava no arquivo' : 'edits write to file'}</span>
+        )}
       </div>
 
       {/* input nova pasta / renomear */}
-      {editable && (mkdirVal != null || renameVal != null) && (
+      {canEdit && (mkdirVal != null || renameVal != null) && (
         <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] flex-shrink-0" style={{ background: 'rgba(52,211,153,0.06)' }}>
           <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{mkdirVal != null ? (pt ? 'Nome da pasta:' : 'Folder name:') : (pt ? 'Novo nome:' : 'New name:')}</span>
           <input autoFocus value={mkdirVal != null ? mkdirVal : renameVal!.val} maxLength={28}
@@ -467,16 +524,28 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
                   {items.length === 0 && <tr><td colSpan={4} style={{ padding: '24px 10px', textAlign: 'center', color: 'var(--text-secondary)' }}>{pt ? '(pasta vazia)' : '(empty folder)'}</td></tr>}
                   {items.map((node, i) => (
                     <tr key={node.fdLsn + ':' + i}
-                      draggable={!node.isDir}
-                      onDragStart={e => { if (node.isDir) { e.preventDefault(); return; } dragSrcRef.current = panelId; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('application/x-os9-file', JSON.stringify({ panelId, fdLsn: node.fdLsn, name: node.name })); }}
+                      draggable
+                      onDragStart={e => { dragSrcRef.current = panelId; e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData('application/x-os9-file', JSON.stringify({ panelId, fdLsn: node.fdLsn, name: node.name, isDir: node.isDir })); }}
                       onDragEnd={() => { dragSrcRef.current = null; setDragOver(null); }}
                       onClick={() => setSelItem(node.fdLsn)}
                       onDoubleClick={() => { if (node.isDir) { setSelDir(node.fdLsn); setExpanded(s => new Set(s).add(node.fdLsn)); setSelItem(-1); } else extract(node); }}
-                      style={{ borderTop: '1px solid var(--border)', cursor: node.isDir ? 'pointer' : 'grab', background: selItem === node.fdLsn ? 'rgba(167,139,250,0.14)' : 'transparent' }}
+                      style={{ borderTop: '1px solid var(--border)', cursor: 'grab', background: selItem === node.fdLsn ? 'rgba(167,139,250,0.14)' : 'transparent' }}
                       onMouseEnter={e => { setHoverFd(node.fdLsn); if (selItem !== node.fdLsn) e.currentTarget.style.background = 'rgba(167,139,250,0.06)'; }}
                       onMouseLeave={e => { setHoverFd(null); if (selItem !== node.fdLsn) e.currentTarget.style.background = 'transparent'; }}>
                       <td style={{ padding: '5px 10px' }}>
                         <span className="flex items-center gap-2">
+                          {/* alça de arraste-para-fora (Windows Explorer) — só arquivos; usa startDrag NATIVO */}
+                          {!node.isDir && (
+                            <span draggable
+                              onMouseDown={e => { const tr = (e.currentTarget as HTMLElement).closest('tr'); if (tr) tr.setAttribute('draggable', 'false'); }}
+                              onMouseUp={e => { const tr = (e.currentTarget as HTMLElement).closest('tr'); if (tr) tr.setAttribute('draggable', 'true'); }}
+                              onDragStart={e => { e.stopPropagation(); e.preventDefault(); const tr = (e.currentTarget as HTMLElement).closest('tr');
+                                window.cocoApi.startOs9FileDrag?.({ buf: buf ?? undefined, filePath: src?.filePath, base: src?.base ?? 0, fdLsn: node.fdLsn, name: node.name });
+                                if (tr) setTimeout(() => tr.setAttribute('draggable', 'true'), 0); }}
+                              onClick={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}
+                              title={pt ? 'Arrastar para o Windows (Explorer)' : 'Drag out to Windows (Explorer)'}
+                              className="cursor-grab select-none" style={{ color: 'var(--text-muted)', padding: '0 2px', fontSize: 12 }}>⠿</span>
+                          )}
                           {node.isDir ? <Folder size={14} className="text-[#c4b5fd]" /> : <FileText size={14} className="text-[var(--text-secondary)]" />}
                           <span style={{ color: node.isDir ? '#c4b5fd' : 'var(--text-primary, #e5e5e5)' }}>{node.name}{node.isDir ? '/' : ''}{node.truncated ? ' …' : ''}</span>
                         </span>
@@ -489,8 +558,8 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
                 </tbody>
               </table>
             </div>
-            <Os9MediaPanel usage={usage} ident={ident} fileName={src?.fileName || ''} editable={editable} dirty={dirty} lang={lang} highlight={highlightClusters} onPickCell={pickCell}
-              onDefragDisk={doDefragDisk} onDefragFile={doDefragFile} fragCount={fragCount} canDefragFile={!!(selItemNode && !selItemNode.isDir && (selItemNode.segs?.length || 0) > 1)} busy={busy} />
+            <Os9MediaPanel usage={usage} ident={ident} fileName={src?.fileName || ''} editable={canEdit} dirty={dirty} lang={lang} highlight={highlightClusters} onPickCell={pickCell}
+              onDefragDisk={containerMode ? undefined : doDefragDisk} onDefragFile={containerMode ? undefined : doDefragFile} fragCount={fragCount} canDefragFile={!!(selItemNode && !selItemNode.isDir && (selItemNode.segs?.length || 0) > 1)} busy={busy} />
           </>
         )}
       </div>
@@ -541,6 +610,23 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
       )}
 
       {/* confirmação de exclusão (O4) */}
+      {/* aviso: habilitar edição da partição de container (grava direto no arquivo) */}
+      {containerWarn && (
+        <div className="glass-modal-overlay" onClick={() => setContainerWarn(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 480, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2"><AlertTriangle size={18} style={{ color: '#fbbf24' }} /><h3 className="text-sm font-bold text-white uppercase tracking-wide">{pt ? 'Habilitar edição da partição?' : 'Enable partition editing?'}</h3></div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {pt ? 'As edições (nova pasta, renomear, inserir, excluir) gravam DIRETO no arquivo do container — não há "Salvar/Desfazer". A partição de SISTEMA (OS9Boot/SYS/CMDS/DEFS) é protegida: só pastas de usuário podem ser alteradas. Cada gravação é validada antes de escrever. RECOMENDADO: trabalhe numa CÓPIA do container.'
+                  : 'Edits (new folder, rename, insert, delete) write DIRECTLY to the container file — there is no "Save/Undo". The SYSTEM partition (OS9Boot/SYS/CMDS/DEFS) is protected: only user folders can change. Each write is validated before writing. RECOMMENDED: work on a COPY of the container.'}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setContainerWarn(false)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{pt ? 'Cancelar' : 'Cancel'}</button>
+              <button onClick={() => { setContainerEdit(true); setContainerWarn(false); setNote(pt ? 'Edição da partição habilitada — grava no arquivo.' : 'Partition editing enabled — writes to file.'); }} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase" style={{ background: '#d97706' }}><Unlock size={13} /> {pt ? 'Habilitar' : 'Enable'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {delConfirm && (
         <div className="glass-modal-overlay" onClick={() => setDelConfirm(null)}>
           <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 420, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
@@ -598,6 +684,15 @@ export function Os9Tab({ doc, lang, onDirtyChange }: { doc: Os9Doc | null; lang:
     const to = toPanel === 'top' ? topRef.current : botRef.current;
     if (!from || !to) return;
     if (!to.getInfo().editable) { setXfer(pt ? '✗ Destino somente-leitura.' : '✗ Read-only target.'); return; }
+    if (d.isDir) { // cópia recursiva de PASTA
+      setXfer(pt ? `Copiando pasta "${d.name}"…` : `Copying folder "${d.name}"…`);
+      const tree = await from.readTree(d.fdLsn, d.name);
+      if (!tree) { setXfer(pt ? '✗ Falha ao ler a pasta de origem.' : '✗ Failed to read source folder.'); return; }
+      const ok = await to.applyTree(tree);
+      setXfer(ok ? (pt ? `✓ Pasta "${d.name}" copiada. Lembre de Salvar.` : `✓ Folder "${d.name}" copied. Remember to Save.`)
+                : (pt ? '✗ Falha ao copiar a pasta.' : '✗ Failed to copy the folder.'));
+      return;
+    }
     setXfer(pt ? `Copiando "${d.name}"…` : `Copying "${d.name}"…`);
     const bytes = await from.extractFile(d.fdLsn);
     if (!bytes) { setXfer(pt ? '✗ Falha ao ler a origem.' : '✗ Failed to read source.'); return; }

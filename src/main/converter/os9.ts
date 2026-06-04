@@ -774,3 +774,85 @@ export function os9DefragAll(raw: Buffer, base = 0): { image: Buffer; defragged:
   }
   return { image: out, defragged, failed, alreadyOk };
 }
+
+// ---- Área de SISTEMA (proteção para escrita em partição de container) -------
+
+/** Nomes de entrada na RAIZ tratados como SISTEMA do OS-9/NitrOS-9 (intocáveis em edição de container). */
+const OS9_SYSTEM_NAMES = new Set(['OS9BOOT', 'SYS', 'CMDS', 'DEFS', 'STARTUP', 'BOOTOBJS', 'MODULES']);
+
+/**
+ * Conjunto de FD LSNs que pertencem ao SISTEMA: os arquivos/pastas de nome de sistema na RAIZ
+ * (OS9Boot, SYS, CMDS, DEFS, …) e TODO o seu conteúdo recursivo. Usado para BLOQUEAR escrita na
+ * partição de sistema de um container (só pastas de usuário são editáveis). A raiz em si NÃO entra
+ * (criar pasta de usuário na raiz é permitido); só as subárvores de sistema.
+ */
+export function os9SystemArea(raw: Buffer, base = 0): Set<number> {
+  const set = new Set<number>();
+  let id: Os9Ident;
+  try { id = parseIdent(raw, base); } catch { return set; }
+  let rootFd: Os9FD;
+  try { rootFd = readFD(raw, id.rootDirLsn, base); } catch { return set; }
+  for (const e of listDir(raw, rootFd, base)) {
+    if (e.name === '.' || e.name === '..') continue;
+    if (!OS9_SYSTEM_NAMES.has(e.name.toUpperCase())) continue;
+    // marca a entrada de sistema + toda a subárvore
+    const stack = [e.fdLsn]; let guard = 0;
+    while (stack.length && guard++ < 100000) {
+      const lsn = stack.pop()!;
+      if (set.has(lsn)) continue;
+      set.add(lsn);
+      let fd: Os9FD; try { fd = readFD(raw, lsn, base); } catch { continue; }
+      if (fd.isDir) for (const c of listDir(raw, fd, base)) { if (c.name !== '.' && c.name !== '..') stack.push(c.fdLsn); }
+    }
+  }
+  return set;
+}
+
+/** Resolve o FD LSN de um filho `name` em `parentFdLsn` (ou -1) — usado pelas guardas de container. */
+export function os9ChildLsn(raw: Buffer, parentFdLsn: number, name: string, base = 0): number {
+  return findDirEntry(raw, base, readFD(raw, parentFdLsn, base), name);
+}
+
+// ---- Copiar subárvore (pasta recursiva) entre discos ------------------------
+
+export interface Os9Tree { name: string; isDir: boolean; data?: Buffer; children?: Os9Tree[] }
+
+/** Lê recursivamente uma subárvore (arquivo ou pasta) → estrutura serializável com os dados dos arquivos. */
+export function os9ReadTree(raw: Buffer, fdLsn: number, name: string, base = 0, depth = 0): Os9Tree {
+  const fd = readFD(raw, fdLsn, base);
+  if (!fd.isDir) return { name, isDir: false, data: readFileData(raw, fd, base) };
+  const children: Os9Tree[] = [];
+  if (depth < 32) {
+    for (const e of listDir(raw, fd, base)) {
+      if (e.name === '.' || e.name === '..' || e.fdLsn === fdLsn) continue;
+      children.push(os9ReadTree(raw, e.fdLsn, e.name, base, depth + 1));
+    }
+  }
+  return { name, isDir: true, children };
+}
+
+/** Acha o FD LSN de um filho `name` dentro de `parentFdLsn`, ou -1. */
+function childFdLsn(buf: Buffer, base: number, parentFdLsn: number, name: string): number {
+  return findDirEntry(buf, base, readFD(buf, parentFdLsn, base), name);
+}
+
+/** Recria recursivamente uma subárvore (`tree`) dentro de `dstParentFdLsn`. Devolve a nova imagem + contagens. */
+export function os9ApplyTree(dst: Buffer, dstParentFdLsn: number, tree: Os9Tree, base = 0, opts?: { date?: Os9Date | null }): { image: Buffer; files: number; dirs: number } {
+  let out: Buffer = Buffer.from(dst);
+  let files = 0, dirs = 0;
+  if (childFdLsn(out, base, dstParentFdLsn, tree.name) >= 0) throw new Error(`Já existe "${tree.name}" no diretório de destino.`);
+  const apply = (parentFdLsn: number, node: Os9Tree) => {
+    if (!node.isDir) {
+      out = os9Insert(out, parentFdLsn, node.name, Buffer.from(node.data ?? Buffer.alloc(0)), base, { date: opts?.date ?? null });
+      files++;
+    } else {
+      out = os9Mkdir(out, parentFdLsn, node.name, base, { date: opts?.date ?? null });
+      const newFd = childFdLsn(out, base, parentFdLsn, node.name);
+      if (newFd < 0) throw new Error(`Falha ao criar a pasta "${node.name}".`);
+      dirs++;
+      for (const c of node.children ?? []) apply(newFd, c);
+    }
+  };
+  apply(dstParentFdLsn, tree);
+  return { image: out, files, dirs };
+}

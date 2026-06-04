@@ -483,6 +483,27 @@ export function deleteDragonFile(raw0: Buffer, entry: { index: number; sectors?:
   return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
 }
 
+/**
+ * Renomeia um arquivo Dragon DOS: reescreve só o NOME (8) e EXTENSÃO (3) da entrada HEADER (índice
+ * `entry.index`), NUL-padded, maiúsculo. Setores/SAB/bitmap intocados. Recusa nome vazio ou colisão.
+ */
+export function renameDragonFile(raw0: Buffer, entry: { index: number }, newName: string, newExt: string): Buffer {
+  const vdkLen = isVdk(raw0) ? vdkHeaderLen(raw0) : 0;
+  const raw = Buffer.from(stripVdk(raw0));
+  const geom = dragonGeometry(raw);
+  if (!geom) throw new Error('Not a Dragon DOS disk');
+  const spt = geom.spt;
+  const nm = (newName || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const ex = (newExt || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3);
+  if (!nm) throw new Error('Invalid Dragon file name');
+  if (parseDragonDos(raw).files.some(f => f.index !== entry.index && f.name === nm && f.ext === ex))
+    throw new Error(`File "${nm}${ex ? '.' + ex : ''}" already exists on the disk`);
+  const off = entryOffset(raw, spt, entry.index);
+  for (let i = 0; i < 8; i++) raw[off + 1 + i] = i < nm.length ? nm.charCodeAt(i) : 0;
+  for (let i = 0; i < 3; i++) raw[off + 9 + i] = i < ex.length ? ex.charCodeAt(i) : 0;
+  return vdkLen ? Buffer.concat([raw0.subarray(0, vdkLen), raw]) : raw;
+}
+
 // ── Sort + Defrag (single-sided Dragon DOS) ──────────────────────────────────
 
 /** Group an ordered LSN list into contiguous runs (Sector Allocation Blocks). */

@@ -4,10 +4,10 @@ import * as fs from 'fs';
 import { spawn } from 'child_process';
 import { decodeWav } from './converter/wav';
 import { parseCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
-import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
+import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
-import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
+import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, os9ReadTree, os9ApplyTree, os9SystemArea, os9ChildLsn, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -261,6 +261,27 @@ ipcMain.on('start-file-drag', (event, dskUint8Array: Uint8Array, entry: any, fil
   }
 });
 
+// 2b3. Native drag-OUT de um ARQUIVO OS-9 → extrai p/ um temp e inicia o drag do SO (soltar no Explorer).
+// Origem editável (buf) ou somente-leitura (filePath+base, ex.: partição de container). Fire-and-forget.
+ipcMain.on('start-os9-file-drag', (event, opts: { buf?: Uint8Array; filePath?: string; base?: number; fdLsn: number; name: string }) => {
+  try {
+    if (!DRAG_ICON) DRAG_ICON = makeDragIcon();
+    const base = opts?.base ?? 0;
+    const src = opts?.buf ? Buffer.from(opts.buf) : (opts?.filePath ? fs.readFileSync(opts.filePath) : null);
+    if (!src) throw new Error('Sem origem para o arquivo OS-9.');
+    const data = readFileData(src, readFD(src, opts.fdLsn, base), base);
+    const safe = (opts?.name || 'FILE').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 64) || 'FILE';
+    const dir = path.join(app.getPath('temp'), 'ccc-dragout');
+    fs.mkdirSync(dir, { recursive: true });
+    const tmp = path.join(dir, safe);
+    fs.writeFileSync(tmp, Buffer.from(data));
+    event.sender.startDrag({ file: tmp, icon: DRAG_ICON });
+  } catch (error: any) {
+    console.error('start-os9-file-drag error:', error?.message || error);
+    mainWindow?.webContents.send('drag-error', error?.message || String(error));
+  }
+});
+
 // 2c. Add raw bytes as a file into a .dsk image (paste / drop)
 ipcMain.handle('dsk-add-bytes', async (_, dskUint8Array: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, dataUint8Array: Uint8Array) => {
   try {
@@ -427,6 +448,19 @@ ipcMain.handle('dsk-delete-file', async (_, dskUint8Array: Uint8Array, entry: an
   }
 });
 
+// 2d. Renomeia um arquivo numa imagem RS-DOS ou Dragon (só os campos nome/extensão da entrada de diretório).
+ipcMain.handle('dsk-rename-file', async (_, dskUint8Array: Uint8Array, entry: any, newName: string, newExt: string) => {
+  try {
+    const buf = Buffer.from(dskUint8Array);
+    const img = (looksDragon(buf) || entry?.format === 'dragon')
+      ? renameDragonFile(buf, entry, String(newName), String(newExt))
+      : renameDskFile(buf, entry as DskFileEntry, String(newName), String(newExt));
+    return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
 // 3c1. Decide if a buffer is a real multi-disk container vs a single disk in an oversized
 // slot. A multiple of stdDisk is only a container if BOTH the first two slices are valid
 // RS-DOS disks; otherwise it is a single image (e.g. a 2x double-sized HDBDOS/OS-9 slot).
@@ -550,7 +584,11 @@ ipcMain.handle('image-analyze', async () => {
       }
       // No RS-DOS disk grid, but offset 0 IS an OS-9 partition (e.g. CoCoSDC.VHD, or a loose .os9/.dsk).
       if (os9Here) {
-        return { success: true, kind: 'os9', filePath, fileName, os9Base: 0, os9Volume, entries: [] };
+        // STANDALONE = o filesystem OS-9 preenche o arquivo (disco solto) → abre EDITÁVEL em memória.
+        // Senão é uma PARTIÇÃO de container (VHD/IMG) → somente-leitura (edição via "Habilitar edição"/O5).
+        const oid = parseIdent(buf, 0);
+        const os9Standalone = stat.size <= oid.totalSectors * 256 + 4096;
+        return { success: true, kind: 'os9', filePath, fileName, os9Base: 0, os9Volume, os9Standalone, entries: [] };
       }
     }
 
@@ -745,6 +783,84 @@ ipcMain.handle('os9-defrag-file-buffer', async (_, bufU8: Uint8Array, fdLsn: num
 ipcMain.handle('os9-defrag-all-buffer', async (_, bufU8: Uint8Array) => {
   try { const r = os9DefragAll(Buffer.from(bufU8), 0); return { success: true, image: new Uint8Array(r.image), defragged: r.defragged, failed: r.failed, alreadyOk: r.alreadyOk }; }
   catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1o. Copiar PASTA recursiva entre discos (duplo-explorer): ler a subárvore (origem) e aplicá-la (destino).
+ipcMain.handle('os9-read-tree-buffer', async (_, bufU8: Uint8Array, fdLsn: number, name: string) => {
+  try { return { success: true, tree: os9ReadTree(Buffer.from(bufU8), fdLsn, String(name), 0) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('os9-read-tree-path', async (_, filePath: string, base: number, fdLsn: number, name: string) => {
+  try { return { success: true, tree: os9ReadTree(fs.readFileSync(filePath), fdLsn, String(name), base) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+ipcMain.handle('os9-apply-tree-buffer', async (_, bufU8: Uint8Array, dstParentFdLsn: number, tree: any) => {
+  try { const r = os9ApplyTree(Buffer.from(bufU8), dstParentFdLsn, tree, 0); return { success: true, image: new Uint8Array(r.image), files: r.files, dirs: r.dirs }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1p. O5 — EDIÇÃO da partição OS-9 de um CONTAINER (MiniIDE/CoCoSDC), gravando direto no arquivo.
+// Lê a FATIA da partição (base 0..totalSectors), aplica a op, VALIDA o resultado e grava de volta SÓ
+// os setores alterados no offset `base`. GUARDA o sistema (OS9Boot/SYS/CMDS/DEFS — só pastas de usuário).
+function readOs9PartitionSlice(filePath: string, base: number): Buffer {
+  const stat = fs.statSync(filePath);
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const head = Buffer.alloc(256); fs.readSync(fd, head, 0, 256, base);
+    const id = parseIdent(head, 0);
+    const need = Math.min(id.totalSectors * 256, stat.size - base, 256 * 1024 * 1024);
+    const buf = Buffer.alloc(need); fs.readSync(fd, buf, 0, need, base);
+    return buf;
+  } finally { fs.closeSync(fd); }
+}
+function writeChangedSectors(filePath: string, base: number, oldBuf: Buffer, newBuf: Buffer): number {
+  const fd = fs.openSync(filePath, 'r+');
+  let changed = 0;
+  try {
+    const n = Math.min(oldBuf.length, newBuf.length);
+    for (let off = 0; off < n; off += 256) {
+      const end = Math.min(off + 256, n);
+      if (!oldBuf.subarray(off, end).equals(newBuf.subarray(off, end))) { fs.writeSync(fd, newBuf, off, end - off, base + off); changed++; }
+    }
+  } finally { fs.closeSync(fd); }
+  return changed;
+}
+function os9PartitionResult(filePath: string, base: number, extra: any = {}) {
+  const buf = readOs9PartitionSlice(filePath, base);
+  const p = parseOs9(buf, { base: 0 });
+  return { success: true, ident: p.ident, root: p.root, totalFiles: p.totalFiles, totalDirs: p.totalDirs, freeBytes: p.freeBytes, usedSectors: p.usedSectors, usage: readClusterBitmap(buf, 0), ...extra };
+}
+ipcMain.handle('os9-container-edit', async (_, filePath: string, base: number, op: string, args: any) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    const buf = readOs9PartitionSlice(filePath, base);
+    const sys = os9SystemArea(buf, 0);
+    const blockParent = (p: number) => { if (sys.has(p)) throw new Error('Pasta de SISTEMA protegida (OS9Boot/SYS/CMDS/DEFS) — edição só em pastas de usuário.'); };
+    const blockTarget = (parent: number, name: string) => {
+      if (sys.has(parent)) throw new Error('Pasta de SISTEMA protegida.');
+      const t = os9ChildLsn(buf, parent, String(name), 0);
+      if (t >= 0 && sys.has(t)) throw new Error(`"${name}" pertence ao SISTEMA — protegido contra alteração.`);
+    };
+    let out: Buffer;
+    if (op === 'mkdir') { blockParent(args.parentFdLsn); out = os9Mkdir(buf, args.parentFdLsn, String(args.name), 0, { date: nowOs9Date() }); }
+    else if (op === 'rename') { blockTarget(args.dirFdLsn, args.oldName); out = os9Rename(buf, args.dirFdLsn, String(args.oldName), String(args.newName), 0); }
+    else if (op === 'delete') { blockTarget(args.parentFdLsn, args.name); out = os9Delete(buf, args.parentFdLsn, String(args.name), 0); }
+    else if (op === 'insert') {
+      blockParent(args.parentFdLsn);
+      let data: Buffer, srcName: string;
+      if (args?.data) { data = Buffer.from(args.data); srcName = String(args.name || 'FILE'); }
+      else {
+        const r = await dialog.showOpenDialog(mainWindow, { title: 'Inserir arquivo na partição OS-9', properties: ['openFile'] });
+        if (r.canceled || !r.filePaths[0]) return { cancelled: true };
+        data = fs.readFileSync(r.filePaths[0]); srcName = r.filePaths[0];
+      }
+      out = os9Insert(buf, args.parentFdLsn, os9NameFromFilename(srcName), data, 0, { date: nowOs9Date() });
+    }
+    else throw new Error('Operação de container desconhecida: ' + op);
+    parseOs9(out, { base: 0 }); // VALIDA antes de gravar — se a edição corrompeu, NÃO escreve no arquivo
+    const changedSectors = writeChangedSectors(filePath, base, buf, out);
+    return os9PartitionResult(filePath, base, { verified: true, changedSectors });
+  } catch (error: any) { return { success: false, error: error.message }; }
 });
 
 // 3c1l. Abre um arquivo OS-9 por caminho (drag-and-drop) → bytes p/ a aba OS-9.

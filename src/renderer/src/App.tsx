@@ -16,6 +16,7 @@ import {
   LogOut,
   FolderOpen,
   Trash2,
+  Pencil,
   FilePlus,
   Save,
   Copy,
@@ -534,6 +535,7 @@ export default function App() {
   const [convertModal, setConvertModal] = useState<{ srcPane: 'A' | 'B'; name: string; loadAddr: number; execAddr: number; payload: Uint8Array; mode: 'direct' | 'reloc' } | null>(null); // modal conversor CoCo→Dragon
   const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
   const [reformatConfirm, setReformatConfirm] = useState<{ which: 'A' | 'B'; newFmt: 'coco35' | 'coco40'; count: number } | null>(null); // modal: recriar imagem noutro formato mantendo arquivos
+  const [renameDsk, setRenameDsk] = useState<{ pane: 'A' | 'B'; entry: any; name: string; ext: string } | null>(null); // barra de renomear arquivo (RS-DOS/Dragon)
   const [gwBusy, setGwBusy] = useState<boolean>(false);
   const [gwOp, setGwOp] = useState<'' | 'info' | 'read' | 'write'>('');
   const [gwDone, setGwDone] = useState<Set<string>>(new Set());
@@ -1439,6 +1441,13 @@ export default function App() {
     // Ajusta o formato do Greaseweazle para casar com o disco recém-carregado (RS-DOS x Dragon,
     // 35/40T, 1/2 lados) — assim "Gravar GW" já vem com o perfil certo.
     setGwFormat(gwFormatForDisk({ format: res.format, geom: res.geom, size: slice.length }));
+    // A plataforma-alvo acompanha o disco recém-aberto → a MÁQUINA do XRoar troca sozinha (Dragon↔CoCo).
+    const diskPlatform: 'coco' | 'dragon' = res.format === 'dragon' ? 'dragon' : 'coco';
+    if (platform !== diskPlatform) {
+      setPlatform(diskPlatform);
+      addLog(`Plataforma ajustada para ${diskPlatform === 'dragon' ? 'Dragon' : 'CoCo'} (disco aberto) — a máquina do XRoar acompanha.`,
+             `Platform set to ${diskPlatform === 'dragon' ? 'Dragon' : 'CoCo'} (opened disk) — the XRoar machine follows.`, 'info');
+    }
     if (count > 1) {
       addLog(`Contêiner multi-disco detectado: ${count} discos de 160 KB. Mostrando o disco ${index} no painel ${which} — use o seletor de disco.`,
         `Multi-disk container detected: ${count} 160 KB disks. Showing disk ${index} in pane ${which} — use the disk selector.`, 'info');
@@ -1858,6 +1867,29 @@ export default function App() {
     } catch (err: any) { addLog(`DSK delete: ${err.message}`, `DSK delete: ${err.message}`, 'error'); }
   };
 
+  // Renomear UM arquivo (RS-DOS ou Dragon): abre a barra de input com o nome/ext atuais.
+  const openDskRename = () => {
+    if (!selectedDsk || selectedDsk.entries.length !== 1) { addLog('Selecione UM arquivo para renomear.', 'Select ONE file to rename.', 'warn'); return; }
+    if (!guardEditable(selectedDsk.pane)) return;
+    const e = selectedDsk.entries[0];
+    setRenameDsk({ pane: selectedDsk.pane, entry: e, name: e.name || '', ext: e.ext || '' });
+  };
+  const handleDskRename = async () => {
+    if (!renameDsk) return;
+    const { pane: sp, entry, name, ext } = renameDsk;
+    setRenameDsk(null);
+    if (!guardEditable(sp)) return;
+    const pane = getPane(sp); if (!pane) return;
+    pushDskUndo();
+    try {
+      const res = await window.cocoApi.dskRenameFile(pane.buffer, entry, name, ext);
+      if (!res.success) { addLog(`Renomear: ${res.error}`, `Rename: ${res.error}`, 'error'); return; }
+      await refreshPane(sp, res.image);
+      setSelectedDsk(null);
+      addLog(`Renomeado para ${name}${ext ? '.' + ext : ''} no painel ${sp}.`, `Renamed to ${name}${ext ? '.' + ext : ''} in pane ${sp}.`, 'success');
+    } catch (err: any) { addLog(`Renomear: ${err.message}`, `Rename: ${err.message}`, 'error'); }
+  };
+
   const handleDskInject = async () => {
     if (!getPane(activePane)) { addLog('Abra ou crie uma imagem no painel ativo primeiro.', 'Open or create an image in the active pane first.', 'warn'); return; }
     if (!guardEditable(activePane)) return;
@@ -1975,9 +2007,20 @@ export default function App() {
       // Partição OS-9 / NitrOS-9 (RBF): abre o browser hierárquico dedicado (somente-leitura).
       // Cobre .dsk/.os9 OS-9 avulsos e a partição OS-9 raw no offset 0 do CoCoSDC.VHD.
       if (res.kind === 'os9') {
+        // STANDALONE (.os9/.dsk solto) → abre EDITÁVEL em memória (com Salvar/Salvar Como).
+        if (res.os9Standalone) {
+          const r = await window.cocoApi.os9OpenPath(res.filePath);
+          if (r?.success) {
+            openOs9Doc({ buffer: new Uint8Array(r.image), filePath: res.filePath, fileName: res.fileName, editable: true });
+            addLog(`OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} aberto EDITÁVEL na aba OS-9.`,
+                   `OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} opened EDITABLE in the OS-9 tab.`, 'success');
+            return;
+          }
+        }
+        // PARTIÇÃO de container (CoCoSDC.VHD etc.) → somente-leitura; edição via "Habilitar edição" (O5).
         openOs9Doc({ filePath: res.filePath, base: res.os9Base ?? 0, fileName: res.fileName, editable: false });
-        addLog(`OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} aberto no navegador hierárquico (somente-leitura).`,
-               `OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} opened in the hierarchical browser (read-only).`, 'success');
+        addLog(`OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} aberto (somente-leitura — use "Habilitar edição" para gravar na partição).`,
+               `OS-9: "${res.fileName}"${res.os9Volume ? ` (volume "${res.os9Volume}")` : ''} opened (read-only — use "Enable editing" to write to the partition).`, 'success');
         return;
       }
 
@@ -4455,6 +4498,7 @@ export default function App() {
                 <>
                   <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
                   <button onClick={() => handleDskCopy(false)} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
+                  <button onClick={openDskRename} disabled={selectedDsk.entries.length !== 1} title={currentLang === 'pt-br' ? 'Renomear o arquivo' : 'Rename the file'} aria-label={currentLang === 'pt-br' ? 'Renomear' : 'Rename'} className="dsk-tool"><Pencil size={15} /></button>
                   <button onClick={handleDskDelete} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
                   <button onClick={handleDskEditBas} disabled={(selectedDsk.entries[0].ext || '').toUpperCase() !== 'BAS'} title={t('Editar .BAS no editor BASIC', 'Edit .BAS in the BASIC editor')} aria-label="Editar BAS" className="dsk-tool"><FileCode2 size={15} /></button>
                   <button onClick={handleDskExtractToPc} title={currentLang === 'pt-br' ? 'Extrair o(s) arquivo(s) selecionado(s) para uma pasta do Windows' : 'Extract the selected file(s) to a Windows folder'} aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'} className="dsk-tool"><Download size={15} /></button>
@@ -5065,6 +5109,31 @@ export default function App() {
       )}
 
       {/* "Novo" disco sobre painel com conteúdo — confirma antes de descartar a imagem atual */}
+      {/* Modal: renomear arquivo (RS-DOS / Dragon) — só a entrada de diretório (nome 8 + ext 3). */}
+      {renameDsk && (
+        <div className="glass-modal-overlay" onClick={() => setRenameDsk(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 420, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Renomear arquivo (Painel ${renameDsk.pane})` : `Rename file (Pane ${renameDsk.pane})`}</h3>
+            <div className="flex items-center gap-2">
+              <input autoFocus value={renameDsk.name} maxLength={8}
+                onChange={(e) => setRenameDsk(r => r ? { ...r, name: e.target.value.toUpperCase() } : r)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleDskRename(); if (e.key === 'Escape') setRenameDsk(null); }}
+                className="input-text py-1 px-2 text-xs font-mono" style={{ width: 130 }} placeholder={currentLang === 'pt-br' ? 'NOME' : 'NAME'} />
+              <span className="text-[var(--text-secondary)] font-mono">.</span>
+              <input value={renameDsk.ext} maxLength={3}
+                onChange={(e) => setRenameDsk(r => r ? { ...r, ext: e.target.value.toUpperCase() } : r)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleDskRename(); if (e.key === 'Escape') setRenameDsk(null); }}
+                className="input-text py-1 px-2 text-xs font-mono" style={{ width: 70 }} placeholder="EXT" />
+            </div>
+            <p className="text-[11px] text-[var(--text-muted)]">{currentLang === 'pt-br' ? 'Nome até 8, extensão até 3 (maiúsculo). Só a entrada de diretório é alterada; os dados não.' : 'Name up to 8, ext up to 3 (uppercase). Only the directory entry changes; data is untouched.'}</p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setRenameDsk(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={handleDskRename} disabled={!renameDsk.name.trim()} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5"><Pencil size={13} /> {currentLang === 'pt-br' ? 'Renomear' : 'Rename'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {dskNewConfirm && (
         <div className="glass-modal-overlay" onClick={() => setDskNewConfirm(null)}>
           <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 430, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>

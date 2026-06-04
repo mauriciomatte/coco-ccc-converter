@@ -10,6 +10,38 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.23 — 2026-06-03
+--------------------------------------------------------------------------------
+NEW — OS-9: writing to a CONTAINER partition (O5)
+  • OS-9 partitions inside MiniIDE/CoCoSDC can now be EDITED: an "Enable editing" button (with a
+    warning) writes DIRECTLY to the container file, rewriting only the changed sectors.
+  • SYSTEM GUARD: OS9Boot/SYS/CMDS/DEFS (and all their contents) are protected — only USER folders
+    can be created/renamed/deleted. Every write is validated BEFORE writing.
+  • A loose (standalone) OS-9 `.os9`/`.dsk` opened via detection now opens EDITABLE in memory
+    (Save/Save As). A container partition opens read-only + "Enable editing".
+
+NEW — OS-9: copy FOLDERS and drag out to Windows
+  • Dragging a FOLDER from one explorer to the other copies the whole subtree (recursive: folders,
+    subfolders and files), preserving empty folders.
+  • A "⠿" handle on file rows: drag the OS-9 file straight to a Windows folder.
+
+NEW — Rename file (RS-DOS and Dragon)
+  • ✏️ button in the DSK tab (1 file selected) + modal: renames only the directory entry (name 8 +
+    ext 3), data untouched. Rejects empty name or collision. (OS-9 already had it.)
+
+IMPROVED — Dragon
+  • Opening a Dragon disk (.vdk) now auto-switches the platform (and the XRoar machine) to Dragon
+    (and CoCo when opening RS-DOS) — previously it only switched on test.
+  • Confirmed: Dragon editing (add/delete/sort/defrag, single & double sided) was already wired and
+    working (round-trip validated).
+
+FIXED
+  • `cursor-grab` was undefined in the CSS (affected DSK and OS-9 drag handles) — now defined.
+
+DOCUMENTATION
+  • ROADMAP_CASWAV.md (CAS/WAV/VOC tape-preservation tab — WAV↔CAS, CAS↔BASIC, JVC, etc.).
+
+--------------------------------------------------------------------------------
 v1.0.22 — 2026-06-03
 --------------------------------------------------------------------------------
 NEW — OS-9 defrag (compact fragmentation)

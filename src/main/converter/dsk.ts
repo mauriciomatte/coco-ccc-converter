@@ -596,6 +596,32 @@ export function deleteDskFile(dskBuffer: Buffer, entry: DskFileEntry): Buffer {
   return img;
 }
 
+/**
+ * Renomeia um arquivo RS-DOS: reescreve só os campos NOME (8) e EXTENSÃO (3) da entrada de diretório
+ * (preenchidos com ESPAÇO, maiúsculo) — dados e cadeia de grânulos intocados. Recusa nome vazio ou
+ * colisão com outra entrada ativa. Retorna uma NOVA imagem.
+ */
+export function renameDskFile(dskBuffer: Buffer, entry: DskFileEntry, newName: string, newExt: string): Buffer {
+  const img = Buffer.from(dskBuffer);
+  const nm = (newName || '').toUpperCase().replace(/[^\x20-\x7e]/g, '').replace(/[. ]/g, '').slice(0, 8);
+  const ex = (newExt || '').toUpperCase().replace(/[^\x20-\x7e]/g, '').replace(/[. ]/g, '').slice(0, 3);
+  if (!nm) throw new Error('Nome inválido.');
+  const o = entry.dirOffset;
+  if (typeof o !== 'number' || o < 0) throw new Error('Entrada de diretório inválida.');
+  // colisão com outra entrada ativa
+  const t17 = 17 * BYTES_PER_TRACK, dirStart = t17 + 2 * 256, dirEnd = t17 + 11 * 256;
+  for (let off = dirStart; off < dirEnd; off += 32) {
+    if (off === o) continue;
+    const f = img[off]; if (f === 0x00 || f === 0xFF) continue;
+    const n = img.slice(off, off + 8).toString('latin1').replace(/ +$/, '').toUpperCase();
+    const e = img.slice(off + 8, off + 11).toString('latin1').replace(/ +$/, '').toUpperCase();
+    if (n === nm && e === ex) throw new Error(`Já existe "${nm}${ex ? '.' + ex : ''}" no disco.`);
+  }
+  for (let i = 0; i < 8; i++) img[o + i] = i < nm.length ? nm.charCodeAt(i) : 0x20;
+  for (let i = 0; i < 3; i++) img[o + 8 + i] = i < ex.length ? ex.charCodeAt(i) : 0x20;
+  return img;
+}
+
 // O SIDEKICK guarda o nome do drive na trilha 17, setor ~17 (LSN 322), como um "catálogo": entradas
 // de 16 B em passo de 32 B (16 dados + 16 zeros), com a ENTRADA 0 carregando o nome (8 chars + NUL).
 const SK_NAME_LSN = 322; // de-doubled offset 82.432

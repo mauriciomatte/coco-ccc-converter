@@ -11,24 +11,36 @@
 
 ## OS-9 / NitrOS-9 (RBF) — leitura ✅, escrita O1–O4 ✅
 
-- [ ] **O5 — escrever na partição OS-9 de containers** (MiniIDE `.img` / CoCoSDC `.VHD`):
-      inserir/editar **só em pastas de usuário**, jamais tocar a partição de sistema
-      (OS9Boot/SYS/CMDS).
-- [ ] **O6 — validação em Toolshed / emulador**: round-trip das escritas em hardware/emulador real
-      antes de confiar.
-- [ ] **Defrag / defrag de arquivo OS-9**: compactar segmentos fragmentados (reusa o motor O4) —
-      espaço já reservado abaixo do platter.
-- [ ] **Copiar PASTAS (recursivo)** entre os dois explorers (hoje só arquivos são arrastáveis).
-- [ ] **Arrastar arquivo OS-9 para fora → Windows Explorer** (via `startDrag`; a aba DSK já tem,
-      a OS-9 não).
-- [ ] **Confirmar** se `.os9` aberto pela detecção/aba DSK fica editável (e não só pelo "Abrir" da
-      aba OS-9).
+- [x] **O5 — escrever na partição OS-9 de containers** ✅ v1.0.23 — botão "Habilitar edição" (grava
+      direto no arquivo, só os setores alterados), **guarda de sistema** (`os9SystemArea`: OS9Boot/SYS/
+      CMDS/DEFS protegidos — só pastas de usuário), valida antes de gravar. Validado por container sintético.
+- [ ] **O6 — validação em Toolshed / emulador REAL**: testar O4/O5 num MiniIDE/CoCoSDC real + emulador
+      antes de confiar 100% (nível de bytes já validado; falta hardware/emulador).
+- [x] **Defrag / defrag de arquivo OS-9** ✅ v1.0.22.
+- [x] **Copiar PASTAS (recursivo)** entre os dois explorers ✅ v1.0.23 (drag de pasta = cópia recursiva).
+- [x] **Arrastar arquivo OS-9 para fora → Windows Explorer** ✅ v1.0.23 (alça ⠿ + `startDrag`).
+- [x] **`.os9` aberto pela detecção fica editável** ✅ v1.0.23 — standalone abre editável em memória;
+      partição de container abre leitura + "Habilitar edição" (O5).
 
 ## Dragon (.vdk) — leitura ✅
 
-- [ ] **Edição completa** (hoje só leitura).
-- [ ] **Auto-trocar a máquina Dragon no XRoar** ao abrir um `.vdk`.
+- [x] **Edição completa** ✅ — JÁ implementada e ligada (add/excluir/ordenar/defrag, SS e DS),
+      validada por round-trip 2026-06-03. NÃO era só leitura (a memória estava desatualizada).
+      Único gap de edição é **rename** por arquivo — que o RS-DOS também não tem (item geral abaixo).
+- [x] **Auto-trocar a máquina Dragon no XRoar** ao abrir ✅ — `loadPaneFromBuffer` agora ajusta a
+      plataforma (→ máquina do XRoar) ao formato do disco aberto (Dragon↔CoCo).
+
+## Geral (todos os formatos)
+
+- [x] **Renomear arquivo** (RS-DOS + Dragon) ✅ — engine (`renameDskFile`/`renameDragonFile`) +
+      IPC + botão ✏️ na toolbar DSK + modal; validado por round-trip. (OS-9 já tinha.)
 
 ## MiniIDE / HDBDOS (Fases A/B/F/I ✅)
 
 - [ ] **Estudo profundo do catálogo do setor 322** (nome 8B + cache) — marcado "a fazer".
+
+## Preservação de fita — ABA CAS/WAV/VOC (ROADMAP_CASWAV.md)
+
+Decisão: criar uma **aba dedicada CAS/WAV** (hub-and-spoke como a GW — lê/joga no painel DSK e vice-versa).
+Itens detalhados em `ROADMAP_CASWAV.md`. Prioridade: **WAV↔CAS** (A1/A2, fecha o ROADMAP_WAV, serve
+CoCo+Dragon) → **CAS↔BASIC** (B6/B7, reusa tokenizer) → **JVC `.dsk`** (C8).
