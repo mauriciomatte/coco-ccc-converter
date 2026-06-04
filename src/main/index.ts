@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { decodeWav } from './converter/wav';
+import { decodeWav, decodeCasTape, buildCleanCas, encodeCasToWav, extractCasFileData } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
@@ -508,6 +508,57 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+});
+
+// 3c0z2. K7 — decodifica um WAV de fita (FSK) com parâmetros ajustáveis (K8) → blocos/arquivos CAS.
+ipcMain.handle('k7-decode', async (_, wavBytes: Uint8Array, opts: any) => {
+  try {
+    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    // não devolve os arrays grandes (bytes/blocks) ao renderer — só o resumo + a lista de arquivos.
+    return {
+      success: true, sampleRate: r.sampleRate, durationSec: r.durationSec, foundSync: r.foundSync,
+      inverted: r.inverted, bitCount: r.bitCount, byteCount: r.byteCount, blockCount: r.blocks.length, files: r.files,
+    };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z3. K10 — Normalizar/Remaster: re-decodifica o WAV e reemite um arquivo LIMPO (.cas/.wav) menor.
+ipcMain.handle('k7-export-clean', async (_, wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    if (!r.foundSync || !r.blocks.length) return { success: false, error: 'Não foi possível decodificar a fita (sem sync/blocos).' };
+    const cas = buildCleanCas(r.blocks);
+    const out = format === 'wav' ? encodeCasToWav(cas, sampleRate || 22050) : cas;
+    const ext = format === 'wav' ? 'wav' : 'cas';
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: format === 'wav' ? 'Salvar WAV limpo (normalizado)' : 'Salvar CAS limpo (normalizado)',
+      defaultPath: (defaultName || 'fita').replace(/\.[^.]+$/, '') + '_clean.' + ext,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }],
+    });
+    if (res.canceled || !res.filePath) return { cancelled: true };
+    fs.writeFileSync(res.filePath, out);
+    return { success: true, path: res.filePath, size: out.length, files: r.files.length };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z4. K7 — extrai os bytes de um arquivo decodificado da fita → salva no PC (.bas/.bin/.dat).
+ipcMain.handle('k7-extract-file', async (_, wavBytes: Uint8Array, opts: any, fileIndex: number) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  try {
+    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    const f = r.files[fileIndex || 0];
+    if (!f) return { success: false, error: 'Arquivo não encontrado na fita.' };
+    const data = Buffer.from(extractCasFileData(r.blocks, fileIndex || 0));
+    const ext = f.ftype === 0 ? 'bas' : f.ftype === 2 ? 'bin' : 'dat';
+    const res = await dialog.showSaveDialog(mainWindow, {
+      title: 'Extrair arquivo da fita', defaultPath: (f.name || 'FILE').replace(/[^A-Za-z0-9._-]/g, '_') + '.' + ext,
+      filters: [{ name: ext.toUpperCase(), extensions: [ext] }, { name: 'All Files', extensions: ['*'] }],
+    });
+    if (res.canceled || !res.filePath) return { cancelled: true };
+    fs.writeFileSync(res.filePath, data);
+    return { success: true, path: res.filePath, size: data.length, name: f.name };
+  } catch (error: any) { return { success: false, error: error.message }; }
 });
 
 // 3c1b. Unified storage-image browser: pick an image, detect its kind, list its disks/files.

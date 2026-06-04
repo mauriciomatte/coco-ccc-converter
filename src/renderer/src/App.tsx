@@ -17,6 +17,7 @@ import {
   FolderOpen,
   Trash2,
   Pencil,
+  AudioLines,
   FilePlus,
   Save,
   Copy,
@@ -50,6 +51,7 @@ import BasicEditor from './components/BasicEditor';
 import DiskMap, { DiskLegend } from './components/DiskMap';
 import FileCompareModal from './components/FileCompareModal';
 import { Os9Tab, Os9Doc } from './components/Os9Tab';
+import { K7Tab } from './components/K7Tab';
 // Changelog (histórico de versões) embutido no build a partir dos arquivos da raiz do repo.
 import changelogPt from '../../../VERSOES.TXT?raw';
 import changelogEn from '../../../VERSIONS_EN.TXT?raw';
@@ -481,7 +483,7 @@ function fileTracks(entry: any): string {
 export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
-  const [activeTab, setActiveTab] = useState<'dsk' | 'os9' | 'xroar' | 'gw' | 'basic' | 'eprom'>('dsk');
+  const [activeTab, setActiveTab] = useState<'dsk' | 'k7' | 'os9' | 'xroar' | 'gw' | 'basic' | 'eprom'>('dsk');
   const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean } | null>(null);
   // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
   const [xroarType, setXroarType] = useState<{ text: string; key: number; reset?: boolean } | null>(null);
@@ -3795,6 +3797,13 @@ export default function App() {
             <Disc size={14} /> {t('tabDsk')}
           </button>
           <button
+            onClick={() => setActiveTab('k7')}
+            className={`tab-btn ${activeTab === 'k7' ? 'tab-btn-active' : ''}`}
+            title={currentLang === 'pt-br' ? 'K7 — fita cassete (waveform, WAV/CAS/VOC)' : 'K7 — cassette tape (waveform, WAV/CAS/VOC)'}
+          >
+            <AudioLines size={14} /> K7
+          </button>
+          <button
             onClick={() => setActiveTab('os9')}
             className={`tab-btn ${activeTab === 'os9' ? 'tab-btn-active' : ''}`}
             title={currentLang === 'pt-br' ? 'OS-9 / NitrOS-9 (RBF) — navegador hierárquico' : 'OS-9 / NitrOS-9 (RBF) — hierarchical browser'}
@@ -4484,7 +4493,7 @@ export default function App() {
             sourceLabel={basicSource ? `${basicSource.entry.fullName} (${basicSource.pane})` : null}
             onUpdateInDsk={handleBasicUpdateInDsk}
           />
-        ) : (activeTab === 'xroar' || activeTab === 'os9') ? null : (
+        ) : (activeTab === 'xroar' || activeTab === 'os9' || activeTab === 'k7') ? null : (
           <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
             {/* DSK toolbar — folga simples (mb-3) como na aba BASIC; o brilho do painel ativo
                 foi reduzido p/ anel fino (CSS .dsk-pane-active) para não vazar e "colar" na barra. */}
@@ -4566,6 +4575,11 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Aba K7 — sempre montada (display toggle) para preservar o WAV/waveform ao trocar de aba */}
+        <div style={{ display: activeTab === 'k7' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
+          <K7Tab lang={currentLang} />
+        </div>
 
         {/* Aba OS-9 — sempre montada (display toggle) para NÃO perder a edição em memória ao trocar de aba */}
         <div style={{ display: activeTab === 'os9' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>

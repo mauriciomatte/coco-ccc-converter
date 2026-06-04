@@ -159,3 +159,148 @@ export function decodeWav(wavBuffer: Buffer): DecodedWav {
     syncBitIndex
   };
 }
+
+// ─── K2/K8/K10 — decode parametrizado + parse de blocos CAS + reemissão limpa ───
+
+const CAS_TYPE_NAME: Record<number, string> = { 0: 'BASIC', 1: 'Data', 2: 'Machine (ML)' };
+
+export interface CasBlock { type: number; data: number[]; checksumOk: boolean; }
+export interface CasFileInfo { name: string; ftype: number; ftypeName: string; ascii: boolean; gapped: boolean; loadAddr: number; execAddr: number; sizeBytes: number; blocks: number; checksumOk: boolean; }
+export interface DecodeOpts { midUs?: number; minUs?: number; maxUs?: number; minAmp?: number; }
+export interface CasDecodeResult {
+  sampleRate: number; bitsPerSample: number; channels: number; totalSamples: number; durationSec: number;
+  foundSync: boolean; inverted: boolean; bitCount: number; byteCount: number;
+  bytes: number[]; blocks: CasBlock[]; files: CasFileInfo[];
+}
+
+/** Lê os SAMPLES (canal 0, -1..1) de um WAV PCM 8/16-bit. */
+function readWavSamples(wavBuffer: Buffer): { samples: Float32Array; sampleRate: number; bits: number; channels: number } {
+  let offset = 12, sampleRate = 0, bits = 0, channels = 0, dataOffset = 0, dataSize = 0;
+  while (offset + 8 <= wavBuffer.length) {
+    const id = wavBuffer.slice(offset, offset + 4).toString('ascii'), size = wavBuffer.readUInt32LE(offset + 4);
+    if (id === 'fmt ') { channels = wavBuffer.readUInt16LE(offset + 10); sampleRate = wavBuffer.readUInt32LE(offset + 12); bits = wavBuffer.readUInt16LE(offset + 22); }
+    else if (id === 'data') { dataOffset = offset + 8; dataSize = Math.min(size, wavBuffer.length - dataOffset); break; }
+    offset += 8 + size + (size & 1);
+  }
+  if (!sampleRate || (bits !== 8 && bits !== 16)) throw new Error('WAV inválido ou não-PCM 8/16-bit.');
+  const frame = (bits / 8) * channels, n = Math.floor(dataSize / frame), samples = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const b = dataOffset + i * frame; samples[i] = bits === 8 ? (wavBuffer[b] - 128) / 128 : wavBuffer.readInt16LE(b) / 32768; }
+  return { samples, sampleRate, bits, channels };
+}
+
+/** Parse dos blocos CAS a partir do fluxo de bytes (após sync): [$3C type len data… checksum]. */
+function parseCasBlocks(bytes: number[]): CasBlock[] {
+  const blocks: CasBlock[] = [];
+  let i = 0;
+  while (i < bytes.length - 3) {
+    if (bytes[i] !== 0x3c) { i++; continue; }
+    const type = bytes[i + 1], len = bytes[i + 2];
+    if (i + 3 + len >= bytes.length) break;
+    const data = bytes.slice(i + 3, i + 3 + len), chk = bytes[i + 3 + len];
+    let sum = (type + len) & 0xff; for (const b of data) sum = (sum + b) & 0xff;
+    blocks.push({ type, data, checksumOk: sum === chk });
+    i += 3 + len + 1;
+    if (type === 0xff) { /* EOF — segue procurando outro arquivo */ }
+    if (blocks.length > 4000) break;
+  }
+  return blocks;
+}
+
+/** Deriva a lista de ARQUIVOS (namefile + seus data blocks) a partir dos blocos. */
+function filesFromBlocks(blocks: CasBlock[]): CasFileInfo[] {
+  const files: CasFileInfo[] = []; let cur: CasFileInfo | null = null;
+  for (const b of blocks) {
+    if (b.type === 0 && b.data.length >= 15) {
+      const d = b.data;
+      const name = d.slice(0, 8).map(c => (c >= 0x20 && c < 0x7f) ? String.fromCharCode(c) : '').join('').trim();
+      const ftype = d[8];
+      cur = { name, ftype, ftypeName: CAS_TYPE_NAME[ftype] || `?${ftype}`, ascii: d[9] !== 0, gapped: d[10] !== 0, execAddr: (d[11] << 8) | d[12], loadAddr: (d[13] << 8) | d[14], sizeBytes: 0, blocks: 0, checksumOk: b.checksumOk };
+      files.push(cur);
+    } else if (b.type === 1 && cur) { cur.sizeBytes += b.data.length; cur.blocks++; if (!b.checksumOk) cur.checksumOk = false; }
+  }
+  return files;
+}
+
+/** K2/K8 — decodifica um WAV de fita → blocos/arquivos CAS, com parâmetros ajustáveis (K8). */
+export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDecodeResult {
+  const midUs = opts.midUs ?? 600, minUs = opts.minUs ?? 300, maxUs = opts.maxUs ?? 1200, minAmp = opts.minAmp ?? 0;
+  const { samples, sampleRate, bits, channels } = readWavSamples(wavBuffer);
+  const base: CasDecodeResult = {
+    sampleRate, bitsPerSample: bits, channels, totalSamples: samples.length, durationSec: samples.length / sampleRate,
+    foundSync: false, inverted: false, bitCount: 0, byteCount: 0, bytes: [], blocks: [], files: [],
+  };
+  // up-crossings + pico de amplitude por segmento (gate de ruído via minAmp)
+  const cross: number[] = [], segMax: number[] = [];
+  let prevSign = Math.sign(samples[0]) || 1, curMax = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = Math.abs(samples[i]); if (a > curMax) curMax = a;
+    const sign = Math.sign(samples[i]) || 1;
+    if (sign !== prevSign) { if (sign > 0 && prevSign < 0) { const f = -samples[i - 1] / (samples[i] - samples[i - 1]); cross.push(i - 1 + f); segMax.push(curMax); curMax = 0; } prevSign = sign; }
+  }
+  const bitsArr: number[] = [];
+  for (let i = 1; i < cross.length; i++) {
+    if (segMax[i] < minAmp) continue;
+    const us = ((cross[i] - cross[i - 1]) / sampleRate) * 1e6;
+    if (us >= minUs && us < midUs) bitsArr.push(1);
+    else if (us >= midUs && us <= maxUs) bitsArr.push(0);
+  }
+  base.bitCount = bitsArr.length;
+  if (bitsArr.length < 16) return base;
+  for (let i = 0; i < bitsArr.length - 16; i++) {
+    let b1 = 0, b2 = 0;
+    for (let b = 0; b < 8; b++) { b1 |= bitsArr[i + b] << b; b2 |= bitsArr[i + 8 + b] << b; }
+    const norm = b1 === 0x55 && b2 === 0x3c, inv = b1 === 0xaa && b2 === 0xc3;
+    if (norm || inv) {
+      base.foundSync = true; base.inverted = inv;
+      const out: number[] = [];
+      for (let j = i + 8; j < bitsArr.length - 8; j += 8) { let v = 0; for (let b = 0; b < 8; b++) v |= bitsArr[j + b] << b; out.push(inv ? (~v) & 0xff : v); }
+      base.bytes = out; base.byteCount = out.length;
+      base.blocks = parseCasBlocks(out);
+      base.files = filesFromBlocks(base.blocks);
+      break;
+    }
+  }
+  return base;
+}
+
+/** Extrai os BYTES de um arquivo (os data blocks do `fileIndex`-ésimo namefile, concatenados). */
+export function extractCasFileData(blocks: CasBlock[], fileIndex = 0): number[] {
+  let idx = -1; const out: number[] = [];
+  for (const b of blocks) {
+    if (b.type === 0) { idx++; if (idx > fileIndex) break; }
+    else if (b.type === 1 && idx === fileIndex) for (const x of b.data) out.push(x);
+  }
+  return out;
+}
+
+/** K10 — reemite um .CAS LIMPO e padrão a partir dos blocos decodificados (leader/sync/checksum corretos). */
+export function buildCleanCas(blocks: CasBlock[]): Buffer {
+  const out: number[] = [];
+  const leader = (n: number) => { for (let k = 0; k < n; k++) out.push(0x55); };
+  const block = (type: number, data: number[]) => { out.push(0x3c, type & 0xff, data.length & 0xff); let s = (type + data.length) & 0xff; for (const b of data) { out.push(b & 0xff); s = (s + b) & 0xff; } out.push(s & 0xff); };
+  let firstData = true;
+  leader(128);
+  for (const b of blocks) {
+    if (b.type === 1 && firstData) { leader(128); firstData = false; }   // leader antes do 1º data block
+    block(b.type, b.data);
+  }
+  leader(2);
+  return Buffer.from(out);
+}
+
+/** K10/K5 (A2) — FSK encode: bytes CAS → WAV LIMPO (onda quadrada, 8-bit mono, taxa escolhida). */
+export function encodeCasToWav(casBytes: Uint8Array | number[], sampleRate = 22050): Buffer {
+  const cyc1 = Math.max(2, Math.round(sampleRate / 2400)), cyc0 = Math.max(2, Math.round(sampleRate / 1200)); // amostras/ciclo
+  const pcm: number[] = [];
+  const HI = 210, LO = 46;
+  const emitCycle = (len: number) => { const half = len >> 1; for (let k = 0; k < len; k++) pcm.push(k < half ? HI : LO); };
+  for (const byte of casBytes) for (let b = 0; b < 8; b++) emitCycle((byte >> b) & 1 ? cyc1 : cyc0); // LSB-first
+  const dataLen = pcm.length;
+  const buf = Buffer.alloc(44 + dataLen);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataLen, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate, 28); buf.writeUInt16LE(1, 32); buf.writeUInt16LE(8, 34);
+  buf.write('data', 36); buf.writeUInt32LE(dataLen, 40);
+  for (let i = 0; i < dataLen; i++) buf[44 + i] = pcm[i] & 0xff;
+  return buf;
+}

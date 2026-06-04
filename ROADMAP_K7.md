@@ -144,7 +144,15 @@ Captura/playback e o canvas ficam no renderer (Web Audio + Canvas). Demod/parse 
 
 ---
 
-## 8. Fases de implementação (K0 → K8)
+## 8. Fases de implementação (K0 → K10)
+
+**STATUS (2026-06-04):** ✅ **K0** (casco+waveform) · ✅ **K1** (player+cassete animada+zoom) ·
+✅ **K2** (decode FSK→painel Programa+lista) · ✅ **K8** (ajuste fino: limiar/amplitude — destrava
+o dinowars) · ✅ **K10** (Normalizar→CAS/WAV limpo e menor) · ✅ **extrair arquivo p/ PC** (parte de
+K5/K6). Codec validado nas amostras reais (QUASAR/STINGER/dinowars). **FALTAM:** K3 (edição na
+waveform+undo/redo) · K4 (REC line-in) · K5 pontes (→XRoar/↔Painel DSK) · K6 (detokenizar BASIC) ·
+K7 (render tela $400) · K9 (fita-loader→DSK via emulador).
+
 
 - **K0** — Casco da aba + **barra de ferramentas** + canvas waveform + Abrir WAV (drag-drop + botão) +
   desenho do PCM (downsample). Já mostra o NOME do WAV em carregamento.
@@ -255,6 +263,21 @@ Análogo ao DiskMap/animação do defrag, mas uma **cassete animada** (SVG + req
   (mesma ideia do delay do defrag). Para ler fita REAL (line-in), a velocidade já é física.
 - Sincroniza com a waveform (playhead correndo na onda).
 - Risco BAIXO (SVG + rAF). Encaixa no K0/K1 ou como camada visual sobre a waveform.
+
+## 9e. NORMALIZAR / REMASTER — fita bruta → arquivo limpo e MENOR (VIÁVEL) ⭐
+
+Ideia do usuário: pegar um WAV bruto/grande lido do datacorder e, com 1 clique, **regerar um arquivo
+LIMPO e padronizado** (menor) usando SÓ os bits decodificados.
+- **Decodificar** o WAV ruidoso → bytes FSK (estrutura CAS). → **Reemitir**:
+  - **`.CAS` limpo** (`encodeCas`, já temos): minúsculo (só os bytes digitais), 100% padrão CoCo/Dragon.
+  - **`.WAV` limpo** (`encodeWav`, futuro): FSK perfeito numa taxa escolhida (ex.: 11 kHz) com leader/sync
+    padrão — bem MENOR que a captura 22/44 kHz e lê de forma confiável no hardware real.
+- É o **WAV→CAS (A1) + CAS→WAV (A2)** embalado num botão **"Normalizar"**.
+- ⚠️ **Limite (da análise das amostras):** para fitas com **LOADER CUSTOM/turbo** (QUASAR/STINGER/…),
+  o decoder lê só o namefile + loader padrão; o jogo está num stream não-padrão que ele não decodifica
+  → a normalização cobre só a parte padrão. Para o jogo completo dessas, é o caminho **K9** (emulador →
+  SNA → DSK). Para fitas PADRÃO (BASIC/ML salvos normalmente), a normalização funciona inteira.
+- Vira a fase **K10 — Normalizar/Remaster** (botão na barra: decode → CAS/WAV limpo, menor, padrão).
 
 ## 10. O que preciso de você
 - Os **WAVs reais** (fitas e, principalmente, os com **loader + tela de abertura**) para eu mapear a

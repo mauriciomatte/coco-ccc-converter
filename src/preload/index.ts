@@ -28,6 +28,9 @@ const api = {
 
   xroarPickFile: (kind?: string) =>
     ipcRenderer.invoke('xroar-pick-file', kind),
+  k7Decode: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('k7-decode', wavBytes, opts),
+  k7ExportClean: (wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string) => ipcRenderer.invoke('k7-export-clean', wavBytes, opts, format, sampleRate, defaultName),
+  k7ExtractFile: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-extract-file', wavBytes, opts, fileIndex),
 
   imageAnalyze: () =>
     ipcRenderer.invoke('image-analyze'),
