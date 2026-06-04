@@ -147,9 +147,10 @@
                 args.push('-joy-left', initLeftJoy);
             }
 
-            // mini-XRoar (aba K7): lê a fita na VELOCIDADE REAL do CoCo (sem carga acelerada), p/ o
-            // CLOAD/CLOADM acompanhar o play/carretéis/hex em tempo real. A aba grande mantém o padrão (rápido).
-            if (urlParams.get('mini') === '1') {
+            // mini-XRoar (aba K7) em TEMPO REAL (WAV): lê a fita na velocidade real do CoCo (sem carga
+            // acelerada), p/ acompanhar o play/carretéis/hex. Com fast=1 (.cas), mantém a carga RÁPIDA
+            // padrão (o .cas não tem gaps; o fast-load alimenta os blocos abstratamente).
+            if (urlParams.get('mini') === '1' && urlParams.get('fast') !== '1') {
                 args.push('-no-tape-fast');
             }
 

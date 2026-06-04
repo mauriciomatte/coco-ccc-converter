@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2,
   Play, Pause, Square, Circle, Rewind, FastForward, AudioLines, ZoomIn, ZoomOut, FileCode2,
-  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus,
+  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical,
 } from 'lucide-react';
 import MiniXRoar from './MiniXRoar';
 
@@ -168,6 +168,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const revealCntRef = useRef(0);                                          // throttle da revelação dentro do tickLoop
   const fileBytesRef = useRef<Uint8Array | null>(null);                    // espelho de fileBytes p/ o tickLoop (evita closure obsoleto)
   const [extFmt, setExtFmt] = useState<'bin' | 'bas' | 'cas'>(cfg.extFmt ?? 'bin'); // formato de extração (Extrair)
+  const [wavRate, setWavRate] = useState<number>(cfg.wavRate ?? 11025);     // taxa (Hz) dos exports .WAV (menor = arquivo menor)
+  const [sizes, setSizes] = useState<{ casSize: number; wavSize: number; fullSize: number; programBytes: number } | null>(null);
+  const [progExpanded, setProgExpanded] = useState<boolean>(cfg.progExpanded ?? false); // painel Programa: detalhes recolhidos por padrão
   // Pesos (flex-grow) dos painéis de baixo, ajustáveis por splitters: BASIC | HEX | mini-XRoar.
   const [panelW, setPanelW] = useState<{ basic: number; hex: number; mini: number }>(cfg.panelW ?? { basic: 1, hex: 1, mini: 2 });
   const panelsRowRef = useRef<HTMLDivElement | null>(null);
@@ -175,7 +178,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [revealN, setRevealN] = useState(0);                               // bytes "revelados" (efeito de carga), atualizado por intervalo
   const [srcSize, setSrcSize] = useState(0);                               // tamanho do arquivo carregado no SISTEMA (bytes do .wav/.cas/.voc)
   const [mirrorXroar, setMirrorXroar] = useState(!!cfg.mirror);            // espelhar no mini-XRoar (opt-in)
-  const [miniLoad, setMiniLoad] = useState<{ name: string; data: Uint8Array; ftype: number; key: number } | null>(null);
+  const [miniLoad, setMiniLoad] = useState<{ name: string; data: Uint8Array; ftype: number; fast: boolean; key: number } | null>(null);
   const [starting, setStarting] = useState(false);                         // espelhando: aguardando o XRoar digitar o CLOAD
   const mirrorDelayRef = useRef(0);                                        // timer de FALLBACK do espelhamento
   const mirrorFromRef = useRef(0);                                         // posição (s) onde o áudio deve começar após o sinal da mini
@@ -211,6 +214,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [streamBytes, setStreamBytes] = useState<Uint8Array | null>(null);
   const streamRef = useRef<{ bytes: Uint8Array; times: number[] } | null>(null);
   const [hexRevealN, setHexRevealN] = useState(0);
+  const [srcExt, setSrcExt] = useState('');                                // extensão do arquivo carregado (wav/cas/voc…)
+  const srcBytesRef = useRef<Uint8Array | null>(null);                     // bytes ORIGINAIS do arquivo (p/ a mini fast-load do .cas)
+  const [fastLoad, setFastLoad] = useState(false);                         // mini: leitura rápida (auto-ligado em .cas)
+  const instantRef = useRef(false);                                        // .cas = digital → painéis sem animação (revela tudo)
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const waveBoxRef = useRef<HTMLDivElement | null>(null);
@@ -230,6 +237,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const reset = () => { stop(); posRef.current = 0; lastPosRef.current = 0; reelL.current = 0; reelR.current = 0; setView({ start: 0, len: 1 }); };
   const loadBytes = async (bytes: Uint8Array, name: string) => {
     const ext = (name.split('.').pop() || '').toLowerCase();
+    const cas = ext === 'cas' || ext === 'c10';                            // .cas/.c10 = digital → fast-load + painéis instantâneos
+    srcBytesRef.current = bytes; setSrcExt(ext); instantRef.current = cas; setFastLoad(cas);
     reset(); setErr(''); setDecoded(null); setFileBytes(null); setFileMeta(null); setStreamBytes(null); streamRef.current = null; setHexRevealN(0); setSrcSize(bytes.length); setLoading(true); setProgress(0);
     // K2 — normaliza qualquer formato de fita para bytes de WAV e segue pelo MESMO pipeline.
     let wavBytes: Uint8Array;
@@ -285,10 +294,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (!rawRef.current || !decoded?.foundSync) return;
     setExporting(true);
     try {
-      const r = await window.cocoApi.k7ExportClean(rawRef.current, dec, format, format === 'wav' ? 11025 : 0, audio?.name || 'fita');
+      const r = await window.cocoApi.k7ExportClean(rawRef.current, dec, format, format === 'wav' ? wavRate : 0, audio?.name || 'fita');
       if (r?.cancelled) return;
       if (!r?.success) { setErr('Export: ' + r?.error); return; }
-      const extra = hasTurbo ? t(' — ATENÇÃO: só a parte PADRÃO (loader). O jogo turbo NÃO entra no .cas; use "→ Fita completa".', ' — NOTE: STANDARD part only (loader). The turbo game is NOT in the .cas; use "→ Full tape".') : '';
+      const extra = hasTurbo ? t(' — ATENÇÃO: parte da fita não decodificou (ajuste o som K8 ou use "→ Fita completa").', ' — NOTE: part of the tape did not decode (adjust sound K8 or use "→ Full tape").') : '';
       setErr(t(`Salvo: ${r.path} (${(r.size / 1024).toFixed(1)} KB)${extra}`, `Saved: ${r.path} (${(r.size / 1024).toFixed(1)} KB)${extra}`));
     } finally { setExporting(false); }
   };
@@ -299,8 +308,11 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     setExporting(true);
     try {
       const base = (audio?.name || 'fita').replace(/\.[^.]+$/, '') || 'fita';
-      const r = await window.cocoApi.saveCartridgeFile(rawRef.current, `${base}_completa.wav`,
-        t('Salvar a FITA COMPLETA (.wav) — todo o áudio (tela/loader/turbo)', 'Save the FULL TAPE (.wav) — all audio (screen/loader/turbo)'),
+      // Reamostra a fita completa p/ a taxa escolhida (8-bit mono) — encolhe mantendo todo o áudio.
+      const rs = await window.cocoApi.k7ResampleWav(rawRef.current, wavRate);
+      const out = rs?.success ? new Uint8Array(rs.data) : rawRef.current;
+      const r = await window.cocoApi.saveCartridgeFile(out, `${base}_completa_${Math.round(wavRate / 1000)}k.wav`,
+        t('Salvar a FITA COMPLETA (.wav) — todo o áudio (tela/loader/programa)', 'Save the FULL TAPE (.wav) — all audio (screen/loader/program)'),
         [{ name: 'WAV', extensions: ['wav'] }, { name: 'All Files', extensions: ['*'] }]);
       if (r?.success) setErr(t(`Fita completa salva: ${r.filePath}`, `Full tape saved: ${r.filePath}`));
       else if (r?.error) setErr('Export: ' + r.error);
@@ -311,7 +323,6 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (!rawRef.current || !decoded?.foundSync) return;
     const fb = await window.cocoApi.k7FileBytes(rawRef.current, dec, index);
     if (!fb?.success) { setErr('Extrair: ' + (fb?.error || '?')); return; }
-    const meta = decoded.files[index];
     const safe = (fb.name || 'FILE').replace(/[^A-Za-z0-9._-]/g, '_') || 'FILE';
     const data = new Uint8Array(fb.data);
     try {
@@ -327,10 +338,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         const r = await window.cocoApi.saveCartridgeFile(txt, `${safe}.bas`, t('Extrair BASIC (texto .bas)', 'Extract BASIC (text .bas)'), [{ name: 'BASIC text (.bas)', extensions: ['bas'] }, { name: 'Text (.txt)', extensions: ['txt'] }, { name: 'All Files', extensions: ['*'] }]);
         if (r?.success) setErr(t(`Extraído: ${r.filePath}`, `Extracted: ${r.filePath}`));
         else if (r?.error) setErr('Extrair: ' + r.error);
-      } else { // cas
-        const built = await window.cocoApi.buildEmulatorCas([{ name: (safe.replace(/\..*$/, '') || 'FILE').slice(0, 8), fileType: fb.ftype, asciiFlag: meta?.ascii ? 0xFF : 0x00, loadAddr: meta?.loadAddr || 0, execAddr: meta?.execAddr || 0, payload: data }]);
+      } else { // cas — usa o MESMO .cas canônico do "→ CAS" (buildCleanCas), que abre no XRoar
+        const built = await window.cocoApi.k7CasBytes(rawRef.current, dec);
         if (!built?.success) { setErr('Extrair: ' + built?.error); return; }
-        const r = await window.cocoApi.saveCartridgeFile(new Uint8Array(built.image), `${safe}.cas`, t('Extrair como fita (.cas)', 'Extract as tape (.cas)'), [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'All Files', extensions: ['*'] }]);
+        const r = await window.cocoApi.saveCartridgeFile(new Uint8Array(built.data), `${safe}.cas`, t('Extrair como fita (.cas)', 'Extract as tape (.cas)'), [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'All Files', extensions: ['*'] }]);
         if (r?.success) setErr(t(`Extraído: ${r.filePath}`, `Extracted: ${r.filePath}`));
         else if (r?.error) setErr('Extrair: ' + r.error);
       }
@@ -375,6 +386,18 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       for (let i = a; i < b; i++) n[i] = audio.samples[i] * g;
       edit(n);
     } catch (e: any) { setErr('Normalizar: ' + (e?.message || e)); }
+  };
+  // Insere uma PAUSA (silêncio) de 1s na posição do playhead (ou no início da seleção). Cria um gap
+  // real entre segmentos — útil p/ montar/ajustar fitas multi-segmento (loader) que rodam em TEMPO REAL.
+  const doInsertGap = () => {
+    if (!audio) return;
+    try {
+      const r = selRange();
+      const at = r ? r.a : Math.max(0, Math.min(audio.samples.length, Math.floor(posRef.current * audio.sampleRate)));
+      const silence = new Float32Array(Math.round(audio.sampleRate)); // 1,0 s de zeros
+      edit(cat(audio.samples.slice(0, at), silence, audio.samples.slice(at)));
+      setErr(t('Pausa de 1,0s inserida.', '1.0s pause inserted.'));
+    } catch (e: any) { setErr('Inserir pausa: ' + (e?.message || e)); }
   };
 
   // ───────── K4 — gravar fita REAL (line-in via Web Audio) ─────────
@@ -449,9 +472,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       reelR.current += dPos * 520 / Math.max(2, rSupply);
       autoFollow(pos);
       setFrame(f => f + 1);
-      // Revelação progressiva — throttle ~7 quadros (≈8x/s) p/ não reconstruir a 60fps.
+      // Revelação progressiva — throttle ~7 quadros (≈8x/s) p/ não reconstruir a 60fps. (.cas = instantâneo, pula)
       const fb = fileBytesRef.current;
-      if (audio && ++revealCntRef.current >= 7) {
+      if (audio && !instantRef.current && ++revealCntRef.current >= 7) {
         revealCntRef.current = 0;
         // BASIC: revela o arquivo padrão (loader) ancorado em ~200 B/s.
         if (fb) { const lw = Math.max(0.3, Math.min(audio.durationSec, fb.length / 200)); setRevealN(Math.min(fb.length, Math.ceil(Math.min(1, pos / lw) * fb.length))); }
@@ -480,12 +503,15 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     // Espelhando: dispara a mini-XRoar (reset → CLOAD/CLOADM) e SÓ inicia o áudio quando ela avisar que
     // o comando foi digitado (onMiniCommandIssued) — assim o CoCo já está pronto p/ ler quando o som toca.
     // Fallback: se a mini não sinalizar em 8s, toca mesmo assim.
-    if (mirrorXroar && rawRef.current) {
+    if (mirrorXroar && rawRef.current && !fastLoad) {
+      // TEMPO REAL (WAV): sincroniza o áudio com o CLOAD digitado na mini.
       mirrorFromRef.current = from;
       startingRef.current = true; setStarting(true);
       triggerMini();
       mirrorDelayRef.current = window.setTimeout(() => { mirrorDelayRef.current = 0; startingRef.current = false; setStarting(false); startSource(from); }, 8000);
     } else {
+      // FAST (.cas) ou sem espelhamento: toca já; a mini fast-load roda em paralelo.
+      if (mirrorXroar && rawRef.current) triggerMini();
       startSource(from);
     }
   };
@@ -607,7 +633,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const f0 = decoded?.files?.[0];                                  // 1º arquivo decodificado (K2)
   // Fita TURBO/loader: a parte padrão decodificada (≈ tamanho/200 s) é bem menor que a fita toda →
   // há tela/loader/jogo turbo que o decoder padrão NÃO lê (só vive no áudio). Usado p/ avisar no export.
-  const hasTurbo = !!(audio && fileBytes && audio.durationSec > (fileBytes.length / 200) * 1.6 + 2);
+  const hasTurbo = !!(audio && fileBytes && fileBytes.length > 0 && audio.durationSec > (fileBytes.length / 200) * 2.2 + 3);
   const hex4 = (n: number) => '$' + (n & 0xffff).toString(16).toUpperCase().padStart(4, '0');
   const fmtSz = (n: number) => (n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B');
   // Classe de RAM do CoCo que comportaria o programa (4K/8K/16K/32K/64K).
@@ -615,7 +641,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   // Revelação progressiva (efeito UX): o hex/BASIC vão surgindo "carregando". A CONTAGEM (revealN) é
   // atualizada por INTERVALO (~8x/s) num useEffect — desacoplada do rAF de 60fps p/ NÃO travar
   // reconstruindo o hex a cada quadro. Aqui só derivamos a fração revelada para fatiar texto/cursor.
-  const revealFrac = (fileBytes && fileBytes.length) ? Math.max(0, Math.min(1, revealN / fileBytes.length)) : 1;
+  // BASIC e HEX mostram o MESMO payload (programa gap-aware); a revelação do BASIC segue a do hex
+  // (por TEMPO, via hexRevealN) p/ os dois andarem em sincronia conforme o playhead lê os segmentos.
+  const revealFrac = (streamBytes && streamBytes.length) ? Math.max(0, Math.min(1, hexRevealN / streamBytes.length)) : 1;
   // BASIC detokenizado por completo (uma vez); o "datilografar" progressivo é fatiar o TEXTO no render.
   const basicFull = useMemo(() => {
     if (!fileBytes || !fileMeta) return null;
@@ -624,12 +652,12 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const d = detokenize(fileBytes);
     return (d.tokenized || !d.text.trim()) ? { kind: 'fail' as const } : { kind: 'text' as const, text: d.text };
   }, [fileBytes, fileMeta, detokenize]);
-  // Fatiado (revelação) + quebrado em 32 col — MEMOIZADO por revealN p/ não recomputar a 60fps (travava perto do fim).
+  // Fatiado (revelação) + quebrado em 32 col — MEMOIZADO por hexRevealN (revelação por TEMPO).
   const basicView = useMemo(() => {
     if (basicFull?.kind !== 'text') return basicFull;
-    const frac = (fileBytes && fileBytes.length) ? Math.min(1, revealN / fileBytes.length) : 1;
+    const frac = (streamBytes && streamBytes.length) ? Math.min(1, hexRevealN / streamBytes.length) : 1;
     return { kind: 'text' as const, text: wrap32(basicFull.text.slice(0, Math.ceil(frac * basicFull.text.length))) };
-  }, [basicFull, revealN, fileBytes]);
+  }, [basicFull, hexRevealN, streamBytes]);
   // HEX dos bytes JÁ "lidos" (até revealN). Recalcula a cada quadro durante o play (revealN muda).
   const hexLines = useMemo(() => {
     const sb = streamBytes;
@@ -650,32 +678,47 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   useEffect(() => { fileBytesRef.current = fileBytes; }, [fileBytes]);
   useEffect(() => {
     if (!fileBytes) { setRevealN(0); return; }
-    if (!playing) { setRevealN(fileBytes.length); return; }
+    if (!playing || instantRef.current) { setRevealN(fileBytes.length); return; } // .cas = instantâneo (sem animação)
     setRevealN(Math.min(fileBytes.length, Math.ceil(Math.min(1, posRef.current / loadWindow) * fileBytes.length)));
   }, [playing, fileBytes, loadWindow]);
   // HEX (stream cru): parado/pausado → tudo (estudo); ao tocar, recomeça da posição atual (revela por tempo).
   useEffect(() => {
     if (!streamBytes) { setHexRevealN(0); return; }
-    if (!playing) { setHexRevealN(streamBytes.length); return; }
+    if (!playing || instantRef.current) { setHexRevealN(streamBytes.length); return; } // .cas = instantâneo
     const st = streamRef.current; const pos = posRef.current;
     if (st) { let lo = 0, hi = st.times.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (st.times[mid] <= pos) lo = mid + 1; else hi = mid; } setHexRevealN(lo); }
   }, [playing, streamBytes]);
-  // Manda a fita atual p/ a mini-XRoar rodar (reset + CLOAD/CLOADM). Vale mesmo sem sync no nosso
-  // decoder (fitas com loader turbo rodam no XRoar) — aí assume CLOADM (jogos ML).
-  const triggerMini = () => {
+  // Manda a fita atual p/ a mini-XRoar rodar. FAST: carrega o .cas (gap-aware/original) com autorun.
+  // TEMPO REAL: carrega o WAV (com os gaps reais) e digita CLOAD/CLOADM.
+  const triggerMini = async () => {
     if (!rawRef.current) return;
     const base = (audio?.name || 'fita').replace(/\.[^.]+$/, '') || 'fita';
     const ftype = decoded?.files?.[0]?.ftype ?? 2;
-    setMiniLoad({ name: base + '.wav', data: rawRef.current, ftype, key: Date.now() });
+    if (fastLoad) {
+      let casData = (srcExt === 'cas' || srcExt === 'c10') ? srcBytesRef.current : null; // .cas original
+      if (!casData && decoded?.foundSync) { const r = await window.cocoApi.k7CasBytes(rawRef.current, dec); if (r?.success) casData = new Uint8Array(r.data); }
+      if (casData) setMiniLoad({ name: base + '.cas', data: casData, ftype, fast: true, key: Date.now() });
+    } else {
+      setMiniLoad({ name: base + '.wav', data: rawRef.current, ftype, fast: false, key: Date.now() });
+    }
   };
   // Persiste as configurações da aba K7 sempre que qualquer uma muda.
   useEffect(() => {
     try {
       localStorage.setItem('k7Settings', JSON.stringify({
-        midUs: dec.midUs, minAmp: dec.minAmp, speedKey, extFmt, mirror: mirrorXroar, panelW,
+        midUs: dec.midUs, minAmp: dec.minAmp, speedKey, extFmt, mirror: mirrorXroar, panelW, wavRate, progExpanded,
       }));
     } catch { /* ignore */ }
-  }, [dec.midUs, dec.minAmp, speedKey, extFmt, mirrorXroar, panelW]);
+  }, [dec.midUs, dec.minAmp, speedKey, extFmt, mirrorXroar, panelW, wavRate, progExpanded]);
+  // PREVIEW em TEMPO REAL dos tamanhos finais (sem salvar): recalcula ao mexer no som (K8) ou no kHz.
+  useEffect(() => {
+    if (!rawRef.current || !decoded?.foundSync) { setSizes(null); return; }
+    const id = setTimeout(async () => {
+      const s = await window.cocoApi.k7ExportSizes(rawRef.current, dec, wavRate);
+      if (s?.success) setSizes(s);
+    }, 300);
+    return () => clearTimeout(id);
+  }, [decoded, dec, wavRate]);
   // Splitter: começa o arraste entre dois painéis adjacentes (o par mantém a soma de pesos).
   const onSplitDown = (e: React.MouseEvent, leftK: 'basic' | 'hex', rightK: 'hex' | 'mini') => {
     const row = panelsRowRef.current; if (!row) return;
@@ -760,6 +803,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         {tool(<ArrowRightLeft size={14} />, '↔ DSK', () => { if (rawRef.current && fileMeta && onSendToDsk) onSendToDsk(rawRef.current, { midUs: dec.midUs, minAmp: dec.minAmp }, 0); }, !!(rawRef.current && fileMeta && onSendToDsk), t('Gravar o arquivo lido (BASIC/ML) num painel DSK', 'Write the read file (BASIC/ML) into a DSK pane'))}
         {tool(<MonitorPlay size={14} />, '→ XRoar', () => { if (rawRef.current && audio && onSendToXroar) onSendToXroar(rawRef.current, audio.name); }, !!(rawRef.current && audio && onSendToXroar), t('Carregar esta fita no emulador XRoar', 'Load this tape into the XRoar emulator'))}
         <button onClick={() => setMirrorXroar(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: mirrorXroar ? ACCENT : GREEN, fontWeight: mirrorXroar ? 700 : 400 }} title={t('Espelhar no mini-XRoar (mudo): ao dar PLAY, reseta e roda CLOAD/CLOADM numa tela embutida ao lado do hex', 'Mirror in the mini-XRoar (muted): on PLAY, resets and runs CLOAD/CLOADM in an embedded screen next to the hex')}><MonitorPlay size={14} /><span className="text-[11px]">{t('Espelhar', 'Mirror')}{mirrorXroar ? ' ✓' : ''}</span></button>
+        {mirrorXroar && <button onClick={() => setFastLoad(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: fastLoad ? ACCENT : GREEN, fontWeight: fastLoad ? 700 : 400 }} title={t('Leitura rápida da mini-XRoar: LIGADO = carrega o .cas com fast-load (sem animação, p/ arquivos digitais). DESLIGADO = WAV em tempo real (com os gaps reais, p/ fitas com loader). Liga sozinho ao abrir um .cas.', 'mini-XRoar fast read: ON = loads the .cas with fast-load (no animation, for digital files). OFF = real-time WAV (with real gaps, for loader tapes). Auto-on when opening a .cas.')}>{fastLoad ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}<span className="text-[11px]">{t('Leitura rápida', 'Fast read')}</span></button>}
         {sep}
         {tool(<Undo2 size={14} />, t('Desfazer', 'Undo'), undo, undoRef.current.length > 0, t('Desfazer a última edição da onda', 'Undo the last waveform edit'))}
         {tool(<Redo2 size={14} />, t('Refazer', 'Redo'), redo, redoRef.current.length > 0, t('Refazer a edição desfeita', 'Redo the undone edit'))}
@@ -770,6 +814,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         {ebtn(<Trash2 size={14} />, t('Excluir a seleção', 'Delete the selection'), doDelete, !!selRange())}
         {ebtn(<Crop size={14} />, t('Recortar p/ a seleção (mantém só o trecho selecionado)', 'Crop to the selection (keep only the selected part)'), doTrim, !!selRange())}
         {ebtn(<Maximize2 size={14} />, t('Normalizar a amplitude (melhora a decodificação)', 'Normalize the amplitude (improves decoding)'), doNormalize, !!audio)}
+        {ebtn(<SeparatorVertical size={14} />, t('Inserir PAUSA (1,0s de silêncio) no playhead/seleção — cria um gap entre segmentos (p/ fitas com loader, em tempo real)', 'Insert a PAUSE (1.0s silence) at the playhead/selection — creates a gap between segments (for loader tapes, real-time)'), doInsertGap, !!audio)}
         <span className="ml-auto text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-bold flex items-center gap-1"><AudioLines size={13} /> K7</span>
       </div>
 
@@ -873,7 +918,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             </div>
             {splitter('basic', 'hex')}
             <div className="glass-panel flex flex-col" style={{ flex: `${panelW.hex} 1 0%`, minWidth: 60, minHeight: 0, overflow: 'hidden' }}>
-              <div className="px-2 py-1 border-b border-[var(--border)] text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] flex-shrink-0 flex justify-between"><span>{t('Hexadecimal (fita inteira)', 'Hex (whole tape)')}</span>{streamBytes && <span className="text-[var(--text-secondary)]">{playing && hexRevealN < streamBytes.length ? `${hexRevealN} / ${streamBytes.length} B` : `${streamBytes.length} B`}</span>}</div>
+              <div className="px-2 py-1 border-b border-[var(--border)] text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] flex-shrink-0 flex justify-between"><span>{t('Hexadecimal (programa)', 'Hex (program)')}</span>{streamBytes && <span className="text-[var(--text-secondary)]">{playing && hexRevealN < streamBytes.length ? `${hexRevealN} / ${streamBytes.length} B` : `${streamBytes.length} B`}</span>}</div>
               <div ref={hexScrollRef} className="flex-1 overflow-auto p-2" style={{ minHeight: 0 }}>
                 {streamBytes ? <pre className="text-[10px] font-mono" style={{ color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{hexLines}</pre>
                   : <span className="text-[11px] text-[var(--text-muted)]">{t('Decodifique uma fita para ver os bytes.', 'Decode a tape to see the bytes.')}</span>}
@@ -881,17 +926,26 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             </div>
             {/* 3ª coluna: mini-XRoar (espelhamento opt-in, mudo) — roda CLOAD/CLOADM ao dar PLAY */}
             {mirrorXroar && splitter('hex', 'mini')}
-            {mirrorXroar && <MiniXRoar lang={pt ? 'pt-br' : 'en-us'} platform={platform} active={active !== false} load={miniLoad} flexGrow={panelW.mini} onCommandIssued={onMiniCommandIssued} onLog={onLog} />}
+            {mirrorXroar && <MiniXRoar lang={pt ? 'pt-br' : 'en-us'} platform={platform} active={active !== false} load={miniLoad} fast={fastLoad} flexGrow={panelW.mini} onCommandIssued={onMiniCommandIssued} onLog={onLog} />}
           </div>
         </div>
 
-        {/* COLUNA DIREITA */}
-        <div style={{ width: 224, flexShrink: 0, borderLeft: '1px solid var(--border)', padding: 10, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
-          <div className="glass-panel p-2.5">
+        {/* COLUNA DIREITA — painéis NÃO encolhem (flexShrink 0); a coluna ROLA quando não cabem. */}
+        <div style={{ width: 240, flexShrink: 0, borderLeft: '1px solid var(--border)', padding: 10, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto' }}>
+          <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>
             <div className={panelTitle}>{t('Programa', 'Program')}</div>
             {/* Arquivo de áudio (WAV) carregado — consolidado aqui (antes ficava na status bar). */}
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('arquivo', 'file')}</span><span className="font-mono ml-2" style={{ color: '#c4b5fd' }} title={audio?.name}>{audio ? (audio.name.length > 13 ? audio.name.slice(0, 13) + '...' : audio.name) : '—'}</span></div>
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('extensão', 'extension')}</span><span className="font-mono">{audio ? '.' + (audio.name.split('.').pop() || '?').toUpperCase() : '—'}</span></div>
+            {/* Botão EXPANDIR (destaque laranja) — recolhe/mostra todos os detalhes abaixo */}
+            <button onClick={() => setProgExpanded(v => !v)} className="w-full flex items-center justify-center gap-1 mt-1 mb-0.5 rounded text-[10px] font-bold uppercase tracking-wide"
+              style={{ padding: '3px 6px', color: ACCENT, background: 'rgba(255,140,26,0.14)', border: `1px solid ${ACCENT_DIM}` }}
+              title={t('Mostrar/ocultar tamanhos, endereços, sync e o botão Extrair', 'Show/hide sizes, addresses, sync and the Extract button')}>
+              {progExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {progExpanded ? t('menos', 'less') : t('mais informações', 'more info')}
+              {!progExpanded && decoded && <span style={{ color: decoded.foundSync ? '#34d399' : '#fbbf24', marginLeft: 2 }}>{decoded.foundSync ? '✓' : '✗'}</span>}
+            </button>
+            {progExpanded && (<>
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('arquivo (sistema)', 'file (system)')}</span><span className="font-mono" title={srcSize ? `${srcSize} bytes` : ''}>{srcSize ? fmtSz(srcSize) : '—'}</span></div>
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('taxa', 'rate')}</span><span className="font-mono">{audio ? `${(audio.sampleRate / 1000).toFixed(1)} kHz` : '—'}</span></div>
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('formato', 'format')}</span><span className="font-mono">{audio ? `${audio.bits}-bit · ${audio.channels === 1 ? 'mono' : `${audio.channels}ch`}` : '—'}</span></div>
@@ -913,8 +967,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             </div>
             {hasTurbo && (
               <div className="mt-1 text-[9px] leading-tight" style={{ color: '#fbbf24' }}
-                title={t('A fita é maior que a parte padrão decodificada — há tela/loader/jogo TURBO que o decoder padrão não lê. O hex/→CAS/→BIN mostram só o loader; o jogo inteiro está no áudio (use "→ Fita completa" ou rode no XRoar).', 'The tape is longer than the decoded standard part — there is a TURBO screen/loader/game the standard decoder cannot read. The hex/→CAS/→BIN show only the loader; the whole game is in the audio (use "→ Full tape" or run in XRoar).')}>
-                ⚠ {t('fita turbo: hex/→CAS = só o loader; jogo completo só no áudio (→ Fita completa)', 'turbo tape: hex/→CAS = loader only; full game only in audio (→ Full tape)')}
+                title={t('Parte da fita não foi decodificada (muito mais áudio que dados recuperados). Tente ajustar o som (K8: Limiar/Amplitude) p/ destravar segmentos, ou use "→ Fita completa" / rode no XRoar.', 'Part of the tape was not decoded (much more audio than recovered data). Try adjusting the sound (K8: Threshold/Amplitude) to unlock segments, or use "→ Full tape" / run in XRoar.')}>
+                ⚠ {t('decode incompleto: ajuste o som (K8) ou use "→ Fita completa"', 'incomplete decode: adjust sound (K8) or use "→ Full tape"')}
               </div>
             )}
             {/* Linha de baixo: toggle de formato (BIN/BAS/CAS) + botão Extrair */}
@@ -944,8 +998,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
                 ))}
               </div>
             )}
+            </>)}
           </div>
-          <div className="glass-panel p-2.5">
+          <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>
             <div className={panelTitle}>{t('Ajustes de som (K8)', 'Sound adjustments (K8)')}</div>
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('Taxa (kHz)', 'Rate (kHz)')}</span><span className="font-mono">{audio ? (audio.sampleRate / 1000).toFixed(1) : '—'}</span></div>
             <div className="block text-[10px] mt-1" style={{ color: 'var(--text-secondary)' }}>
@@ -969,6 +1024,25 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
               <span className="text-[9px] font-mono text-[var(--text-muted)]">{decoded ? `${decoded.bitCount} bits · ${decoded.byteCount} B` : ''}</span>
             </div>
             <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t('Mexa no limiar/amplitude para destravar fitas difíceis (ex.: dinowars).', 'Adjust threshold/amplitude to unlock difficult tapes (e.g. dinowars).')}</div>
+          </div>
+
+          {/* EXPORTAR — taxa do WAV + tamanhos finais EM TEMPO REAL (atualizam ao mexer no som/kHz) */}
+          <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>
+            <div className={panelTitle}>{t('Exportar', 'Export')}</div>
+            <label className="block text-[10px]" style={{ color: 'var(--text-secondary)' }}>
+              <div className="flex justify-between mb-0.5"><span>{t('Taxa do WAV (kHz)', 'WAV rate (kHz)')}</span><span className="text-[var(--text-muted)]">{t('menor = menor', 'lower = smaller')}</span></div>
+              <select value={wavRate} onChange={e => setWavRate(Number(e.target.value))} disabled={!audio} className="input-select text-[10px]" style={{ padding: '2px 4px', width: '100%' }}
+                title={t('Taxa de amostragem dos exports .WAV. Menor = arquivo menor (mín. seguro p/ a FSK do CoCo ≈ 8 kHz).', 'Sample rate of .WAV exports. Lower = smaller file (safe min. for CoCo FSK ≈ 8 kHz).')}>
+                {[8000, 11025, 22050, 44100].map(hz => <option key={hz} value={hz}>{Math.round(hz / 1000)} kHz</option>)}
+              </select>
+            </label>
+            <div className="mt-2 flex flex-col gap-0.5">
+              <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ CAS (limpo)', '→ CAS (clean)')}</span><span className="font-mono" style={{ color: '#34d399' }}>{sizes ? fmtSz(sizes.casSize) : '—'}</span></div>
+              <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ WAV (limpo)', '→ WAV (clean)')}</span><span className="font-mono" style={{ color: '#34d399' }}>{sizes ? fmtSz(sizes.wavSize) : '—'}</span></div>
+              <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ Fita completa', '→ Full tape')}</span><span className="font-mono" style={{ color: ACCENT }}>{sizes ? fmtSz(sizes.fullSize) : '—'}</span></div>
+              {srcSize > 0 && <div className="flex justify-between text-[10px] mt-0.5 pt-0.5 border-t border-[var(--border)]" style={{ color: 'var(--text-muted)' }}><span>{t('original', 'original')}</span><span className="font-mono">{fmtSz(srcSize)}</span></div>}
+            </div>
+            <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t('Tamanhos calculados em tempo real. A taxa só afeta os .WAV; o .CAS depende só do programa.', 'Sizes computed in real time. The rate only affects .WAV; the .CAS depends only on the program.')}</div>
           </div>
         </div>
       </div>

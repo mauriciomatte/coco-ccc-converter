@@ -221,15 +221,11 @@ function filesFromBlocks(blocks: CasBlock[]): CasFileInfo[] {
   return files;
 }
 
-/** K2/K8 — decodifica um WAV de fita → blocos/arquivos CAS, com parâmetros ajustáveis (K8). */
-export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDecodeResult {
+/** Núcleo: SAMPLES → bits (FSK) → bytes (a partir do sync $55$3C). `timeOffset` torna os tempos
+ *  absolutos na fita inteira (usado pela decodificação gap-aware por segmento). */
+function decodeStreamFromSamples(samples: Float32Array, sampleRate: number, opts: DecodeOpts, timeOffset = 0):
+  { foundSync: boolean; inverted: boolean; bitCount: number; bytes: number[]; byteTimes: number[] } {
   const midUs = opts.midUs ?? 600, minUs = opts.minUs ?? 300, maxUs = opts.maxUs ?? 1200, minAmp = opts.minAmp ?? 0;
-  const { samples, sampleRate, bits, channels } = readWavSamples(wavBuffer);
-  const base: CasDecodeResult = {
-    sampleRate, bitsPerSample: bits, channels, totalSamples: samples.length, durationSec: samples.length / sampleRate,
-    foundSync: false, inverted: false, bitCount: 0, byteCount: 0, bytes: [], byteTimes: [], blocks: [], files: [],
-  };
-  // up-crossings + pico de amplitude por segmento (gate de ruído via minAmp)
   const cross: number[] = [], segMax: number[] = [];
   let prevSign = Math.sign(samples[0]) || 1, curMax = 0;
   for (let i = 1; i < samples.length; i++) {
@@ -237,30 +233,139 @@ export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDeco
     const sign = Math.sign(samples[i]) || 1;
     if (sign !== prevSign) { if (sign > 0 && prevSign < 0) { const f = -samples[i - 1] / (samples[i] - samples[i - 1]); cross.push(i - 1 + f); segMax.push(curMax); curMax = 0; } prevSign = sign; }
   }
-  const bitsArr: number[] = [], bitPos: number[] = [];           // bitPos[k] = amostra do k-ésimo bit aceito
+  const bitsArr: number[] = [], bitPos: number[] = [];
   for (let i = 1; i < cross.length; i++) {
     if (segMax[i] < minAmp) continue;
     const us = ((cross[i] - cross[i - 1]) / sampleRate) * 1e6;
     if (us >= minUs && us < midUs) { bitsArr.push(1); bitPos.push(cross[i]); }
     else if (us >= midUs && us <= maxUs) { bitsArr.push(0); bitPos.push(cross[i]); }
   }
-  base.bitCount = bitsArr.length;
-  if (bitsArr.length < 16) return base;
+  if (bitsArr.length < 16) return { foundSync: false, inverted: false, bitCount: bitsArr.length, bytes: [], byteTimes: [] };
   for (let i = 0; i < bitsArr.length - 16; i++) {
     let b1 = 0, b2 = 0;
     for (let b = 0; b < 8; b++) { b1 |= bitsArr[i + b] << b; b2 |= bitsArr[i + 8 + b] << b; }
     const norm = b1 === 0x55 && b2 === 0x3c, inv = b1 === 0xaa && b2 === 0xc3;
     if (norm || inv) {
-      base.foundSync = true; base.inverted = inv;
       const out: number[] = [], times: number[] = [];
-      for (let j = i + 8; j < bitsArr.length - 8; j += 8) { let v = 0; for (let b = 0; b < 8; b++) v |= bitsArr[j + b] << b; out.push(inv ? (~v) & 0xff : v); times.push(bitPos[j] / sampleRate); }
-      base.bytes = out; base.byteCount = out.length; base.byteTimes = times;
-      base.blocks = parseCasBlocks(out);
-      base.files = filesFromBlocks(base.blocks);
-      break;
+      for (let j = i + 8; j < bitsArr.length - 8; j += 8) { let v = 0; for (let b = 0; b < 8; b++) v |= bitsArr[j + b] << b; out.push(inv ? (~v) & 0xff : v); times.push(timeOffset + bitPos[j] / sampleRate); }
+      return { foundSync: true, inverted: inv, bitCount: bitsArr.length, bytes: out, byteTimes: times };
     }
   }
+  return { foundSync: false, inverted: false, bitCount: bitsArr.length, bytes: [], byteTimes: [] };
+}
+
+/** K2/K8 — decodifica um WAV de fita → blocos/arquivos CAS, com parâmetros ajustáveis (K8). */
+export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDecodeResult {
+  const { samples, sampleRate, bits, channels } = readWavSamples(wavBuffer);
+  const base: CasDecodeResult = {
+    sampleRate, bitsPerSample: bits, channels, totalSamples: samples.length, durationSec: samples.length / sampleRate,
+    foundSync: false, inverted: false, bitCount: 0, byteCount: 0, bytes: [], byteTimes: [], blocks: [], files: [],
+  };
+  const r = decodeStreamFromSamples(samples, sampleRate, opts, 0);
+  base.bitCount = r.bitCount;
+  if (r.foundSync) {
+    base.foundSync = true; base.inverted = r.inverted; base.bytes = r.bytes; base.byteCount = r.bytes.length; base.byteTimes = r.byteTimes;
+    base.blocks = parseCasBlocks(r.bytes); base.files = filesFromBlocks(base.blocks);
+  }
   return base;
+}
+
+/** Segmenta a fita em regiões de DADOS, separando-as das PAUSAS (hiss). Critério forense: o hiss
+ *  da fita é ruído de alta frequência (período dominante < ~330µs / ~3 kHz+), enquanto os dados FSK
+ *  do CoCo usam 1200/2400 Hz (≥ ~330µs). Janela 20ms; funde buracos curtos (margem de segurança). */
+function segmentDataRegions(samples: Float32Array, sampleRate: number): Array<{ a: number; b: number }> {
+  const cross: number[] = [];
+  let prev = Math.sign(samples[0]) || 1;
+  for (let i = 1; i < samples.length; i++) { const sg = Math.sign(samples[i]) || 1; if (sg > 0 && prev < 0) { const f = -samples[i - 1] / (samples[i] - samples[i - 1]); cross.push(i - 1 + f); } if (sg !== prev) prev = sg; }
+  const per: Array<{ s: number; us: number }> = [];
+  for (let i = 1; i < cross.length; i++) per.push({ s: cross[i], us: ((cross[i] - cross[i - 1]) / sampleRate) * 1e6 });
+  const W = Math.round(sampleRate * 0.020);                       // janela 20ms (em amostras)
+  const win: boolean[] = []; let wi = 0;
+  for (let s = 0; s < samples.length; s += W) {
+    const ps: number[] = []; while (wi < per.length && per[wi].s < s + W) { if (per[wi].s >= s) ps.push(per[wi].us); wi++; }
+    let data = false;
+    if (ps.length >= 5) { ps.sort((a, b) => a - b); const med = ps[ps.length >> 1]; const inStd = ps.filter(u => u >= 330 && u <= 1050).length / ps.length; data = med >= 330 && inStd > 0.5; }
+    win.push(data);
+  }
+  // agrupa janelas contíguas; funde buracos < 80ms (4 janelas) para não cortar dados por flutuação
+  const regs: Array<{ data: boolean; a: number; b: number }> = [];
+  for (let k = 0; k < win.length; k++) { const last = regs[regs.length - 1]; const a = k * W, b = Math.min((k + 1) * W, samples.length); if (last && last.data === win[k]) last.b = b; else regs.push({ data: win[k], a, b }); }
+  let changed = true; const minHole = 4 * W;
+  while (changed) { changed = false; for (let i = 1; i < regs.length - 1; i++) { if ((regs[i].b - regs[i].a) < minHole && regs[i - 1].data === regs[i + 1].data) { regs[i - 1].b = regs[i + 1].b; regs.splice(i, 2); changed = true; break; } } }
+  return regs.filter(r => r.data && (r.b - r.a) >= Math.round(sampleRate * 0.06)).map(r => ({ a: r.a, b: r.b }));
+}
+
+export interface CasGapResult {
+  sampleRate: number; durationSec: number; foundSync: boolean; segments: number; multi: boolean;
+  segs: CasBlock[][]; blocks: CasBlock[]; files: CasFileInfo[]; payload: number[]; payloadTimes: number[];
+}
+
+/** K2 forense — decodificação GAP-AWARE: segmenta a fita pelas pausas (hiss), decodifica CADA
+ *  segmento isolado e CONCATENA os blocos válidos (namefile + todos os data blocks + 1 EOF).
+ *  Recupera o PROGRAMA INTEIRO de fitas com tela/loader (que o decode contínuo trunca no 1º gap)
+ *  e descarta o lixo do ruído. Se houver ≤1 segmento, cai no decode contínuo (fitas simples). */
+export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}): CasGapResult {
+  const { samples, sampleRate } = readWavSamples(wavBuffer);
+  const durationSec = samples.length / sampleRate;
+  const regions = segmentDataRegions(samples, sampleRate);
+  const pad = Math.floor(0.05 * sampleRate);
+  const segs: CasBlock[][] = [];                                   // blocos POR SEGMENTO (preserva EOFs/ordem)
+  const payload: number[] = [], payloadTimes: number[] = [];
+  let foundSync = false, usedSegments = 0;
+  for (const reg of regions) {
+    const a = Math.max(0, reg.a - pad), b = Math.min(samples.length, reg.b + pad);
+    const dec = decodeStreamFromSamples(samples.subarray(a, b), sampleRate, opts, a / sampleRate);
+    if (!dec.foundSync) continue;
+    const bytes = dec.bytes, times = dec.byteTimes;
+    const segBlocks: CasBlock[] = [];
+    let i = 0;
+    while (i < bytes.length) {
+      if (bytes[i] === 0x3c && i + 3 + (bytes[i + 2] || 0) + 1 <= bytes.length) {
+        const type = bytes[i + 1], len = bytes[i + 2];
+        let sum = (type + len) & 0xff; for (let k = 0; k < len; k++) sum = (sum + bytes[i + 3 + k]) & 0xff;
+        if (sum === bytes[i + 3 + len]) {                          // checksum OK → bloco real (filtra ruído)
+          if (type === 0x00 || type === 0x01 || type === 0xFF) {
+            const data = bytes.slice(i + 3, i + 3 + len);
+            segBlocks.push({ type, data, checksumOk: true });
+            if (type === 0x01) for (let k = 0; k < len; k++) { payload.push(bytes[i + 3 + k]); payloadTimes.push(times[i + 3 + k]); }
+          }
+          i += 3 + len + 1; continue;
+        }
+      }
+      i++;
+    }
+    if (segBlocks.length) { segs.push(segBlocks); foundSync = true; usedSegments++; }
+  }
+  // Fallback: nada recuperado por segmento → decode contínuo (fita simples / sem gaps claros).
+  if (!foundSync) {
+    const c = decodeCasTape(wavBuffer, opts);
+    const pay = extractCasFileData(c.blocks, 0);
+    return { sampleRate, durationSec, foundSync: c.foundSync, segments: regions.length, multi: false, segs: c.blocks.length ? [c.blocks] : [], blocks: c.blocks, files: c.files, payload: pay, payloadTimes: [] };
+  }
+  // `blocks` (achatado) p/ a lista de arquivos do painel: 1º namefile + todos os data + 1 EOF.
+  const flat: CasBlock[] = [];
+  let namefile: number[] | null = null;
+  for (const sg of segs) for (const bl of sg) {
+    if (bl.type === 0x00 && !namefile) { namefile = bl.data; flat.push(bl); }
+    else if (bl.type === 0x01) flat.push(bl);
+  }
+  flat.push({ type: 0xFF, data: [], checksumOk: true });
+  return { sampleRate, durationSec, foundSync, segments: usedSegments, multi: usedSegments > 1, segs, blocks: flat, files: filesFromBlocks(flat), payload, payloadTimes };
+}
+
+/** Reconstrói um .CAS FIEL à fita original multi-segmento: cada segmento ganha seu próprio leader
+ *  + sync e mantém o EOF, exatamente como o loader multi-estágio espera ler (header pt.1, header
+ *  pt.2/loader, tela, programa). É isto que faz o jogo carregar igual à fita no XRoar. */
+export function buildFaithfulCas(segs: CasBlock[][]): Buffer {
+  const out: number[] = [];
+  const leader = (n: number) => { for (let k = 0; k < n; k++) out.push(0x55); };
+  const block = (type: number, data: number[]) => { out.push(0x3c, type & 0xff, data.length & 0xff); let s = (type + data.length) & 0xff; for (const x of data) { out.push(x & 0xff); s = (s + x) & 0xff; } out.push(s & 0xff); };
+  for (const sg of segs) {
+    leader(128);                                                   // leader antes de CADA segmento (o loader re-sincroniza)
+    for (const bl of sg) { block(bl.type, bl.data); leader(bl.type === 0x00 ? 128 : 2); } // gap maior depois do namefile
+  }
+  leader(2);
+  return Buffer.from(out);
 }
 
 /** Extrai os BYTES de um arquivo (os data blocks do `fileIndex`-ésimo namefile, concatenados). */
@@ -311,5 +416,24 @@ export function encodeCasToWav(casBytes: Uint8Array | number[], sampleRate = 220
   buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate, 28); buf.writeUInt16LE(1, 32); buf.writeUInt16LE(8, 34);
   buf.write('data', 36); buf.writeUInt32LE(dataLen, 40);
   for (let i = 0; i < dataLen; i++) buf[44 + i] = pcm[i] & 0xff;
+  return buf;
+}
+
+/** Reamostra um WAV para `targetRate` em 8-bit mono (interpolação linear) — encolhe o arquivo
+ *  mantendo o conteúdo ("manter o .wav original com pequenas alterações"). */
+export function resampleWav8(wavBuffer: Buffer, targetRate: number): Buffer {
+  const { samples, sampleRate } = readWavSamples(wavBuffer);
+  const n = Math.max(1, Math.round(samples.length * (targetRate / sampleRate)));
+  const buf = Buffer.alloc(44 + n);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + n, 4); buf.write('WAVE', 8);
+  buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(targetRate, 24); buf.writeUInt32LE(targetRate, 28); buf.writeUInt16LE(1, 32); buf.writeUInt16LE(8, 34);
+  buf.write('data', 36); buf.writeUInt32LE(n, 40);
+  const ratio = (samples.length - 1) / Math.max(1, n - 1);
+  for (let i = 0; i < n; i++) {
+    const x = i * ratio, i0 = Math.floor(x), f = x - i0;
+    const s = (samples[i0] || 0) * (1 - f) + (samples[Math.min(samples.length - 1, i0 + 1)] || 0) * f;
+    buf[44 + i] = Math.max(0, Math.min(255, Math.round(s * 127 + 128)));
+  }
   return buf;
 }

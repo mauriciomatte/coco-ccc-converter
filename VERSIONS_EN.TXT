@@ -10,6 +10,46 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.25 — 2026-06-04
+--------------------------------------------------------------------------------
+NEW — GAP-AWARE decoding (forensic analysis of screen/loader tapes)
+  • Multi-stage loader tapes (2-part header → screen → program) were truncated at the 1st "gap":
+    the app recovered only the loader and produced garbage. Now the tape is SEGMENTED by the
+    pauses (tape hiss ≈ period < 330µs) and each segment is decoded in isolation and concatenated —
+    recovering the WHOLE program (e.g. QUASAR 555 B → 4670 B; STINGER → 6715 B), noise-free.
+  • The "pauses" aren't silence (the WAV is normalized): they're the MOTOR stopping while the
+    loader draws the screen. Segmentation uses the PERIOD (frequency), not amplitude.
+
+NEW — FAITHFUL multi-segment .CAS export that runs in XRoar
+  • "→ CAS" and "Extract → CAS" rebuild the .cas preserving the per-segment structure (each
+    segment with its own leader+sync and EOF) — CLOADM loads only the loader and IT reads the
+    screen/program, like the tape. (Merging everything into one file broke the loader.)
+  • IMPORTANT — .CAS vs .WAV and fast-load:
+      · .CAS has NO timing (no pauses). It loads correctly with FAST-LOAD on (XRoar feeds the
+        blocks abstractly) — that's the main XRoar tab's mode.
+      · .WAV has the real gaps → loads correctly in REAL TIME (-no-tape-fast), the mini-XRoar's
+        mode. That's why loader tapes run faithfully via the WAV/mini.
+  • mini-XRoar gained a "Fast read" toggle: ON = test the .cas (fast-load, no animation); OFF =
+    real-time WAV. Auto-on when opening a .cas file.
+  • Opening a .cas shows the BASIC/Hex panels all at once (no reading animation).
+  • Waveform editor: "Insert pause" button (1.0s silence at playhead/selection) to create/adjust
+    the gaps between segments in the WAV (pauses only exist in the real-time .wav; .cas has none).
+
+NEW — "Export" panel: kHz rate + REAL-TIME sizes
+  • WAV rate selector (8/11/22/44 kHz) — lower = smaller file.
+  • Live final size for → CAS, → WAV and → Full tape as you change rate/sound.
+  • "→ Full tape" resamples the original audio (8-bit mono) to shrink while keeping everything.
+
+NEW — Whole-tape Hex + collapsible Program panel
+  • The Hex reveals the WHOLE program as the playhead passes each byte (not just the header).
+  • "Program" panel collapsed by default (file + extension only); a highlighted "more info" button
+    expands sizes/addresses/sync/Extract. K7 tab settings are persistent.
+
+FIXED
+  • "Extract → CAS" wouldn't open in XRoar (contiguous blocks without leaders) — now uses the
+    canonical .cas. Normalize honors the selection; BASIC editor "save .cas" with inter-block leaders.
+
+--------------------------------------------------------------------------------
 v1.0.24 — 2026-06-04
 --------------------------------------------------------------------------------
 NEW — Full K7 (cassette) tab: waveform editor + animated datacorder

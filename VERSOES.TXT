@@ -10,6 +10,46 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.25 — 2026-06-04
+--------------------------------------------------------------------------------
+NOVO — Decodificação GAP-AWARE (perícia forense de fitas com tela/loader)
+  • Fitas com loader multi-estágio (header em 2 partes → tela → programa) eram truncadas no 1º
+    "gap": o app recuperava só o loader e gerava lixo. Agora a fita é SEGMENTADA pelas pausas
+    (ruído de fita ≈ período < 330µs) e cada segmento é decodificado isolado e concatenado —
+    recupera o PROGRAMA INTEIRO (ex.: QUASAR 555 B → 4670 B; STINGER → 6715 B), sem ruído.
+  • As "pausas" não são silêncio (o WAV vem normalizado): são o MOTOR parando enquanto o loader
+    desenha a tela. O critério de separação é o PERÍODO (frequência), não a amplitude.
+
+NOVO — Exportação .CAS FIEL (multi-segmento) que roda no XRoar
+  • O "→ CAS" e o "Extrair → CAS" reconstroem o .cas preservando a estrutura por segmento (cada
+    segmento com seu leader+sync e EOF) — o CLOADM carrega só o loader e ELE lê tela/programa,
+    como na fita. (Antes, fundir tudo num arquivo só quebrava o loader.)
+  • IMPORTANTE — .CAS vs .WAV e leitura rápida (fast-load):
+      · .CAS é SEM tempo (não guarda as pausas). Carrega certo com FAST-LOAD ligado (XRoar
+        alimenta os blocos de forma abstrata) — é o modo da aba XRoar grande.
+      · .WAV tem os gaps reais → carrega certo em TEMPO REAL (-no-tape-fast), que é o modo da
+        mini-XRoar. Por isso as fitas com loader rodam fiéis pelo WAV/mini.
+  • mini-XRoar ganhou toggle "Leitura rápida": LIGADO = testa o .cas (fast-load, sem animação);
+    DESLIGADO = WAV em tempo real. Liga sozinho ao abrir um arquivo .cas.
+  • Ao abrir um .cas, os painéis BASIC/Hexadecimal mostram tudo de uma vez (sem animação de leitura).
+  • Editor de onda: botão "Inserir pausa" (1,0s de silêncio no playhead/seleção) p/ criar/ajustar
+    os gaps entre segmentos no WAV (as pausas só existem no .wav em tempo real; o .cas não as tem).
+
+NOVO — Painel "Exportar": taxa de kHz + tamanhos em TEMPO REAL
+  • Seletor de taxa do WAV (8/11/22/44 kHz) — menor = arquivo menor.
+  • Mostra ao vivo o tamanho final de → CAS, → WAV e → Fita completa conforme você mexe no kHz/som.
+  • "→ Fita completa" reamostra o áudio original (8-bit mono) p/ encolher mantendo tudo.
+
+NOVO — Hexadecimal da fita inteira + painel Programa recolhível
+  • O hex revela TODO o programa conforme o playhead passa por cada byte (não só o header).
+  • Painel "Programa" recolhido por padrão (só arquivo + extensão); botão "mais informações" em
+    destaque expande tamanhos/endereços/sync/Extrair. Configs da aba K7 persistentes.
+
+CORRIGIDO
+  • "Extrair → CAS" não abria no XRoar (blocos colados sem leader) — agora usa o .cas canônico.
+  • Normalizar respeita a seleção; "salvar .cas" do editor BASIC com leaders entre blocos.
+
+--------------------------------------------------------------------------------
 v1.0.24 — 2026-06-04
 --------------------------------------------------------------------------------
 NOVO — Aba K7 (Fita cassete) completa: editor de onda + datacorder animado

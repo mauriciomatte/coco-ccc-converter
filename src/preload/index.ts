@@ -33,6 +33,9 @@ const api = {
   k7ExtractFile: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-extract-file', wavBytes, opts, fileIndex),
   k7FileBytes: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-bytes', wavBytes, opts, fileIndex),
   k7Stream: (wavBytes: Uint8Array, opts: any) => ipcRenderer.invoke('k7-stream', wavBytes, opts),
+  k7CasBytes: (wavBytes: Uint8Array, opts: any) => ipcRenderer.invoke('k7-cas-bytes', wavBytes, opts),
+  k7ExportSizes: (wavBytes: Uint8Array, opts: any, rate: number) => ipcRenderer.invoke('k7-export-sizes', wavBytes, opts, rate),
+  k7ResampleWav: (wavBytes: Uint8Array, rate: number) => ipcRenderer.invoke('k7-resample-wav', wavBytes, rate),
   k7FileForDsk: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-for-dsk', wavBytes, opts, fileIndex),
   k7CasToWav: (casBytes: Uint8Array, sampleRate?: number) => ipcRenderer.invoke('k7-cas-to-wav', casBytes, sampleRate),
 

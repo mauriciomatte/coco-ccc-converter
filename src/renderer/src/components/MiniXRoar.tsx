@@ -5,26 +5,28 @@ import { MonitorPlay } from 'lucide-react';
 // e ao receber uma fita reseta o emulador e digita CLOAD/CLOADM (Dragon recebe um ESPAÇO antes
 // p/ dispensar o prompt "pressione uma tecla"). Reusa o mesmo bridge (xroar.html) da aba XRoar.
 
-interface MiniLoad { name: string; data: Uint8Array; ftype: number; key: number; }
+interface MiniLoad { name: string; data: Uint8Array; ftype: number; fast: boolean; key: number; }
 interface Props {
   lang: 'pt-br' | 'en-us';
   platform?: 'coco' | 'dragon';
   active: boolean;          // aba K7 visível (só monta o emulador quando true)
   load: MiniLoad | null;    // fita a carregar/rodar (muda de `key` a cada disparo)
+  fast?: boolean;           // leitura rápida: .cas com fast-load (autorun) vs WAV em tempo real (-no-tape-fast)
   flexGrow?: number;        // peso flex (largura) controlado pelo splitter da aba K7
   onCommandIssued?: () => void; // dispara quando o CLOAD/CLOADM já foi DIGITADO (CoCo pronto p/ ler a fita)
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
 }
 
-export default function MiniXRoar({ lang, platform, active, load, flexGrow, onCommandIssued, onLog }: Props) {
+export default function MiniXRoar({ lang, platform, active, load, fast, flexGrow, onCommandIssued, onLog }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [ready, setReady] = useState(false);
   const lastKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
   const machine = platform === 'dragon' ? 'dragon64' : 'coco3';
-  // Boot MUDO (aoGain=-99 → ganho 0); a instância grande tem prioridade no áudio.
+  const bootKey = machine + (fast ? '-fast' : '-rt');                      // remonta o iframe ao trocar de modo
+  // Boot MUDO (aoGain=-99). fast=1 → fast-load (p/ .cas, sem gaps); senão -no-tape-fast (WAV em tempo real).
   const src = new URL('xroar/xroar.html', window.location.href).href +
-    `?machine=${machine}&tvInput=cmp-br&tvType=ntsc&ccr=1&glFilter=nearest&aoGain=-99&mini=1`;
+    `?machine=${machine}&tvInput=cmp-br&tvType=ntsc&ccr=1&glFilter=nearest&aoGain=-99&mini=1${fast ? '&fast=1' : ''}`;
 
   const sendCmd = (fn: string, extra: Record<string, any> = {}) => {
     const w = iframeRef.current?.contentWindow;
@@ -48,29 +50,32 @@ export default function MiniXRoar({ lang, platform, active, load, flexGrow, onCo
     return () => window.removeEventListener('message', onMsg);
   }, []);
 
-  // Troca de máquina (plataforma) → iframe remonta (key={machine}); marca não-pronto.
-  useEffect(() => { setReady(false); lastKey.current = 0; }, [machine]);
+  // Troca de máquina/modo → iframe remonta (key={bootKey}); marca não-pronto.
+  useEffect(() => { setReady(false); lastKey.current = 0; }, [bootKey]);
 
-  // Carrega+roda a fita: hard reset → anexa a fita → (Dragon: ESPAÇO) → CLOAD/CLOADM.
+  // Carrega+roda a fita. FAST (.cas): load_file com autorun (XRoar fast-load + roda sozinho).
+  // TEMPO REAL (WAV): hard reset → anexa → (Dragon: ESPAÇO) → CLOAD/CLOADM digitado.
   useEffect(() => {
     if (!load || !ready || load.key === lastKey.current) return;
     lastKey.current = load.key;
-    const isDragon = machine.startsWith('dragon');
-    const cmd = (load.ftype === 2 ? 'CLOADM' : 'CLOAD') + '\r';
-    const primed = (isDragon ? ' ' : '') + cmd;
     const arr = Array.from(load.data);
     const timers: number[] = [];
-    sendCmd('hard_reset');
-    timers.push(window.setTimeout(() => {
-      sendCmd('load_file', { fileName: load.name, fileData: arr, loadType: 0, drive: 0 }); // anexa (sem autorun)
-      // não focamos o iframe (evita roubar o teclado do app); wasm_queue_basic injeta direto na fila do BASIC.
+    if (load.fast) {
+      sendCmd('hard_reset');
+      timers.push(window.setTimeout(() => { sendCmd('load_file', { fileName: load.name, fileData: arr, loadType: 1, drive: 0 }); }, 2200)); // loadType 1 = autorun (CLOAD/CLOADM)
+    } else {
+      const isDragon = machine.startsWith('dragon');
+      const primed = (isDragon ? ' ' : '') + (load.ftype === 2 ? 'CLOADM' : 'CLOAD') + '\r';
+      sendCmd('hard_reset');
       timers.push(window.setTimeout(() => {
-        sendCmd('type_string', { text: primed, delayMs: 25 });
-        // Após o tempo estimado de digitação + Enter, o CoCo já está PRONTO p/ ler a fita → avisa o pai.
-        const typeMs = primed.length * 25 + 400;
-        timers.push(window.setTimeout(() => onCommandIssued?.(), typeMs));
-      }, 600));
-    }, 2800));
+        sendCmd('load_file', { fileName: load.name, fileData: arr, loadType: 0, drive: 0 }); // anexa (sem autorun)
+        timers.push(window.setTimeout(() => {
+          sendCmd('type_string', { text: primed, delayMs: 25 });
+          const typeMs = primed.length * 25 + 400;
+          timers.push(window.setTimeout(() => onCommandIssued?.(), typeMs));
+        }, 600));
+      }, 2800));
+    }
     return () => timers.forEach(clearTimeout);
   }, [load, ready, machine]);
 
@@ -87,7 +92,7 @@ export default function MiniXRoar({ lang, platform, active, load, flexGrow, onCo
         </span>
       </div>
       <div className="flex-1 flex items-center justify-center" style={{ minHeight: 0, background: '#000' }}>
-        <iframe key={machine} ref={iframeRef} src={src} title="mini-xroar"
+        <iframe key={bootKey} ref={iframeRef} src={src} title="mini-xroar"
           style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} />
       </div>
     </div>

@@ -55,13 +55,16 @@ export function encodeCas(files: CasFileInput[]): Buffer {
     pushBlock(0x00, nf);
     leader(LEADER_LEN); // gap between namefile and data
 
-    // Data blocks: up to 255 bytes each
+    // Data blocks: up to 255 bytes each, com um leader curto ENTRE eles (formato canônico que o
+    // XRoar lê; blocos colados quebravam o load em arquivos multi-bloco).
     for (let i = 0; i < f.payload.length; i += 255) {
       pushBlock(0x01, f.payload.subarray(i, Math.min(i + 255, f.payload.length)));
+      leader(2);
     }
 
     // EOF block
     pushBlock(0xFF, Buffer.alloc(0));
+    leader(2);
   }
 
   return Buffer.from(out);

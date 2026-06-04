@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { decodeWav, decodeCasTape, buildCleanCas, encodeCasToWav, extractCasFileData } from './converter/wav';
+import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, encodeCasToWav, resampleWav8 } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
@@ -516,11 +516,13 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
 // 3c0z2. K7 — decodifica um WAV de fita (FSK) com parâmetros ajustáveis (K8) → blocos/arquivos CAS.
 ipcMain.handle('k7-decode', async (_, wavBytes: Uint8Array, opts: any) => {
   try {
-    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
-    // não devolve os arrays grandes (bytes/blocks) ao renderer — só o resumo + a lista de arquivos.
+    // GAP-AWARE: recupera o programa INTEIRO de fitas com tela/loader (segmenta pelas pausas e
+    // concatena os blocos), descartando o ruído entre segmentos.
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     return {
       success: true, sampleRate: r.sampleRate, durationSec: r.durationSec, foundSync: r.foundSync,
-      inverted: r.inverted, bitCount: r.bitCount, byteCount: r.byteCount, blockCount: r.blocks.length, files: r.files,
+      segments: r.segments, multi: r.multi, bitCount: r.payload.length * 8, byteCount: r.payload.length,
+      blockCount: r.blocks.length, files: r.files,
     };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -529,9 +531,9 @@ ipcMain.handle('k7-decode', async (_, wavBytes: Uint8Array, opts: any) => {
 ipcMain.handle('k7-export-clean', async (_, wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   try {
-    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
-    if (!r.foundSync || !r.blocks.length) return { success: false, error: 'Não foi possível decodificar a fita (sem sync/blocos).' };
-    const cas = buildCleanCas(r.blocks);
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
+    if (!r.foundSync || !r.segs.length) return { success: false, error: 'Não foi possível decodificar a fita (sem sync/blocos).' };
+    const cas = buildFaithfulCas(r.segs);
     const out = format === 'wav' ? encodeCasToWav(cas, sampleRate || 22050) : cas;
     const ext = format === 'wav' ? 'wav' : 'cas';
     const res = await dialog.showSaveDialog(mainWindow, {
@@ -549,10 +551,10 @@ ipcMain.handle('k7-export-clean', async (_, wavBytes: Uint8Array, opts: any, for
 ipcMain.handle('k7-extract-file', async (_, wavBytes: Uint8Array, opts: any, fileIndex: number) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   try {
-    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     const f = r.files[fileIndex || 0];
     if (!f) return { success: false, error: 'Arquivo não encontrado na fita.' };
-    const data = Buffer.from(extractCasFileData(r.blocks, fileIndex || 0));
+    const data = Buffer.from(r.payload);
     const ext = f.ftype === 0 ? 'bas' : f.ftype === 2 ? 'bin' : 'dat';
     const res = await dialog.showSaveDialog(mainWindow, {
       title: 'Extrair arquivo da fita', defaultPath: (f.name || 'FILE').replace(/[^A-Za-z0-9._-]/g, '_') + '.' + ext,
@@ -567,20 +569,51 @@ ipcMain.handle('k7-extract-file', async (_, wavBytes: Uint8Array, opts: any, fil
 // 3c0z5. K6 — devolve os BYTES de um arquivo decodificado (sem diálogo) → p/ abrir no editor BASIC.
 ipcMain.handle('k7-file-bytes', async (_, wavBytes: Uint8Array, opts: any, fileIndex: number) => {
   try {
-    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     const f = r.files[fileIndex || 0];
     if (!f) return { success: false, error: 'Arquivo não encontrado na fita.' };
-    return { success: true, data: new Uint8Array(extractCasFileData(r.blocks, fileIndex || 0)), name: f.name, ftype: f.ftype };
+    return { success: true, data: new Uint8Array(r.payload), name: f.name, ftype: f.ftype };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
-// 3c0z5b. K2/UX — devolve o STREAM CRU completo (todos os bytes lidos da fita, do sync ao fim) +
-//   o TEMPO (s) de cada byte. O painel hexadecimal usa isso p/ revelar a leitura conforme o playhead
-//   avança por TODA a fita (header → tela/loader → turbo), não só a parte padrão decodificada.
+// 3c0z5b. K2/UX — devolve o PROGRAMA (payload concatenado, gap-aware, SEM ruído) + o TEMPO (s) de
+//   cada byte. O painel hexadecimal revela conforme o playhead passa pelos segmentos de dados da
+//   fita (header → tela/loader → programa), pulando as pausas (hiss).
 ipcMain.handle('k7-stream', async (_, wavBytes: Uint8Array, opts: any) => {
   try {
-    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
-    return { success: true, data: new Uint8Array(r.bytes), times: r.byteTimes, durationSec: r.durationSec };
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
+    return { success: true, data: new Uint8Array(r.payload), times: r.payloadTimes, durationSec: r.durationSec };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z5c. Extrair → CAS — devolve os BYTES de um .cas CANÔNICO (mesmo buildCleanCas do "→ CAS", que
+//   abre no XRoar): namefile + data blocks (com leaders entre eles) + EOF. Evita o encodeCas, cujos
+//   blocos colados (sem leader) o XRoar recusava em arquivos multi-bloco.
+ipcMain.handle('k7-cas-bytes', async (_, wavBytes: Uint8Array, opts: any) => {
+  try {
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
+    if (!r.foundSync || !r.segs.length) return { success: false, error: 'Sem dados decodificáveis na fita.' };
+    return { success: true, data: new Uint8Array(buildFaithfulCas(r.segs)), name: r.files[0]?.name || 'FILE' };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z5d. PREVIEW de tamanhos (sem salvar) — p/ o painel mostrar em TEMPO REAL o tamanho final de
+//   cada export conforme o usuário mexe nos ajustes (K8) e na taxa de kHz do WAV.
+ipcMain.handle('k7-export-sizes', async (_, wavBytes: Uint8Array, opts: any, rate: number) => {
+  try {
+    const buf = Buffer.from(wavBytes);
+    const r = decodeCasTapeGapAware(buf, opts || {});
+    const cas = r.foundSync && r.segs.length ? buildFaithfulCas(r.segs) : Buffer.alloc(0);
+    const wav = cas.length ? encodeCasToWav(cas, rate || 11025) : Buffer.alloc(0);
+    const fullBytes = Math.round((r.durationSec || 0) * (rate || 11025)) + 44; // fita completa reamostrada (8-bit mono)
+    return { success: true, casSize: cas.length, wavSize: wav.length, fullSize: fullBytes, programBytes: r.payload.length };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z5e. Fita completa REAMOSTRADA (8-bit mono na taxa escolhida) — encolhe mantendo todo o áudio.
+ipcMain.handle('k7-resample-wav', async (_, wavBytes: Uint8Array, rate: number) => {
+  try {
+    return { success: true, data: new Uint8Array(resampleWav8(Buffer.from(wavBytes), rate || 11025)) };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
@@ -589,10 +622,10 @@ ipcMain.handle('k7-stream', async (_, wavBytes: Uint8Array, opts: any) => {
 //   ML (tipo 2): embrulha no formato segmentado RS-DOS [00][len:2BE][load:2BE][data][FF][0000][exec:2BE].
 ipcMain.handle('k7-file-for-dsk', async (_, wavBytes: Uint8Array, opts: any, fileIndex: number) => {
   try {
-    const r = decodeCasTape(Buffer.from(wavBytes), opts || {});
+    const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     const f = r.files[fileIndex || 0];
     if (!f) return { success: false, error: 'Arquivo não encontrado na fita.' };
-    const raw = Buffer.from(extractCasFileData(r.blocks, fileIndex || 0));
+    const raw = Buffer.from(r.payload);
     let data = raw, ext = 'dat', fileType = 1;
     if (f.ftype === 0) { ext = 'bas'; fileType = 0; }
     else if (f.ftype === 2) {
