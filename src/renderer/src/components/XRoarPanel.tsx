@@ -74,6 +74,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [drives, setDrives] = useState<string[]>(['', '', '', '']);
   const [tapeName, setTapeName] = useState('');                                  // fita montada (.cas/.wav)
   const [tapeAutorun, setTapeAutorun] = useState(false);                          // CLOAD(M) automático: ON=XRoar roda sozinho; OFF=espera o usuário
+  const [binAutorun, setBinAutorun] = useState(true);                             // .bin AutoRun: ON=boot com o arquivo (-run); OFF=só carrega
+  const [bootProg, setBootProg] = useState<{ name: string; data: number[] } | null>(null); // programa de boot (p/ rodar .bin via argv)
+  const [bootProgKey, setBootProgKey] = useState(0);                              // bump → remonta o iframe bootando com o programa
+  const bootProgRef = useRef<{ name: string; data: number[] } | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [loaded, setLoaded] = useState(false); // config carregada? (evita salvar antes da carga)
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
@@ -92,7 +96,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // Toda a config visual vai no boot (URL). Trocar máquina ou saída de vídeo reinicia (rápido
   // e mostra a tela corretamente); brilho/contraste/cor são ao vivo (set_float ao arrastar).
   const src = new URL('xroar/xroar.html', window.location.href).href +
-    `?machine=${machine}&tvInput=${tvInput}&tvType=ntsc&ccr=${tvInput.startsWith('cmp') ? 1 : 0}&glFilter=nearest`;
+    `?machine=${machine}&tvInput=${tvInput}&tvType=ntsc&ccr=${tvInput.startsWith('cmp') ? 1 : 0}&glFilter=nearest${bootProg ? '&bootfile=1' : ''}`;
 
   const sendCmd = (fn: string, extra: Record<string, any> = {}) => {
     const w = iframeRef.current?.contentWindow;
@@ -155,6 +159,31 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     setDrives(d => { const n = [...d]; n[drive] = ''; return n; });
   };
 
+  // ─── Programa (.bin/.rom/.ccc/.hex/.sna) ───
+  //  • .bin/.hex (código de máquina): só roda automático via PARÂMETRO DE BOOT (xroar arquivo.bin).
+  //    Com ".bin AutoRun" ON, REMONTA o iframe bootando com o arquivo. OFF: só carrega na memória.
+  //  • .ccc/.rom (cartucho) / .sna (snapshot): o load_file em runtime (autorun) já mapeia e roda.
+  const openProgram = async () => {
+    try {
+      const res = await window.cocoApi.xroarPickFile('program');
+      if (res?.cancelled) return;
+      if (!res?.success) { onLog?.(`XRoar: ${res?.error}`, `XRoar: ${res?.error}`, 'error'); return; }
+      const e = (res.ext || '').toLowerCase();
+      const isBin = e === 'bin' || e === 'hex';
+      const arr = Array.from(new Uint8Array(res.data));
+      if (isBin && binAutorun) {
+        bootProgRef.current = { name: res.name, data: arr };
+        setBootProg({ name: res.name, data: arr });
+        setBootProgKey(k => k + 1);                                       // remonta o iframe (bootfile=1) → boot com o programa
+        onLog?.(`Programa (boot): ${res.name}`, `Program (boot): ${res.name}`, 'info');
+      } else {
+        sendCmd('load_file', { fileName: res.name, fileData: arr, loadType: (isBin && !binAutorun) ? 0 : 1, drive: 0 });
+        onLog?.(binAutorun ? `Programa: ${res.name}` : `Programa anexado: ${res.name}`, binAutorun ? `Program: ${res.name}` : `Program attached: ${res.name}`, 'info');
+        setTimeout(focusEmu, 60);
+      }
+    } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
+  };
+
   // Controles de imagem AO VIVO. Fonte XRoar (wasm.c + vo_render.c): tags 'brightness',
   // 'contrast', 'saturation' são INTEIROS 0–100 (neutro 50) → enviar por set_INT (não float,
   // senão o XRoar lê o ponteiro de float como lixo e zera o vídeo).
@@ -172,6 +201,11 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       const d = e.data;
       if (!d || typeof d.type !== 'string' || !d.type.startsWith('xroar')) return;
       if (d.type === 'xroar-ready') { setReady(true); setPaused(false); setStatus(t('pronto', 'ready')); }
+      else if (d.type === 'xroar-need-boot-file') {
+        // O iframe (bootfile=1) está esperando o programa p/ bootar com ele (-run) → envia.
+        const bp = bootProgRef.current;
+        if (bp) e.source && (e.source as Window).postMessage({ type: 'xroar-boot-file', name: bp.name, data: bp.data }, '*');
+      }
       else if (d.type === 'xroar-error') onLog?.(`XRoar: ${d.text}`, `XRoar: ${d.text}`, 'error');
       else if (d.type === 'xroar-status' && d.text) setStatus(String(d.text));
     };
@@ -233,7 +267,12 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // drives e marca NÃO-pronto até o novo boot reportar 'xroar-ready'. Assim um disco empurrado logo
   // após uma troca de máquina (ex.: "Testar Painel" de um disco Dragon com o XRoar em CoCo) ESPERA
   // a máquina certa subir antes de montar.
-  useEffect(() => { setDrives(['', '', '', '']); setTapeName(''); if (mounted) setReady(false); }, [machine, tvInput]);
+  useEffect(() => {
+    setDrives(['', '', '', '']); setTapeName('');
+    // Remontagem (não a 1ª montagem) limpa as drives → re-aplica o disco/texto pendente no novo boot,
+    // senão a imagem some do emulador (mas o nome ficava no D1) e o usuário tinha que testar 2×.
+    if (mounted) { setReady(false); lastLoadKey.current = 0; lastTypeKey.current = 0; }
+  }, [machine, tvInput, bootProgKey]);
 
   // Aplica TODAS as configurações ao vivo quando o emulador (re)fica pronto — o boot
   // começa nos defaults, então empurramos o estado atual (vídeo, cor, ccr, joysticks).
@@ -389,6 +428,21 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           </div>
         </div>
 
+        {/* PROGRAMA (.bin/.rom/.ccc/.hex/.sna) — carrega e roda direto (LOADM/EXEC automático) */}
+        <div className="glass-panel p-2.5 flex flex-col gap-1.5">
+          <div className={sectionTitle}>{t('Programa (.bin/.rom)', 'Program (.bin/.rom)')}</div>
+          <button onClick={openProgram} disabled={!ready} className="dsk-tool flex items-center gap-1.5 justify-start" style={{ padding: '3px 7px' }}
+            title={t('Abrir e RODAR um programa (.bin/.rom/.ccc/.hex/.sna) — o XRoar detecta o formato e executa (LOADM/EXEC automático).', 'Open and RUN a program (.bin/.rom/.ccc/.hex/.sna) — XRoar detects the format and executes it (LOADM/EXEC auto).')}>
+            <FolderOpen size={13} /><span className="text-[10px] font-bold">{t('Abrir e rodar .bin/.rom', 'Open & run .bin/.rom')}</span>
+          </button>
+          <button onClick={() => setBinAutorun(v => !v)} className="dsk-tool flex items-center gap-1.5 justify-start" style={{ padding: '3px 7px', color: binAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
+            title={t('.bin AutoRun. LIGADO: .bin/.hex bootam o XRoar com o arquivo (xroar arquivo.bin) e RODAM sozinhos. DESLIGADO: só carregam na memória (você roda com EXEC). (.ccc/.rom/.sna sempre rodam.)', '.bin AutoRun. ON: .bin/.hex boot XRoar with the file (xroar file.bin) and RUN automatically. OFF: just load into memory (run with EXEC). (.ccc/.rom/.sna always run.)')}>
+            {binAutorun ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
+            <span className="text-[10px] font-bold">.bin AutoRun {binAutorun ? t('lig.', 'on') : t('desl.', 'off')}</span>
+          </button>
+          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM (cartucho) e .SNA rodam direto. .BIN de máquina precisa bootar com o arquivo (AutoRun) p/ executar.', '.CCC/.ROM (cartridge) and .SNA run directly. Machine .BIN must boot with the file (AutoRun) to execute.')}</div>
+        </div>
+
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
           <div className={sectionTitle}>{t('Joystick / teclado', 'Joystick / keyboard')}</div>
           {joyRows.map(j => (
@@ -410,7 +464,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         {mounted ? (
           <iframe
             ref={iframeRef}
-            key={`${machine}|${tvInput}`}
+            key={`${machine}|${tvInput}|${bootProgKey}`}
             src={src}
             title="XRoar"
             allow="autoplay; gamepad"

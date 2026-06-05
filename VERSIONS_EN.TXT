@@ -10,6 +10,51 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.26 — 2026-06-05
+--------------------------------------------------------------------------------
+NEW — "→ No loader (autostart)": SoftKristian tapes (opening screen + loader) become a BIN/DSK that RUNS
+  • Tapes with a screen + tape-loader (e.g. QUASAR, STINGER, Zaxxon…) wouldn't run from disk: the
+    multi-stage loader depends on the tape. The app now DETECTS the SoftKristian loader, extracts the
+    addresses (screen → $0400, program → its original address, exec) and builds a .BIN/.DSK WITHOUT
+    the loader:
+      · the SCREEN goes straight to $0400; the PROGRAM stays at its ORIGINAL address (never relocated
+        — the 6809's absolute addressing would break); a short STUB reproduces the loader's "wait".
+      · real AUTOSTART: writes a trap into the close vector $0176 — when LOADM finishes, the game
+        STARTS BY ITSELF (no :EXEC), showing the opening screen. Just LOADM"NAME".
+  • "→ No loader" button in the K7 tab: dialog with the detected addresses (editable), start mode
+    (wait-key or ~10s delay) and target (.BIN or DSK pane). Warns if the program reaches the DOS
+    stack (~$7E00) or the reserved RAM ($0600–$25FF).
+  • Embedded "CoCo DCU" signature + "Revert" button: recognizes one of our files and recovers the
+    PURE PROGRAM as .CAS/.WAV (dropping screen/stub) — round-trip conversion.
+  • Validated on the 41-tape SoftKristian set: 23 recognized (19 full + 4 partial, flagged).
+  • GUARD: the "↔ DSK" and "→ XRoar" buttons now DETECT a loader tape and warn/redirect to "→ No
+    loader" (↔ DSK used to write the raw file at $009F = garbage that won't run).
+
+NEW — K7 tab (datacorder)
+  • "LINE/scope" waveform style: shows the SHAPE of the wave (the FSK square); the other styles
+    (bars/peak/RMS) are amplitude envelopes. The .cas auto-zooms on open, showing the square wave.
+  • "Default" button in Sound adjustments: resets to the safe default (Threshold 600µs, Amp 0, WAV 22kHz).
+  • mini-XRoar is now a COLLAPSIBLE column: closed shows just a button (centered); opening runs it;
+    closing turns it off. Size persists. (Frees the toolbar slot of the old "Mirror" button.)
+  • New icons: → CAS (tape), → WAV (waves), ↔ DSK (floppy); → BASIC/→ XRoar/Undo/Redo are icon-only.
+
+FIX — Tape export and reading
+  • "→ Full tape" now has a 22 kHz FLOOR: at 11 kHz the 2400 Hz FSK corrupted (lost bytes → I/O ERROR
+    on the CoCo). For a smaller, reliable WAV use the clean "→ WAV" (square wave).
+  • "Extract → BIN" now produces a RUNNABLE DECB LOADM file (with load/exec header) — the raw payload won't run.
+  • "(K8)" label removed from Sound adjustments and hints.
+
+NEW — XRoar tab
+  • ".bin AutoRun": opens a .bin/.rom as an XRoar boot parameter (xroar file.bin) and runs it automatically.
+  • CTRL+ENTER = full reset (standardized with the mini-XRoar).
+  • Fix: on emulator remount (machine/TV/boot change), the pending disk/tape is RE-MOUNTED on the new
+    boot (it used to vanish from the emulator while the name stayed in the drive — you had to test 2×).
+
+NEW — DSK tab
+  • "Quick .BAS View" magnifier: read-only modal with the detokenized BASIC program.
+  • Tape → DSK write: creates a blank disk if the pane is empty; confirms if a disk is already loaded.
+
+--------------------------------------------------------------------------------
 v1.0.25 — 2026-06-04
 --------------------------------------------------------------------------------
 NEW — GAP-AWARE decoding (forensic analysis of screen/loader tapes)

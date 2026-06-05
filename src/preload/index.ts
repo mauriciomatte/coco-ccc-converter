@@ -38,6 +38,10 @@ const api = {
   k7ResampleWav: (wavBytes: Uint8Array, rate: number) => ipcRenderer.invoke('k7-resample-wav', wavBytes, rate),
   k7FileForDsk: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-for-dsk', wavBytes, opts, fileIndex),
   k7CasToWav: (casBytes: Uint8Array, sampleRate?: number) => ipcRenderer.invoke('k7-cas-to-wav', casBytes, sampleRate),
+  loaderScan: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('loader-scan', wavBytes, opts),
+  loaderBuild: (wavBytes: Uint8Array, opts: any, params: any) => ipcRenderer.invoke('loader-build', wavBytes, opts, params),
+  loaderStrip: (binBytes: Uint8Array, name?: string) => ipcRenderer.invoke('loader-strip', binBytes, name),
+  loaderRevert: () => ipcRenderer.invoke('loader-revert'),
 
   imageAnalyze: () =>
     ipcRenderer.invoke('image-analyze'),

@@ -169,6 +169,20 @@
         async function startEmulator() {
             var loadedCount = await fetchAllRoms();
             var args = buildArgs();
+
+            // BOOT PROGRAM (.bin/.rom/.ccc/.sna): se bootfile=1, espera o app mandar o arquivo e o passa
+            // como POSICIONAL no argv (xroar arquivo.bin → carrega e RODA), escrevendo-o na FS no preRun.
+            var bootFile = null;
+            if (urlParams.get('bootfile') === '1') {
+                bootFile = await new Promise(function (resolve) {
+                    var done = false;
+                    var to = setTimeout(function () { if (!done) { done = true; _log('xroar-boot', 'boot-file: timeout'); resolve(null); } }, 6000);
+                    function h(e) { var d = e.data; if (d && d.type === 'xroar-boot-file' && d.name) { if (!done) { done = true; clearTimeout(to); window.removeEventListener('message', h); resolve({ name: d.name, data: d.data }); } } }
+                    window.addEventListener('message', h);
+                    try { if (window.parent !== window) window.parent.postMessage({ type: 'xroar-need-boot-file' }, '*'); } catch (e) { }
+                });
+                if (bootFile && bootFile.name) { args.push(bootFile.name); _log('xroar-boot', 'boot run: ' + bootFile.name); }
+            }
             _log('xroar-boot', 'Configuring Emscripten Module with ' + loadedCount + ' ROMs...');
             _log('xroar-boot', 'Args: ' + args.join(' '));
 
@@ -199,6 +213,10 @@
                         written++;
                     }
                     _log('xroar-boot', written + ' ROMs written to VFS');
+                    // grava o programa de boot na FS (mesmo nome que entrou no argv)
+                    if (bootFile && bootFile.name) {
+                        try { var bf = new Uint8Array(bootFile.data); for (var jj = 0; jj < dirs.length; jj++) { try { FS.writeFile(dirs[jj] + '/' + bootFile.name, bf); } catch (e) { } } _log('xroar-boot', 'boot file written: ' + bootFile.name + ' (' + bf.length + 'b)'); } catch (e) { _log('xroar-error', 'boot file write: ' + e.message); }
+                    }
                 }],
 
                 onRuntimeInitialized: function () {
@@ -1414,13 +1432,12 @@
 
         document.addEventListener('click', function () { document.getElementById('canvas').focus(); });
 
-        // ─── Atalho da mini-XRoar (aba K7): CTRL+ENTER → RESET TOTAL (hard reset) ──────
-        // Só na instância mini (?mini=1). Captura antes do emulador e evita o Enter no BASIC.
+        // ─── Atalho PADRÃO (mini-XRoar E aba XRoar): CTRL+ENTER → RESET TOTAL (hard reset) ──
+        // Vale em qualquer instância. Captura antes do emulador e evita o Enter cair no BASIC.
         window.addEventListener('keydown', function (e) {
-            if (urlParams.get('mini') !== '1') return;
             if (e.ctrlKey && (e.key === 'Enter' || e.keyCode === 13)) {
                 e.preventDefault(); e.stopPropagation();
-                try { wasm_hard_reset(); _log('xroar-status', 'mini: hard reset (Ctrl+Enter)'); } catch (err) { }
+                try { wasm_hard_reset(); _log('xroar-status', 'hard reset (Ctrl+Enter)'); } catch (err) { }
             }
         }, true);
 

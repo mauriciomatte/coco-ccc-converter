@@ -10,6 +10,50 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.26 — 2026-06-05
+--------------------------------------------------------------------------------
+NOVO — "→ Sem loader (autostart)": fitas SoftKristian (tela de abertura + loader) viram BIN/DSK que RODA
+  • Fitas com tela + loader de fita (ex.: QUASAR, STINGER, Zaxxon…) não rodavam em disco: o loader
+    multi-estágio depende da fita. Agora o app DETECTA o loader SoftKristian, extrai os endereços
+    (tela → $0400, programa → endereço original, exec) e monta um .BIN/.DSK SEM o loader:
+      · a TELA vai direto a $0400; o PROGRAMA fica no seu endereço ORIGINAL (nunca relocado — os
+        endereçamentos absolutos do 6809 quebrariam); um STUB curto reproduz a "espera" do loader.
+      · AUTOSTART real: grava um trap no vetor de close $0176 — ao terminar o LOADM, o jogo INICIA
+        SOZINHO (sem :EXEC), mostrando a tela de abertura. Basta LOADM"NOME".
+  • Botão "→ Sem loader" na aba K7: diálogo com os endereços detectados (editáveis), modo de início
+    (espera-tecla ou delay ~10s) e destino (.BIN ou painel DSK). Avisa se o programa encostar na pilha
+    do DOS (~$7E00) ou na RAM reservada ($0600–$25FF).
+  • Assinatura "CoCo DCU" embutida + botão "Reverter": reconhece um arquivo nosso e recupera o
+    PROGRAMA PURO em .CAS/.WAV (descartando tela/stub) — conversão de ida e volta.
+  • Validado nas 41 fitas do acervo SoftKristian: 23 reconhecidas (19 completas + 4 parciais sinalizadas).
+  • PROTEÇÃO: os botões "↔ DSK" e "→ XRoar" agora DETECTAM fita com loader e avisam/redirecionam para o
+    "→ Sem loader" (antes o ↔ DSK gravava o arquivo cru em $009F = lixo que não roda).
+
+NOVO — Aba K7 (datacorder)
+  • Estilo de onda "LINHA/osciloscópio": mostra a FORMA da onda (a quadrada da FSK); os outros estilos
+    (barras/pico/RMS) são envelopes de amplitude. O .cas auto-aproxima ao abrir, mostrando a quadrada.
+  • Botão "Padrão" nos Ajustes de som: volta tudo ao padrão seguro (Limiar 600µs, Amplitude 0, WAV 22kHz).
+  • mini-XRoar agora é uma COLUNA COLAPSÁVEL: fechada mostra só um botão (centralizado); ao abrir, roda;
+    ao fechar, desliga. Tamanho persistente. (Libera o espaço do antigo botão "Espelhar" na barra.)
+  • Ícones novos: → CAS (fita), → WAV (ondas), ↔ DSK (disquete); → BASIC/→ XRoar/Desfazer/Refazer só ícone.
+
+CORREÇÃO — Exportação e leitura de fita
+  • "→ Fita completa" agora tem PISO de 22 kHz: a 11 kHz a FSK de 2400 Hz corrompia (perdia bytes →
+    I/O ERROR no CoCo). Para um WAV menor e confiável, use o "→ WAV" limpo (onda quadrada).
+  • "Extrair → BIN" agora gera DECB LOADM RUNNABLE (com cabeçalho de carga/exec) — o payload cru não roda.
+  • Rótulo "(K8)" removido dos Ajustes de som e dos hints.
+
+NOVO — Aba XRoar
+  • ".bin AutoRun": abre um .bin/.rom como parâmetro do XRoar (xroar arquivo.bin) e roda automático.
+  • CTRL+ENTER = reset total (padronizado com o mini-XRoar).
+  • Correção: ao remontar o emulador (troca de máquina/TV/boot), o disco/fita pendente é RE-MONTADO no
+    novo boot (antes sumia do emulador, mas o nome ficava no drive — era preciso testar 2×).
+
+NOVO — Aba DSK
+  • Lupa "Visualização Rápida .BAS": modal somente-leitura com o programa BASIC detokenizado.
+  • Gravação fita → DSK: cria um disco em branco se o painel estiver vazio; confirma se já houver disco.
+
+--------------------------------------------------------------------------------
 v1.0.25 — 2026-06-04
 --------------------------------------------------------------------------------
 NOVO — Decodificação GAP-AWARE (perícia forense de fitas com tela/loader)

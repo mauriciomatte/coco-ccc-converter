@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2,
   Play, Pause, Square, Circle, Rewind, FastForward, AudioLines, ZoomIn, ZoomOut, FileCode2,
-  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical,
+  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare,
 } from 'lucide-react';
 import MiniXRoar from './MiniXRoar';
 
@@ -145,7 +145,7 @@ const WAVE_COLOR = 'rgba(255,140,26,0.5)';   // forma de onda
 const ACCENT = 'rgba(255,140,26,0.65)';      // detalhes (cassete, contador, drag)
 const ACCENT_DIM = 'rgba(255,140,26,0.4)';
 
-export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendToXroar, onSendToDsk, onLog }: {
+export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendToXroar, onSendToDsk, onLoaderToDsk, onLog }: {
   lang: string;
   active?: boolean;
   platform?: 'coco' | 'dragon';
@@ -153,6 +153,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   detokenize?: (bytes: Uint8Array) => { text: string; tokenized: boolean };
   onSendToXroar?: (wavBytes: Uint8Array, name: string) => void;
   onSendToDsk?: (wavBytes: Uint8Array, opts: any, fileIndex: number) => void;
+  onLoaderToDsk?: (data: Uint8Array, name: string) => void; // grava um .bin pronto (sem loader) num painel DSK
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
 }) {
   const pt = lang === 'pt-br';
@@ -163,14 +164,23 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [audio, setAudio] = useState<Audio | null>(null);
   const [err, setErr] = useState('');
   const [confirm, setConfirm] = useState<null | 'rec' | 'eject'>(null); // diálogo de confirmação (REC/Eject)
+  // Diálogo "→ Sem loader (autostart)": resultado do scan SoftKristian + parâmetros editáveis.
+  const [skDlg, setSkDlg] = useState<null | {
+    name: string; confidence: number; telaLen: number; hasScreen: boolean;
+    progLoad: number; progExec: number; progLen: number; progEnd: number;
+    warnStack: boolean; warnDos: boolean; notes: string[];
+    mode: 'key' | 'delay'; trap: boolean;
+  }>(null);
+  const [skBusy, setSkBusy] = useState(false);
   const hexScrollRef = useRef<HTMLDivElement | null>(null);                // auto-scroll do hex na revelação
   const basicScrollRef = useRef<HTMLDivElement | null>(null);              // auto-scroll do BASIC na revelação
   const revealCntRef = useRef(0);                                          // throttle da revelação dentro do tickLoop
   const fileBytesRef = useRef<Uint8Array | null>(null);                    // espelho de fileBytes p/ o tickLoop (evita closure obsoleto)
   const [extFmt, setExtFmt] = useState<'bin' | 'bas' | 'cas'>(cfg.extFmt ?? 'bin'); // formato de extração (Extrair)
-  const [wavRate, setWavRate] = useState<number>(cfg.wavRate ?? 11025);     // taxa (Hz) dos exports .WAV (menor = arquivo menor)
+  const [wavRate, setWavRate] = useState<number>(cfg.wavRate ?? 22050);     // taxa (Hz) dos exports .WAV (22k = confiável p/ a FSK; menor pode falhar ao carregar)
   const [sizes, setSizes] = useState<{ casSize: number; wavSize: number; fullSize: number; programBytes: number } | null>(null);
   const [progExpanded, setProgExpanded] = useState<boolean>(cfg.progExpanded ?? false); // painel Programa: detalhes recolhidos por padrão
+  const [waveStyle, setWaveStyle] = useState<'line' | 'bars' | 'filled' | 'rms'>(cfg.waveStyle ?? 'bars'); // estilo de desenho da onda
   // Pesos (flex-grow) dos painéis de baixo, ajustáveis por splitters: BASIC | HEX | mini-XRoar.
   const [panelW, setPanelW] = useState<{ basic: number; hex: number; mini: number }>(cfg.panelW ?? { basic: 1, hex: 1, mini: 2 });
   const panelsRowRef = useRef<HTMLDivElement | null>(null);
@@ -188,6 +198,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [dragOver, setDragOver] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);                                   // fator de playback EFETIVO (numérico)
+  const speedRef = useRef(1);                                              // espelho de speed p/ o tickLoop (evita closure obsoleto ao trocar a velocidade)
   const [speedKey, setSpeedKey] = useState<SpeedKey>(cfg.speedKey ?? 'epoca'); // opção escolhida no seletor
   const [epochRate, setEpochRate] = useState(1);                           // fator p/ a velocidade-padrão do CoCo (analisado)
   const [, setFrame] = useState(0);                                // bump para re-render por quadro
@@ -230,6 +241,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const anchorOffRef = useRef(0);                                  // posição no play
   const rafRef = useRef(0);
   const reelL = useRef(0), reelR = useRef(0);                      // ângulos dos carretéis
+  const recSamplesRef = useRef(0), recTimeRef = useRef(0);         // tempo de gravação (contagiros)
 
   const getCtx = () => { if (!ctxRef.current) ctxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)(); return ctxRef.current; };
 
@@ -237,8 +249,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const reset = () => { stop(); posRef.current = 0; lastPosRef.current = 0; reelL.current = 0; reelR.current = 0; setView({ start: 0, len: 1 }); };
   const loadBytes = async (bytes: Uint8Array, name: string) => {
     const ext = (name.split('.').pop() || '').toLowerCase();
-    const cas = ext === 'cas' || ext === 'c10';                            // .cas/.c10 = digital → fast-load + painéis instantâneos
-    srcBytesRef.current = bytes; setSrcExt(ext); instantRef.current = cas; setFastLoad(cas);
+    const cas = ext === 'cas' || ext === 'c10';                            // .cas/.c10 = digital → liga fast-load na mini (auto)
+    // A aba K7 SEMPRE toca o waveform (mesmo de um .cas convertido em WAV) → manter a animação do hex.
+    srcBytesRef.current = bytes; setSrcExt(ext); instantRef.current = false; setFastLoad(cas);
     reset(); setErr(''); setDecoded(null); setFileBytes(null); setFileMeta(null); setStreamBytes(null); streamRef.current = null; setHexRevealN(0); setSrcSize(bytes.length); setLoading(true); setProgress(0);
     // K2 — normaliza qualquer formato de fita para bytes de WAV e segue pelo MESMO pipeline.
     let wavBytes: Uint8Array;
@@ -260,6 +273,13 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (!p) { setLoading(false); setErr(t('Áudio inválido ou não-PCM (8/16-bit).', 'Invalid or non-PCM (8/16-bit) audio.')); return; }
     rawRef.current = wavBytes;
     setAudio({ name, ...p });
+    // .cas/.c10/.voc = tom digital SINTETIZADO sem pausas: no zoom completo vira um bloco sólido (todas
+    // as colunas vão de −amp a +amp). Auto-aproxima p/ uma janela curta (~1800 amostras, ~80 ms) logo após
+    // o leader, p/ as ONDAS QUADRADAS da FSK aparecerem de fato. O .wav (datacorder) mantém a visão geral.
+    if (ext === 'cas' || ext === 'c10' || ext === 'voc') {
+      const win = Math.min(1, 800 / Math.max(1, p.samples.length)); // ~800 amostras → ~1/px → o estilo "linha" traça a quadrada real
+      setView({ start: Math.min(0.04, Math.max(0, 1 - win)), len: win });
+    }
     const ctx = getCtx();
     const ab = ctx.createBuffer(1, p.samples.length, p.sampleRate);
     ab.copyToChannel(p.samples, 0);
@@ -267,7 +287,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     // Analisa a velocidade-padrão do CoCo p/ a opção "Época"; aplica já se ela estiver selecionada.
     const er = estimateEpochRate(p.samples, p.sampleRate);
     setEpochRate(er);
-    if (speedKey === 'epoca') setSpeed(er);
+    if (speedKey === 'epoca') { setSpeed(er); speedRef.current = er; }
     setLoading(false);
   };
   // K2/K8 — decodifica a fita (FSK → CAS) com os parâmetros atuais; re-roda quando `dec` muda (debounce).
@@ -297,7 +317,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       const r = await window.cocoApi.k7ExportClean(rawRef.current, dec, format, format === 'wav' ? wavRate : 0, audio?.name || 'fita');
       if (r?.cancelled) return;
       if (!r?.success) { setErr('Export: ' + r?.error); return; }
-      const extra = hasTurbo ? t(' — ATENÇÃO: parte da fita não decodificou (ajuste o som K8 ou use "→ Fita completa").', ' — NOTE: part of the tape did not decode (adjust sound K8 or use "→ Full tape").') : '';
+      const extra = hasTurbo ? t(' — ATENÇÃO: parte da fita não decodificou (ajuste o som ou use "→ Fita completa").', ' — NOTE: part of the tape did not decode (adjust the sound or use "→ Full tape").') : '';
       setErr(t(`Salvo: ${r.path} (${(r.size / 1024).toFixed(1)} KB)${extra}`, `Saved: ${r.path} (${(r.size / 1024).toFixed(1)} KB)${extra}`));
     } finally { setExporting(false); }
   };
@@ -309,14 +329,90 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     try {
       const base = (audio?.name || 'fita').replace(/\.[^.]+$/, '') || 'fita';
       // Reamostra a fita completa p/ a taxa escolhida (8-bit mono) — encolhe mantendo todo o áudio.
-      const rs = await window.cocoApi.k7ResampleWav(rawRef.current, wavRate);
+      // PORÉM a FSK de 2400 Hz precisa de >=22 kHz: abaixo disso a interpolação borra as bordas
+      // e o CoCo dá I/O ERROR (a 11 kHz o QUASAR perdia 1575 de 4670 B). Por isso forçamos o piso.
+      const fullRate = Math.max(wavRate, 22050);
+      if (fullRate !== wavRate) setErr(t(`Fita completa: taxa elevada p/ 22 kHz (a ${Math.round(wavRate / 1000)} kHz a FSK corrompe). Para um WAV menor e confiável use "→ WAV" limpo.`, `Full tape: rate raised to 22 kHz (at ${Math.round(wavRate / 1000)} kHz the FSK corrupts). For a smaller, reliable WAV use the clean "→ WAV".`));
+      const rs = await window.cocoApi.k7ResampleWav(rawRef.current, fullRate);
       const out = rs?.success ? new Uint8Array(rs.data) : rawRef.current;
-      const r = await window.cocoApi.saveCartridgeFile(out, `${base}_completa_${Math.round(wavRate / 1000)}k.wav`,
+      const r = await window.cocoApi.saveCartridgeFile(out, `${base}_completa_${Math.round(fullRate / 1000)}k.wav`,
         t('Salvar a FITA COMPLETA (.wav) — todo o áudio (tela/loader/programa)', 'Save the FULL TAPE (.wav) — all audio (screen/loader/program)'),
         [{ name: 'WAV', extensions: ['wav'] }, { name: 'All Files', extensions: ['*'] }]);
       if (r?.success) setErr(t(`Fita completa salva: ${r.filePath}`, `Full tape saved: ${r.filePath}`));
       else if (r?.error) setErr('Export: ' + r.error);
     } finally { setExporting(false); }
+  };
+  // ───────── LOADER SoftKristian → BIN/DSK sem loader (autostart) ─────────
+  // Detecta o loader na fita carregada e abre o diálogo de confirmação dos endereços.
+  const openLoaderDlg = async () => {
+    if (!rawRef.current) return;
+    setSkBusy(true); setErr('');
+    try {
+      const s = await window.cocoApi.loaderScan(rawRef.current, dec);
+      if (!s?.success) { setErr('Loader: ' + (s?.error || '?')); return; }
+      if (!s.detected) { setErr(t('Loader SoftKristian não reconhecido nesta fita (tela+loader). Sem assinatura.', 'SoftKristian loader (screen+loader) not recognized in this tape.')); return; }
+      setSkDlg({
+        name: s.name, confidence: s.confidence, telaLen: s.telaLen, hasScreen: s.hasScreen,
+        progLoad: s.progLoad, progExec: s.progExec, progLen: s.progLen, progEnd: s.progEnd,
+        warnStack: s.warnStack, warnDos: s.warnDos, notes: s.notes || [],
+        mode: 'key', trap: true,
+      });
+    } finally { setSkBusy(false); }
+  };
+  // Gera o BIN sem loader com os parâmetros do diálogo e salva (.bin) ou grava num painel DSK.
+  const buildLoader = async (target: 'bin' | 'dsk') => {
+    if (!rawRef.current || !skDlg) return;
+    setSkBusy(true);
+    try {
+      const params = { progLoad: skDlg.progLoad, progExec: skDlg.progExec, screenLoad: 0x0400, mode: skDlg.mode, trap: skDlg.trap, name: skDlg.name };
+      const b = await window.cocoApi.loaderBuild(rawRef.current, dec, params);
+      if (!b?.success) { setErr('Loader: ' + (b?.error || '?')); return; }
+      const data = new Uint8Array(b.data);
+      if (target === 'dsk') {
+        if (onLoaderToDsk) { onLoaderToDsk(data, b.name); setSkDlg(null); }
+        else setErr(t('Gravação em DSK indisponível.', 'DSK write unavailable.'));
+      } else {
+        const r = await window.cocoApi.saveCartridgeFile(data, `${b.name}.bin`,
+          t('Salvar BIN sem loader (autostart por LOADM)', 'Save no-loader BIN (LOADM autostart)'),
+          [{ name: 'Binary (.bin)', extensions: ['bin'] }, { name: 'All Files', extensions: ['*'] }]);
+        if (r?.success) { setErr(t(`Salvo: ${r.filePath} (${data.length} B) — rode com LOADM (sem :EXEC) ou no XRoar.`, `Saved: ${r.filePath} (${data.length} B) — run with LOADM (no :EXEC) or in XRoar.`)); setSkDlg(null); }
+        else if (r?.error) setErr('Loader: ' + r.error);
+      }
+    } finally { setSkBusy(false); }
+  };
+  // VOLTA: abre um .bin nosso (assinatura CDCU) e salva o programa puro em .cas/.wav.
+  const revertCdcu = async () => {
+    setSkBusy(true); setErr('');
+    try {
+      const r = await window.cocoApi.loaderRevert();
+      if (r?.cancelled) return;
+      if (!r?.success) { setErr('Reverter: ' + (r?.error || '?')); return; }
+      if (!r.found) { setErr(t('Arquivo sem assinatura CoCo DCU — nada a reverter.', 'File has no CoCo DCU signature — nothing to revert.')); return; }
+      setErr(t(`Programa puro salvo: ${r.path} (${r.progLen} B, carga $${(r.load >>> 0).toString(16).toUpperCase()})`, `Pure program saved: ${r.path} (${r.progLen} B, load $${(r.load >>> 0).toString(16).toUpperCase()})`));
+    } finally { setSkBusy(false); }
+  };
+  // ↔ DSK (arquivo lido cru): para fita SIMPLES grava direto; para fita com TELA+LOADER (SoftKristian),
+  // o arquivo cru iria para $009F e viraria LIXO → avisa e abre o diálogo "→ Sem loader".
+  const onDskClick = async () => {
+    if (!rawRef.current || !fileMeta || !onSendToDsk) return;
+    try {
+      const s = await window.cocoApi.loaderScan(rawRef.current, dec);
+      if (s?.detected) {
+        setErr(t('Esta fita tem TELA + LOADER: o ↔ DSK gravaria o arquivo cru (carrega em $009F = lixo, não roda). Use "→ Sem loader" 🚀 — abri o diálogo p/ você.', 'This tape has SCREEN + LOADER: ↔ DSK would write the raw file (loads at $009F = garbage, won\'t run). Use "→ No loader" 🚀 — I opened the dialog for you.'));
+        await openLoaderDlg();
+        return;
+      }
+    } catch { /* sem scan → segue o fluxo normal */ }
+    onSendToDsk(rawRef.current, { midUs: dec.midUs, minAmp: dec.minAmp }, 0);
+  };
+  // → XRoar: avisa (sem bloquear) que fita com loader só carrega o stub via CLOADM no deck de fita.
+  const onXroarClick = async () => {
+    if (!rawRef.current || !audio || !onSendToXroar) return;
+    try {
+      const s = await window.cocoApi.loaderScan(rawRef.current, dec);
+      if (s?.detected) setErr(t('Fita com tela+loader: no XRoar o CLOADM lê só o loader (multi-estágio). Para rodar o jogo use "→ Sem loader" 🚀 (BIN/DSK) ou o mini-XRoar (botão à direita) em tempo real.', 'Screen+loader tape: in XRoar, CLOADM reads only the loader (multi-stage). To run the game use "→ No loader" 🚀 (BIN/DSK) or the real-time mini-XRoar (button on the right).'));
+    } catch { /* ignore */ }
+    onSendToXroar(rawRef.current, audio.name);
   };
   // K5/K6 — extrai um arquivo decodificado da fita → PC, no formato escolhido (BIN cru / BAS texto / CAS fita).
   const extractFile = async (index: number) => {
@@ -327,8 +423,18 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const data = new Uint8Array(fb.data);
     try {
       if (extFmt === 'bin') {
-        const r = await window.cocoApi.saveCartridgeFile(data, `${safe}.bin`, t('Extrair bytes (.bin)', 'Extract bytes (.bin)'), [{ name: 'Binary (.bin)', extensions: ['bin'] }, { name: 'All Files', extensions: ['*'] }]);
-        if (r?.success) setErr(t(`Extraído: ${r.filePath} (${data.length} B)`, `Extracted: ${r.filePath} (${data.length} B)`));
+        // .bin RUNNÁVEL: ML (tipo 2) vai embrulhado em DECB LOADM ([00][len][load]…[FF][0000][exec]) —
+        // assim roda no XRoar (xroar arquivo.bin) e é LOADM-ável num CoCo real. O payload CRU (sem
+        // cabeçalho) NÃO roda: o emulador não sabe o endereço de carga/execução. BASIC/Data seguem crus.
+        let out = data;
+        if (fb.ftype === 2) {
+          const w = await window.cocoApi.k7FileForDsk(rawRef.current, dec, index);
+          if (w?.success) out = new Uint8Array(w.data);
+        }
+        const r = await window.cocoApi.saveCartridgeFile(out, `${safe}.bin`, t('Extrair bytes (.bin)', 'Extract bytes (.bin)'), [{ name: 'Binary (.bin)', extensions: ['bin'] }, { name: 'All Files', extensions: ['*'] }]);
+        // Fita com loader multi-segmento: um único .bin não reproduz o carregamento em estágios → sugerir CAS.
+        const warn = (decoded?.multi && fb.ftype === 2) ? t(' — fita com loader multi-segmento: se não rodar, use → CAS.', ' — multi-segment loader tape: if it does not run, use → CAS.') : '';
+        if (r?.success) setErr(t(`Extraído: ${r.filePath} (${out.length} B)${warn}`, `Extracted: ${r.filePath} (${out.length} B)${warn}`));
         else if (r?.error) setErr('Extrair: ' + r.error);
       } else if (extFmt === 'bas') {
         if (fb.ftype !== 0 || !detokenize) { setErr(t('BAS só vale para arquivos BASIC.', 'BAS only applies to BASIC files.')); return; }
@@ -409,9 +515,17 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       const proc = ctx.createScriptProcessor(4096, 1, 1);
       const gain = ctx.createGain(); gain.gain.value = 0;                    // muta o retorno (sem microfonia)
       const chunks: Float32Array[] = [];
-      proc.onaudioprocess = (e: any) => { const d = e.inputBuffer.getChannelData(0); chunks.push(new Float32Array(d)); let mx = 0; for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > mx) mx = a; } setVu(mx); };
+      recSamplesRef.current = 0; recTimeRef.current = 0;
+      proc.onaudioprocess = (e: any) => {
+        const d = e.inputBuffer.getChannelData(0); chunks.push(new Float32Array(d));
+        let mx = 0; for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > mx) mx = a; } setVu(mx);
+        // CONTAGIROS da gravação: tempo decorrido + gira os carretéis (a fita rodando ao gravar).
+        recSamplesRef.current += d.length; recTimeRef.current = recSamplesRef.current / ctx.sampleRate;
+        reelL.current += 7; reelR.current += 7; setFrame(f => f + 1);
+      };
       src.connect(proc); proc.connect(gain); gain.connect(ctx.destination);
       recRef.current = { stream, ctx, proc, src, gain, chunks, sampleRate: ctx.sampleRate };
+      reelL.current = 0; reelR.current = 0;
       setErr(''); setRecording(true);
     } catch (e: any) { setErr(t('REC: microfone/line-in negado ou indisponível. ', 'REC: mic/line-in denied or unavailable. ') + (e?.message || '')); }
   };
@@ -426,7 +540,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   };
   const toggleRec = () => { if (recording) stopRec(); else startRec(); };
   // REC pede confirmação de sobrescrita só ao INICIAR sobre uma onda não-vazia (parar não pergunta).
-  const onRecClick = () => { if (recording) { toggleRec(); return; } if (audio) setConfirm('rec'); else toggleRec(); };
+  const onRecClick = () => { if (recording) return; if (audio) setConfirm('rec'); else startRec(); }; // gravando → desabilitado (use o Stop)
   // EJECT: pede confirmação se há onda carregada (e avisa de edições não salvas); confirmado → limpa tudo.
   const onEjectClick = () => { if (audio) setConfirm('eject'); };
   const clearTape = () => {
@@ -463,7 +577,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const tickLoop = () => {
     const ctx = ctxRef.current;
     if (ctx && srcRef.current) {
-      const pos = Math.min(anchorOffRef.current + (ctx.currentTime - anchorCtxRef.current) * speed, audio?.durationSec ?? 0);
+      const pos = Math.min(anchorOffRef.current + (ctx.currentTime - anchorCtxRef.current) * speedRef.current, audio?.durationSec ?? 0);
       const dPos = pos - lastPosRef.current; lastPosRef.current = pos; posRef.current = pos;
       // carretéis: o de recolhimento (esq) cresce, o de alimentação (dir) encolhe; vel angular ∝ 1/raio
       const p = audio ? pos / audio.durationSec : 0;
@@ -490,7 +604,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const ctx = getCtx(), buf = bufRef.current; if (!buf) return;
     if (ctx.state === 'suspended') ctx.resume();
     const src = ctx.createBufferSource();
-    src.buffer = buf; src.playbackRate.value = speed; src.connect(ctx.destination);
+    src.buffer = buf; speedRef.current = speed; src.playbackRate.value = speed; src.connect(ctx.destination);
     src.onended = () => { /* fim natural tratado no loop */ };
     anchorCtxRef.current = ctx.currentTime; anchorOffRef.current = fromSec; lastPosRef.current = fromSec; posRef.current = fromSec;
     src.start(0, fromSec);
@@ -528,12 +642,12 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (srcRef.current) { try { srcRef.current.onended = null; srcRef.current.stop(); } catch { /* */ } srcRef.current = null; } cancelAnimationFrame(rafRef.current); setPlaying(false);
   }
   const pause = () => stop();
-  const stopReset = () => { stop(); posRef.current = 0; lastPosRef.current = 0; reelL.current = 0; reelR.current = 0; setFrame(f => f + 1); };
+  const stopReset = () => { if (recording) { stopRec(); return; } stop(); posRef.current = 0; lastPosRef.current = 0; reelL.current = 0; reelR.current = 0; setFrame(f => f + 1); }; // Stop também encerra a gravação
   const rewind = () => { const wasPlaying = playing; stop(); posRef.current = 0; setFrame(f => f + 1); if (wasPlaying) startSource(0); };
   const seek = (sec: number) => { const wasPlaying = playing; const s = Math.max(0, Math.min(sec, audio?.durationSec ?? 0)); stop(); posRef.current = s; lastPosRef.current = s; setFrame(f => f + 1); if (wasPlaying) startSource(s); };
   const rateFor = (k: SpeedKey) => k === 'epoca' ? epochRate : k === 'half' ? 0.5 : k === 'quarter' ? 0.25 : k === 'x2' ? 2 : k === 'x4' ? 4 : 1;
-  const changeSpeed = (k: SpeedKey) => { setSpeedKey(k); const sp = rateFor(k); setSpeed(sp); if (playing) { stop(); setTimeout(() => startSourceAt(posRef.current, sp), 0); } };
-  const startSourceAt = (fromSec: number, sp: number) => { const ctx = getCtx(), buf = bufRef.current; if (!buf) return; const src = ctx.createBufferSource(); src.buffer = buf; src.playbackRate.value = sp; src.connect(ctx.destination); anchorCtxRef.current = ctx.currentTime; anchorOffRef.current = fromSec; lastPosRef.current = fromSec; src.start(0, fromSec); srcRef.current = src; setPlaying(true); cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(tickLoop); };
+  const changeSpeed = (k: SpeedKey) => { setSpeedKey(k); const sp = rateFor(k); setSpeed(sp); speedRef.current = sp; if (playing) { stop(); setTimeout(() => startSourceAt(posRef.current, sp), 0); } };
+  const startSourceAt = (fromSec: number, sp: number) => { const ctx = getCtx(), buf = bufRef.current; if (!buf) return; const src = ctx.createBufferSource(); src.buffer = buf; speedRef.current = sp; src.playbackRate.value = sp; src.connect(ctx.destination); anchorCtxRef.current = ctx.currentTime; anchorOffRef.current = fromSec; lastPosRef.current = fromSec; src.start(0, fromSec); srcRef.current = src; setPlaying(true); cancelAnimationFrame(rafRef.current); rafRef.current = requestAnimationFrame(tickLoop); };
   useEffect(() => () => stop(), []);                               // limpa ao desmontar
 
   // ---- zoom / scroll / follow ----
@@ -577,24 +691,52 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const s = audio.samples;
     const vStart = Math.floor(view.start * s.length), vLen = Math.max(1, Math.floor(view.len * s.length));
     const step = vLen / w;
-    ctx.strokeStyle = WAVE_COLOR; ctx.lineWidth = 1; ctx.beginPath();
+    const Y = (v: number) => (1 - (v * 0.48 + 0.5)) * h;                  // amostra (-1..1) → y do canvas
+    // mede por coluna: min/máx, pico (|.|) e RMS (energia)
+    const mns: number[] = [], mxs: number[] = [], pks: number[] = [], rmss: number[] = [];
     for (let x = 0; x < w; x++) {
       const a = vStart + Math.floor(x * step), b = Math.max(a + 1, vStart + Math.floor((x + 1) * step));
-      let mn = 1, mx = -1;
-      for (let i = a; i < b && i < s.length; i++) { const v = s[i]; if (v < mn) mn = v; if (v > mx) mx = v; }
+      let mn = 1, mx = -1, sum = 0, cnt = 0;
+      for (let i = a; i < b && i < s.length; i++) { const v = s[i]; if (v < mn) mn = v; if (v > mx) mx = v; sum += v * v; cnt++; }
       if (mn > mx) { mn = 0; mx = 0; }
-      ctx.moveTo(x + 0.5, (1 - (mx * 0.48 + 0.5)) * h);
-      ctx.lineTo(x + 0.5, (1 - (mn * 0.48 + 0.5)) * h);
+      mns.push(mn); mxs.push(mx); pks.push(Math.max(Math.abs(mn), Math.abs(mx))); rmss.push(cnt ? Math.sqrt(sum / cnt) : 0);
     }
-    ctx.stroke();
+    if (waveStyle === 'line') {                                          // LINHA/OSCILOSCÓPIO: conecta as amostras REAIS
+      // É o ÚNICO estilo que mostra a FORMA da onda (a quadrada da FSK aparece quadrada) — os outros são
+      // só envelopes de amplitude. Com poucas amostras/coluna (zoom) traça amostra-a-amostra; com muitas,
+      // alterna mín/máx por coluna p/ não perder os picos (ainda parece traço, não bloco sólido).
+      ctx.strokeStyle = WAVE_COLOR; ctx.lineWidth = 1; ctx.lineJoin = 'round'; ctx.beginPath();
+      if (step <= 1.5) {                                                  // zoom: 1 ponto por amostra real
+        let first = true;
+        for (let i = vStart; i < vStart + vLen && i < s.length; i++) {
+          const x = ((i - vStart) / vLen) * w, y = Y(s[i]);
+          if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+        }
+      } else {                                                            // afastado: zig-zag mín/máx por coluna
+        ctx.moveTo(0.5, Y(mxs[0]));
+        for (let x = 0; x < w; x++) { ctx.lineTo(x + 0.5, Y(x % 2 ? mns[x] : mxs[x])); }
+      }
+      ctx.stroke();
+    } else if (waveStyle === 'bars') {                                   // BARRAS: linha min→máx por coluna
+      ctx.strokeStyle = WAVE_COLOR; ctx.lineWidth = 1; ctx.beginPath();
+      for (let x = 0; x < w; x++) { ctx.moveTo(x + 0.5, Y(mxs[x])); ctx.lineTo(x + 0.5, Y(mns[x])); }
+      ctx.stroke();
+    } else {                                                             // PREENCHIDO (pico) ou RMS (envelope de energia)
+      const amp = waveStyle === 'rms' ? rmss : pks;
+      ctx.fillStyle = 'rgba(255,140,26,0.45)'; ctx.beginPath();
+      ctx.moveTo(0, Y(amp[0]));
+      for (let x = 0; x < w; x++) ctx.lineTo(x + 0.5, Y(amp[x]));        // borda superior (+amp)
+      for (let x = w - 1; x >= 0; x--) ctx.lineTo(x + 0.5, Y(-amp[x]));  // borda inferior (-amp)
+      ctx.closePath(); ctx.fill();
+    }
     const sr = selRange();                                         // K3: realça a seleção
     if (sr) {
       const x1 = ((sr.a / s.length - view.start) / view.len) * w, x2 = ((sr.b / s.length - view.start) / view.len) * w;
       ctx.fillStyle = 'rgba(255,140,26,0.18)'; ctx.fillRect(Math.min(x1, x2), 0, Math.abs(x2 - x1), h);
     }
   };
-  useEffect(() => { draw(); }, [audio, view, sel]);
-  useEffect(() => { const box = waveBoxRef.current; if (!box) return; const ro = new ResizeObserver(() => draw()); ro.observe(box); return () => ro.disconnect(); }, [audio, view, sel]);
+  useEffect(() => { draw(); }, [audio, view, sel, waveStyle]);
+  useEffect(() => { const box = waveBoxRef.current; if (!box) return; const ro = new ResizeObserver(() => draw()); ro.observe(box); return () => ro.disconnect(); }, [audio, view, sel, waveStyle]);
 
   // playhead (fração 0..1 dentro da janela) + clique p/ seek
   const dur = audio?.durationSec || 1;
@@ -618,7 +760,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   // ---- helpers de render ----
   const GREEN = '#34d399';
   const tool = (icon: React.ReactNode, label: string, onClick?: () => void, enabled = false, title?: string): React.ReactNode => (
-    <button onClick={onClick} disabled={!enabled} className="dsk-tool flex items-center gap-1" style={{ color: enabled ? GREEN : undefined, opacity: enabled ? 1 : 0.45 }} title={title || label}>{icon}<span className="text-[11px]">{label}</span></button>
+    <button onClick={onClick} disabled={!enabled} className="dsk-tool flex items-center gap-1" style={{ color: enabled ? GREEN : undefined, opacity: enabled ? 1 : 0.45 }} title={title || label}>{icon}{label ? <span className="text-[11px]">{label}</span> : null}</button>
   );
   const ebtn = (icon: React.ReactNode, title: string, onClick: () => void, enabled: boolean): React.ReactNode => (
     <button onClick={onClick} disabled={!enabled} className="dsk-tool" style={{ padding: '3px 6px', color: enabled ? GREEN : undefined, opacity: enabled ? 1 : 0.45 }} title={title}>{icon}</button>
@@ -706,10 +848,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   useEffect(() => {
     try {
       localStorage.setItem('k7Settings', JSON.stringify({
-        midUs: dec.midUs, minAmp: dec.minAmp, speedKey, extFmt, mirror: mirrorXroar, panelW, wavRate, progExpanded,
+        midUs: dec.midUs, minAmp: dec.minAmp, speedKey, extFmt, mirror: mirrorXroar, panelW, wavRate, progExpanded, waveStyle,
       }));
     } catch { /* ignore */ }
-  }, [dec.midUs, dec.minAmp, speedKey, extFmt, mirrorXroar, panelW, wavRate, progExpanded]);
+  }, [dec.midUs, dec.minAmp, speedKey, extFmt, mirrorXroar, panelW, wavRate, progExpanded, waveStyle]);
   // PREVIEW em TEMPO REAL dos tamanhos finais (sem salvar): recalcula ao mexer no som (K8) ou no kHz.
   useEffect(() => {
     if (!rawRef.current || !decoded?.foundSync) { setSizes(null); return; }
@@ -793,20 +935,63 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         </div>
       )}
 
+      {/* DIÁLOGO "→ Sem loader (autostart)" — confirma/edita os endereços detectados e gera o BIN/DSK */}
+      {skDlg && (() => {
+        const hex = (n: number) => (n >>> 0).toString(16).toUpperCase().padStart(4, '0');
+        const setP = (k: 'progLoad' | 'progExec', v: string) => { const n = parseInt(v.replace(/[^0-9a-fA-F]/g, '') || '0', 16) & 0xFFFF; setSkDlg(d => d ? { ...d, [k]: n } : d); };
+        return (
+          <div style={{ position: 'absolute', inset: 0, zIndex: 60, background: 'rgba(2,6,12,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => !skBusy && setSkDlg(null)}>
+            <div className="glass-panel" style={{ padding: 18, width: 420, maxWidth: '92%', border: `1px solid ${ACCENT}` }} onClick={e => e.stopPropagation()}>
+              <div className="text-[13px] font-bold mb-1 flex items-center gap-2" style={{ color: ACCENT }}><Rocket size={15} /> {t('Gerar sem loader (autostart)', 'Build no-loader (autostart)')}</div>
+              <div className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>
+                {t('Loader SoftKristian', 'SoftKristian loader')} · <span className="font-mono">{skDlg.name}</span> · {t('confiança', 'confidence')} {(skDlg.confidence * 100).toFixed(0)}% · {skDlg.hasScreen ? t('tela 512B → $0400', 'screen 512B → $0400') : t('sem tela', 'no screen')}
+              </div>
+              <div className="grid grid-cols-2 gap-2 mb-2">
+                <label className="text-[10px]" style={{ color: 'var(--text-secondary)' }}>{t('Carga do programa', 'Program load')}
+                  <div className="flex items-center gap-1"><span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>$</span><input value={hex(skDlg.progLoad)} onChange={e => setP('progLoad', e.target.value)} maxLength={4} className="input-select text-[11px] font-mono" style={{ padding: '2px 4px', width: '100%' }} /></div>
+                </label>
+                <label className="text-[10px]" style={{ color: 'var(--text-secondary)' }}>{t('Execução (exec)', 'Exec address')}
+                  <div className="flex items-center gap-1"><span className="font-mono text-[11px]" style={{ color: 'var(--text-muted)' }}>$</span><input value={hex(skDlg.progExec)} onChange={e => setP('progExec', e.target.value)} maxLength={4} className="input-select text-[11px] font-mono" style={{ padding: '2px 4px', width: '100%' }} /></div>
+                </label>
+              </div>
+              <div className="text-[10px] font-mono mb-2" style={{ color: 'var(--text-muted)' }}>{t('programa', 'program')} {skDlg.progLen}B · ${hex(skDlg.progLoad)}–${hex(skDlg.progEnd)}</div>
+              {(skDlg.warnStack || skDlg.warnDos) && (
+                <div className="text-[10px] mb-2 leading-tight" style={{ color: '#fbbf24' }}>
+                  {skDlg.warnStack && <div>⚠ {t('o programa termina perto da pilha do DOS — se o .DSK travar, use o .BIN (XRoar não tem esse conflito).', 'program ends near the DOS stack — if the .DSK hangs, use the .BIN (XRoar has no such conflict).')}</div>}
+                  {skDlg.warnDos && <div>⚠ {t('o programa sobrepõe a RAM reservada do DOS ($0600–$25FF) — costuma rodar (o jogo assume a máquina), mas verifique.', 'program overlaps DOS-reserved RAM ($0600–$25FF) — usually runs (the game takes over), but verify.')}</div>}
+                </div>
+              )}
+              <div className="flex items-center gap-3 mb-3 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                <span>{t('Início:', 'Start:')}</span>
+                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={skDlg.mode === 'key'} onChange={() => setSkDlg(d => d ? { ...d, mode: 'key' } : d)} />{t('tecla', 'key')}</label>
+                <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={skDlg.mode === 'delay'} onChange={() => setSkDlg(d => d ? { ...d, mode: 'delay' } : d)} />{t('delay ~10s', 'delay ~10s')}</label>
+                <label className="flex items-center gap-1 cursor-pointer ml-auto"><input type="checkbox" checked={skDlg.trap} onChange={e => setSkDlg(d => d ? { ...d, trap: e.target.checked } : d)} />{t('autostart $0176', 'autostart $0176')}</label>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setSkDlg(null)} disabled={skBusy} className="dsk-tool text-[11px]" style={{ padding: '4px 10px' }}>{t('Cancelar', 'Cancel')}</button>
+                {onLoaderToDsk && <button onClick={() => buildLoader('dsk')} disabled={skBusy} className="dsk-tool text-[11px]" style={{ padding: '4px 10px', color: GREEN, fontWeight: 700 }}>{t('Gravar no DSK', 'Write to DSK')}</button>}
+                <button onClick={() => buildLoader('bin')} disabled={skBusy} className="dsk-tool text-[11px]" style={{ padding: '4px 10px', color: ACCENT, fontWeight: 700 }}>{t('Salvar .BIN', 'Save .BIN')}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* BARRA DE FERRAMENTAS */}
       <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border)] flex-wrap flex-shrink-0">
         {tool(<FolderOpen size={14} />, t('Abrir', 'Open'), openDialog, true, t('Abrir uma fita do PC (.wav, .cas, .voc, .c10) — também pode arrastar e soltar na onda', 'Open a tape from the PC (.wav, .cas, .voc, .c10) — you can also drag-and-drop onto the wave'))}
-        {tool(<Download size={14} />, '→ CAS', () => exportClean('cas'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .CAS LIMPO e minúsculo só com os dados decodificados (padrão CoCo/Dragon)', 'NORMALIZE: save a CLEAN, tiny .CAS with just the decoded data (standard CoCo/Dragon)'))}
-        {tool(<Download size={14} />, '→ WAV', () => exportClean('wav'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .WAV LIMPO a 11 kHz, bem menor que a captura original, que lê confiável no hardware', 'NORMALIZE: save a CLEAN 11 kHz .WAV, much smaller than the original capture, reliable on real hardware'))}
+        {tool(<CassetteTape size={14} />, '→ CAS', () => exportClean('cas'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .CAS LIMPO e minúsculo só com os dados decodificados (padrão CoCo/Dragon)', 'NORMALIZE: save a CLEAN, tiny .CAS with just the decoded data (standard CoCo/Dragon)'))}
+        {tool(<AudioWaveform size={14} />, '→ WAV', () => exportClean('wav'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .WAV LIMPO a 11 kHz, bem menor que a captura original, que lê confiável no hardware', 'NORMALIZE: save a CLEAN 11 kHz .WAV, much smaller than the original capture, reliable on real hardware'))}
         {tool(<Download size={14} />, t('→ Fita completa', '→ Full tape'), exportFullWav, !!audio && !exporting, t('Salvar a FITA COMPLETA (.wav do áudio original) — captura TUDO: header, tela, loader e jogo turbo. Use p/ fitas com tela de abertura, que rodam inteiras no XRoar.', 'Save the FULL TAPE (.wav of the original audio) — captures EVERYTHING: header, screen, loader and turbo game. Use for tapes with an opening screen that run fully in XRoar.'))}
-        {tool(<FileCode2 size={14} />, '→ BASIC', openInBasic, !!decoded?.files?.some((f: any) => f.ftype === 0), t('Abrir o programa BASIC lido da fita no editor BASIC (detokeniza automaticamente)', 'Open the BASIC program read from the tape in the BASIC editor (auto-detokenizes)'))}
-        {tool(<ArrowRightLeft size={14} />, '↔ DSK', () => { if (rawRef.current && fileMeta && onSendToDsk) onSendToDsk(rawRef.current, { midUs: dec.midUs, minAmp: dec.minAmp }, 0); }, !!(rawRef.current && fileMeta && onSendToDsk), t('Gravar o arquivo lido (BASIC/ML) num painel DSK', 'Write the read file (BASIC/ML) into a DSK pane'))}
-        {tool(<MonitorPlay size={14} />, '→ XRoar', () => { if (rawRef.current && audio && onSendToXroar) onSendToXroar(rawRef.current, audio.name); }, !!(rawRef.current && audio && onSendToXroar), t('Carregar esta fita no emulador XRoar', 'Load this tape into the XRoar emulator'))}
-        <button onClick={() => setMirrorXroar(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: mirrorXroar ? ACCENT : GREEN, fontWeight: mirrorXroar ? 700 : 400 }} title={t('Espelhar no mini-XRoar (mudo): ao dar PLAY, reseta e roda CLOAD/CLOADM numa tela embutida ao lado do hex', 'Mirror in the mini-XRoar (muted): on PLAY, resets and runs CLOAD/CLOADM in an embedded screen next to the hex')}><MonitorPlay size={14} /><span className="text-[11px]">{t('Espelhar', 'Mirror')}{mirrorXroar ? ' ✓' : ''}</span></button>
+        {tool(<FileCode2 size={14} />, '', openInBasic, !!decoded?.files?.some((f: any) => f.ftype === 0), t('Abrir o programa BASIC lido da fita no editor BASIC (detokeniza automaticamente)', 'Open the BASIC program read from the tape in the BASIC editor (auto-detokenizes)'))}
+        {tool(<><ArrowRightLeft size={14} /><Save size={13} /></>, '', onDskClick, !!(rawRef.current && fileMeta && onSendToDsk), t('Gravar o arquivo lido (BASIC/ML) num painel DSK. Fita com tela+loader → use "→ Sem loader".', 'Write the read file (BASIC/ML) into a DSK pane. Screen+loader tape → use "→ No loader".'))}
+        {tool(<MonitorPlay size={14} />, '', onXroarClick, !!(rawRef.current && audio && onSendToXroar), t('Carregar esta fita no emulador XRoar (fita com loader → use "→ Sem loader" ou o mini-XRoar)', 'Load this tape into the XRoar emulator (loader tape → use "→ No loader" or the mini-XRoar)'))}
+        {tool(<Rocket size={14} />, t('→ Sem loader', '→ No loader'), openLoaderDlg, !!rawRef.current && !skBusy, t('Fitas SoftKristian (tela + loader): gera um .BIN/.DSK que RODA SOZINHO com LOADM (autostart, sem :EXEC) — remove o loader de fita e mantém a tela de abertura', 'SoftKristian tapes (screen + loader): build a .BIN/.DSK that AUTOSTARTS with LOADM (no :EXEC) — removes the tape loader and keeps the opening screen'))}
+        {tool(<Undo2 size={14} />, t('Reverter', 'Revert'), revertCdcu, !skBusy, t('Abrir um .BIN nosso (assinatura CoCo DCU) e recuperar o PROGRAMA PURO em .CAS/.WAV (sem a tela/stub de disco)', 'Open one of our .BIN files (CoCo DCU signature) and recover the PURE PROGRAM as .CAS/.WAV (without the screen/disk stub)'))}
         {mirrorXroar && <button onClick={() => setFastLoad(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: fastLoad ? ACCENT : GREEN, fontWeight: fastLoad ? 700 : 400 }} title={t('Leitura rápida da mini-XRoar: LIGADO = carrega o .cas com fast-load (sem animação, p/ arquivos digitais). DESLIGADO = WAV em tempo real (com os gaps reais, p/ fitas com loader). Liga sozinho ao abrir um .cas.', 'mini-XRoar fast read: ON = loads the .cas with fast-load (no animation, for digital files). OFF = real-time WAV (with real gaps, for loader tapes). Auto-on when opening a .cas.')}>{fastLoad ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}<span className="text-[11px]">{t('Leitura rápida', 'Fast read')}</span></button>}
         {sep}
-        {tool(<Undo2 size={14} />, t('Desfazer', 'Undo'), undo, undoRef.current.length > 0, t('Desfazer a última edição da onda', 'Undo the last waveform edit'))}
-        {tool(<Redo2 size={14} />, t('Refazer', 'Redo'), redo, redoRef.current.length > 0, t('Refazer a edição desfeita', 'Redo the undone edit'))}
+        {tool(<Undo2 size={14} />, '', undo, undoRef.current.length > 0, t('Desfazer a última edição da onda', 'Undo the last waveform edit'))}
+        {tool(<Redo2 size={14} />, '', redo, redoRef.current.length > 0, t('Refazer a edição desfeita', 'Redo the undone edit'))}
         {sep}
         {ebtn(<Scissors size={14} />, t('Recortar a seleção (move p/ a área de transferência)', 'Cut the selection (moves it to the clipboard)'), doCut, !!selRange())}
         {ebtn(<Copy size={14} />, t('Copiar a seleção', 'Copy the selection'), doCopy, !!selRange())}
@@ -828,8 +1013,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
               <div style={{ position: 'absolute', top: 0, bottom: 0, left: `${playFrac * 100}%`, width: 1.5, background: '#fbbf24', boxShadow: '0 0 6px #fbbf24', pointerEvents: 'none' }} />
             )}
             {audio && (
-              <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', gap: 4, alignItems: 'center' }} onClick={e => e.stopPropagation()}>
+              <div style={{ position: 'absolute', top: 6, right: 6, display: 'flex', gap: 4, alignItems: 'center' }} onMouseDown={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
                 <span className="font-mono text-[10px] px-1 rounded" style={{ color: ACCENT, background: 'rgba(2,6,12,0.6)' }} title={t('Nível de zoom da onda', 'Waveform zoom level')}>{(1 / view.len).toFixed(1)}×</span>
+                <button onClick={() => setWaveStyle(s => s === 'line' ? 'bars' : s === 'bars' ? 'filled' : s === 'filled' ? 'rms' : 'line')} className="dsk-tool" style={{ padding: '2px 5px', fontSize: 9, minWidth: 30 }} title={t('Estilo da onda: Linha/osciloscópio (mostra a FORMA — a quadrada da FSK; aproxime o zoom) → Barras (min/máx) → Preenchido (pico) → RMS (energia)', 'Waveform style: Line/scope (shows the SHAPE — the FSK square; zoom in) → Bars (min/max) → Filled (peak) → RMS (energy)')}>{waveStyle === 'line' ? t('linha', 'line') : waveStyle === 'bars' ? t('barras', 'bars') : waveStyle === 'filled' ? t('pico', 'peak') : 'RMS'}</button>
                 <button onClick={() => zoom(0.7)} className="dsk-tool" style={{ padding: '2px 5px' }} title={t('Aproximar', 'Zoom in')}><ZoomIn size={12} /></button>
                 <button onClick={() => zoom(1.4)} disabled={view.len >= 0.999} className="dsk-tool" style={{ padding: '2px 5px' }} title={t('Afastar', 'Zoom out')}><ZoomOut size={12} /></button>
               </div>
@@ -885,12 +1071,12 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             <div className="flex items-center gap-1">
               {transBtn(<Rewind size={13} />, t('Rebobinar (volta ao início)', 'Rewind (back to start)'), rewind)}
               {(playing || starting) ? transBtn(<Pause size={13} />, starting ? t('Aguardando o XRoar (3s) — clique p/ cancelar', 'Waiting for XRoar (3s) — click to cancel') : t('Pausar a reprodução', 'Pause playback'), pause, true) : transBtn(<Play size={13} />, t('Tocar a fita (áudio)', 'Play the tape (audio)'), play)}
-              <button onClick={onRecClick} className="dsk-tool" style={{ padding: '3px 8px', color: '#f87171', fontWeight: recording ? 700 : 400 }} title={t('GRAVAR uma fita REAL pelo line-in/microfone do PC → vira um WAV carregado aqui. Clique de novo para parar.', 'RECORD a REAL tape via the PC line-in/mic → becomes a WAV loaded here. Click again to stop.')}>{recording ? <Square size={13} /> : <Circle size={13} />}</button>
-              {transBtn(<Square size={13} />, t('Parar e voltar ao início', 'Stop and rewind to start'), stopReset)}
+              <button onClick={onRecClick} disabled={recording} className="dsk-tool" style={{ padding: '3px 8px', color: '#f87171', fontWeight: recording ? 700 : 400, opacity: recording ? 0.45 : 1 }} title={recording ? t('Gravando… use o Stop ■ para encerrar.', 'Recording… use Stop ■ to finish.') : t('GRAVAR uma fita REAL pelo line-in/microfone do PC → vira um WAV carregado aqui. Pare no botão Stop ■.', 'RECORD a REAL tape via the PC line-in/mic → becomes a WAV loaded here. Stop with the Stop ■ button.')}><Circle size={13} /></button>
+              <button onClick={stopReset} disabled={!audio && !recording} className="dsk-tool" style={{ padding: '3px 8px', opacity: (audio || recording) ? 1 : 0.4, color: recording ? '#f87171' : ACCENT, fontWeight: recording ? 700 : 400 }} title={recording ? t('Parar a GRAVAÇÃO', 'Stop RECORDING') : t('Parar e voltar ao início', 'Stop and rewind to start')}><Square size={13} /></button>
               {transBtn(<FastForward size={13} />, t('Ir para o fim', 'Go to the end'), () => seek(dur))}
               <button onClick={onEjectClick} disabled={!audio} className="dsk-tool" style={{ padding: '3px 8px', opacity: audio ? 1 : 0.4, color: ACCENT }} title={t('Ejetar: limpa a onda carregada (pede confirmação)', 'Eject: clears the loaded waveform (asks for confirmation)')}><ArrowUpFromLine size={13} /></button>
             </div>
-            <span className="font-mono text-[12px] px-2 py-0.5 rounded" style={{ background: '#060a12', border: '1px solid var(--border)', color: starting ? '#fbbf24' : playing ? '#34d399' : ACCENT, minWidth: 64, textAlign: 'center' }} title={t('Contador (tempo) da fita', 'Tape counter (time)')}>{starting ? t('XRoar…', 'XRoar…') : fmtTime(posRef.current)}</span>
+            <span className="font-mono text-[12px] px-2 py-0.5 rounded" style={{ background: '#060a12', border: '1px solid var(--border)', color: recording ? '#f87171' : starting ? '#fbbf24' : playing ? '#34d399' : ACCENT, minWidth: 64, textAlign: 'center' }} title={t('Contador (tempo) da fita', 'Tape counter (time)')}>{recording ? fmtTime(recTimeRef.current) : starting ? t('XRoar…', 'XRoar…') : fmtTime(posRef.current)}</span>
             <label className="flex items-center gap-1 text-[10px] text-[var(--text-secondary)]" title={t(`"Época" = velocidade-padrão do CoCo (analisada da fita: ${epochRate.toFixed(2)}×). "Normal" = como gravado. -2×/-4× desaceleram; ×2/×4 aceleram.`, `"Época" = CoCo standard speed (analyzed from tape: ${epochRate.toFixed(2)}×). "Normal" = as recorded. -2×/-4× slow down; ×2/×4 speed up.`)}>{t('Velocidade', 'Speed')}
               <select value={speedKey} onChange={e => changeSpeed(e.target.value as SpeedKey)} className="input-select text-[10px]" style={{ padding: '1px 3px' }}>
                 {SPEED_OPTS.map(s => <option key={s.k} value={s.k}>{s.l}{s.k === 'epoca' ? ` (${epochRate.toFixed(2)}×)` : ''}</option>)}
@@ -910,7 +1096,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             <div className="glass-panel flex flex-col" style={{ flex: `${panelW.basic} 1 0%`, minWidth: 60, minHeight: 0, overflow: 'hidden' }}>
               <div className="px-2 py-1 border-b border-[var(--border)] text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] flex-shrink-0 flex justify-between"><span>{t('BASIC (detokenizado · 32 col)', 'BASIC (detokenized · 32 col)')}</span>{playing && revealFrac < 1 && <span style={{ color: '#34d399' }}>▶ {t('lendo…', 'reading…')}</span>}</div>
               <div ref={basicScrollRef} className="flex-1 overflow-auto p-2" style={{ minHeight: 0 }}>
-                {!fileBytes ? <span className="text-[11px] text-[var(--text-muted)]">{decoded?.foundSync === false ? t('Sem sync — ajuste o som (K8).', 'No sync — adjust the sound (K8).') : t('Decodifique uma fita para ver o BASIC.', 'Decode a tape to see the BASIC.')}</span>
+                {!fileBytes ? <span className="text-[11px] text-[var(--text-muted)]">{decoded?.foundSync === false ? t('Sem sync — ajuste o som.', 'No sync — adjust the sound.') : t('Decodifique uma fita para ver o BASIC.', 'Decode a tape to see the BASIC.')}</span>
                   : basicView?.kind === 'text' ? <pre className="text-[11px] font-mono whitespace-pre" style={{ color: 'var(--text-primary, #e5e5e5)', margin: 0 }}>{basicView.text}{playing && revealFrac < 1 && <span style={{ color: '#34d399' }}>▮</span>}</pre>
                     : basicView?.kind === 'ml' ? <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('Linguagem de Máquina. Detokenização apenas para BASIC.', 'Machine Language. Detokenization is for BASIC only.')}</span>
                       : <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('Não foi possível detokenizar este BASIC.', 'Could not detokenize this BASIC.')}</span>}
@@ -924,9 +1110,13 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
                   : <span className="text-[11px] text-[var(--text-muted)]">{t('Decodifique uma fita para ver os bytes.', 'Decode a tape to see the bytes.')}</span>}
               </div>
             </div>
-            {/* 3ª coluna: mini-XRoar (espelhamento opt-in, mudo) — roda CLOAD/CLOADM ao dar PLAY */}
+            {/* 3ª coluna: mini-XRoar (mudo) — colapsável. Colapsado = só o botão; expandido = roda CLOAD/CLOADM ao dar PLAY. Tamanho (panelW.mini) persiste. */}
             {mirrorXroar && splitter('hex', 'mini')}
             {mirrorXroar && <MiniXRoar lang={pt ? 'pt-br' : 'en-us'} platform={platform} active={active !== false} load={miniLoad} fast={fastLoad} flexGrow={panelW.mini} onCommandIssued={onMiniCommandIssued} onLog={onLog} />}
+            {/* Faixa de alternância sempre presente: abre/fecha o mini-XRoar (e o liga/desliga junto). */}
+            <div className="glass-panel flex items-center justify-center" style={{ flex: '0 0 30px', minWidth: 30, marginLeft: 4 }}>
+              <button onClick={() => setMirrorXroar(v => !v)} className="dsk-tool" style={{ padding: '6px 3px', color: mirrorXroar ? ACCENT : GREEN }} title={t('Espelhar no mini-XRoar (mudo): ao dar PLAY, reseta e roda CLOAD/CLOADM numa tela embutida ao lado do hex', 'Mirror in the mini-XRoar (muted): on PLAY, resets and runs CLOAD/CLOADM in an embedded screen next to the hex')}><ScreenShare size={16} /></button>
+            </div>
           </div>
         </div>
 
@@ -967,8 +1157,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             </div>
             {hasTurbo && (
               <div className="mt-1 text-[9px] leading-tight" style={{ color: '#fbbf24' }}
-                title={t('Parte da fita não foi decodificada (muito mais áudio que dados recuperados). Tente ajustar o som (K8: Limiar/Amplitude) p/ destravar segmentos, ou use "→ Fita completa" / rode no XRoar.', 'Part of the tape was not decoded (much more audio than recovered data). Try adjusting the sound (K8: Threshold/Amplitude) to unlock segments, or use "→ Full tape" / run in XRoar.')}>
-                ⚠ {t('decode incompleto: ajuste o som (K8) ou use "→ Fita completa"', 'incomplete decode: adjust sound (K8) or use "→ Full tape"')}
+                title={t('Parte da fita não foi decodificada (muito mais áudio que dados recuperados). Tente ajustar o som (Limiar/Amplitude) p/ destravar segmentos, ou use "→ Fita completa" / rode no XRoar.', 'Part of the tape was not decoded (much more audio than recovered data). Try adjusting the sound (Threshold/Amplitude) to unlock segments, or use "→ Full tape" / run in XRoar.')}>
+                ⚠ {t('decode incompleto: ajuste o som ou use "→ Fita completa"', 'incomplete decode: adjust the sound or use "→ Full tape"')}
               </div>
             )}
             {/* Linha de baixo: toggle de formato (BIN/BAS/CAS) + botão Extrair */}
@@ -1001,7 +1191,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             </>)}
           </div>
           <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>
-            <div className={panelTitle}>{t('Ajustes de som (K8)', 'Sound adjustments (K8)')}</div>
+            <div className={panelTitle}>{t('Ajustes de som', 'Sound adjustments')}</div>
             <div className="flex justify-between text-[11px] py-0.5" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('Taxa (kHz)', 'Rate (kHz)')}</span><span className="font-mono">{audio ? (audio.sampleRate / 1000).toFixed(1) : '—'}</span></div>
             <div className="block text-[10px] mt-1" style={{ color: 'var(--text-secondary)' }}>
               <div className="flex justify-between"><span>{t('Limiar (µs)', 'Threshold (µs)')}</span><span className="font-mono">{dec.midUs}</span></div>
@@ -1020,7 +1210,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
               </div>
             </div>
             <div className="flex items-center justify-between mt-1">
-              <button onClick={() => setDec({ midUs: 600, minAmp: 0 })} disabled={!audio} className="dsk-tool text-[10px]" style={{ padding: '2px 6px', color: audio ? '#34d399' : undefined }} title={t('Voltar os ajustes ao padrão', 'Reset adjustments to default')}>{t('Redefinir', 'Reset')}</button>
+              <button onClick={() => { setDec({ midUs: 600, minAmp: 0 }); setWavRate(22050); }} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: audio ? '#34d399' : undefined }} title={t('Voltar TODOS os ajustes de som ao padrão seguro (Limiar 600 µs, Amplitude 0, WAV 22 kHz) — evita parâmetros errados', 'Reset ALL sound settings to the safe default (Threshold 600 µs, Amplitude 0, WAV 22 kHz) — avoids wrong parameters')}><RotateCcw size={11} /> {t('Padrão', 'Default')}</button>
               <span className="text-[9px] font-mono text-[var(--text-muted)]">{decoded ? `${decoded.bitCount} bits · ${decoded.byteCount} B` : ''}</span>
             </div>
             <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t('Mexa no limiar/amplitude para destravar fitas difíceis (ex.: dinowars).', 'Adjust threshold/amplitude to unlock difficult tapes (e.g. dinowars).')}</div>

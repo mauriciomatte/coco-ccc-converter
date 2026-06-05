@@ -43,7 +43,8 @@ import {
   GitCompare,
   SaveAll,
   ArrowRightLeft,
-  MoreHorizontal
+  MoreHorizontal,
+  Search
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import XRoarPanel from './components/XRoarPanel';
@@ -501,6 +502,7 @@ export default function App() {
   const [basicSource, setBasicSource] = useState<BasicSrc | null>(null);
   // Modais do editor BASIC
   const [basicSaveConfirm, setBasicSaveConfirm] = useState<{ name: string; program: string; pane: 'A' | 'B' } | null>(null);
+  const [basQuickView, setBasQuickView] = useState<{ name: string; text: string; ok: boolean } | null>(null); // visualização rápida .BAS (somente leitura)
   const [basicOpenPending, setBasicOpenPending] = useState<{ text: string; label: string; source: BasicSrc | null; name: string } | null>(null);
   // Modal: o arquivo de origem sumiu / disco foi trocado ao tentar "Salvar" in-place.
   const [basicUpdateConfirm, setBasicUpdateConfirm] = useState<{ which: 'A' | 'B'; name: string; reason: 'missing' | 'diskChanged' } | null>(null);
@@ -536,6 +538,7 @@ export default function App() {
   const [compareData, setCompareData] = useState<{ nameA: string; dataA: Uint8Array; nameB: string; dataB: Uint8Array } | null>(null); // modal comparador de arquivos
   const [convertModal, setConvertModal] = useState<{ srcPane: 'A' | 'B'; name: string; loadAddr: number; execAddr: number; payload: Uint8Array; mode: 'direct' | 'reloc' } | null>(null); // modal conversor CoCo→Dragon
   const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
+  const [k7DskConfirm, setK7DskConfirm] = useState<{ which: 'A' | 'B'; wavBytes: Uint8Array; opts: any; fileIndex: number; prebuilt?: { data: Uint8Array; name: string } } | null>(null); // modal: fita → DSK quando o painel já tem um disco em uso
   const [reformatConfirm, setReformatConfirm] = useState<{ which: 'A' | 'B'; newFmt: 'coco35' | 'coco40'; count: number } | null>(null); // modal: recriar imagem noutro formato mantendo arquivos
   const [renameDsk, setRenameDsk] = useState<{ pane: 'A' | 'B'; entry: any; name: string; ext: string } | null>(null); // barra de renomear arquivo (RS-DOS/Dragon)
   const [gwBusy, setGwBusy] = useState<boolean>(false);
@@ -2261,27 +2264,62 @@ export default function App() {
            `Tape "${base}" sent to XRoar (use CLOAD/CLOADM/RUN in the emulator).`, 'success');
   };
 
-  // K5 ↔ DSK: decodifica o arquivo da fita e o grava no painel DSK ativo (BASIC cru / ML embrulhado RS-DOS).
+  // K5 ↔ DSK: decodifica o arquivo da fita e o grava num painel DSK. Se o painel estiver VAZIO, cria um
+  // disco em branco e grava direto; se já houver um disco em uso, pede confirmação (gravar no disco atual
+  // OU descartá-lo por um novo em branco — alterações não salvas se perdem).
   const handleK7ToDsk = async (wavBytes: Uint8Array, opts: any, fileIndex: number) => {
     const which = activePane;
     const pane = getPane(which);
-    if (!pane) { addLog(`Painel ${which} não tem disco carregado.`, `Pane ${which} has no disk loaded.`, 'warn'); return; }
-    if (pane.readOnly) { addLog(`Painel ${which} está somente-leitura.`, `Pane ${which} is read-only.`, 'warn'); return; }
+    if (pane?.readOnly) { addLog(`Painel ${which} está somente-leitura.`, `Pane ${which} is read-only.`, 'warn'); return; }
+    if (!pane) { await doK7ToDsk(which, wavBytes, opts, fileIndex, 'blank'); return; } // sem disco → cria em branco e grava
+    setK7DskConfirm({ which, wavBytes, opts, fileIndex });                              // disco em uso → confirmar destino
+  };
+  // Executa a gravação fita → DSK no destino escolhido: 'current' grava no disco já aberto do painel;
+  // 'blank' cria um disco novo em branco (no formato do painel) — descartando o conteúdo atual do painel.
+  const doK7ToDsk = async (which: 'A' | 'B', wavBytes: Uint8Array, opts: any, fileIndex: number, mode: 'current' | 'blank', prebuilt?: { data: Uint8Array; name: string }) => {
     try {
-      const prep = await window.cocoApi.k7FileForDsk(wavBytes, opts, fileIndex);
+      // prebuilt = um .bin DECB já pronto (ex.: "sem loader"); senão decodifica o arquivo da fita.
+      const prep = prebuilt
+        ? { success: true, name: prebuilt.name, ext: 'bin', fileType: 2, asciiFlag: 0, data: prebuilt.data, ftypeName: 'Machine (ML)' }
+        : await window.cocoApi.k7FileForDsk(wavBytes, opts, fileIndex);
       if (!prep.success) { addLog(`Enviar fita → DSK: ${prep.error}`, `Send tape → DSK: ${prep.error}`, 'error'); return; }
+      let buffer: Uint8Array;
+      if (mode === 'blank') {
+        const fmt = paneNewFormat[which];
+        const blank = fmt === 'dragon' && typeof window.cocoApi.dskNewBlankDragon === 'function'
+          ? await window.cocoApi.dskNewBlankDragon()
+          : await window.cocoApi.dskNewBlank(fmt === 'coco40' ? 40 : 35);
+        if (!blank.success) { addLog(`Novo disco: ${blank.error}`, `New disk: ${blank.error}`, 'error'); return; }
+        buffer = new Uint8Array(blank.image);
+        const lbl = fmt === 'dragon' ? 'Dragon 40T' : fmt === 'coco40' ? 'CoCo 40T' : 'CoCo 35T';
+        addLog(`Disco novo em branco (${lbl}) criado no Painel ${which} para receber a fita.`, `New blank ${lbl} disk created in Pane ${which} to receive the tape.`, 'info');
+      } else {
+        const pane = getPane(which);
+        if (!pane) { await doK7ToDsk(which, wavBytes, opts, fileIndex, 'blank', prebuilt); return; }
+        buffer = pane.buffer;
+      }
       pushDskUndo();
-      const res = await window.cocoApi.dskAddBytes(pane.buffer, prep.name, prep.ext, prep.fileType, prep.asciiFlag, prep.data);
+      const res = await window.cocoApi.dskAddBytes(buffer, prep.name, prep.ext, prep.fileType, prep.asciiFlag, prep.data);
       if (res.success) {
         await refreshPane(which, res.image);
         markDirty(which);
         setActiveTab('dsk');
-        addLog(`"${prep.name}.${prep.ext}" (${prep.ftypeName}) gravado no Painel ${which}. Salve a imagem (.DSK).`,
-               `"${prep.name}.${prep.ext}" (${prep.ftypeName}) written to Pane ${which}. Save the .DSK image.`, 'success');
+        const runHint = prebuilt ? ` Rode com LOADM"${prep.name}" (sem :EXEC).` : '';
+        addLog(`"${prep.name}.${prep.ext}" (${prep.ftypeName}) gravado no Painel ${which}. Salve a imagem (.DSK).${runHint}`,
+               `"${prep.name}.${prep.ext}" (${prep.ftypeName}) written to Pane ${which}. Save the .DSK image.${prebuilt ? ` Run with LOADM"${prep.name}" (no :EXEC).` : ''}`, 'success');
       } else {
         addLog(`Enviar fita → DSK: ${res.error}`, `Send tape → DSK: ${res.error}`, 'error');
       }
     } catch (err: any) { addLog(`Enviar fita → DSK: ${err.message}`, `Send tape → DSK: ${err.message}`, 'error'); }
+  };
+  // K7 "→ Sem loader" → DSK: grava o .bin pronto (sem loader, com autostart) num painel, reusando o
+  // mesmo fluxo (cria disco em branco se vazio; confirma se já houver disco em uso).
+  const handleLoaderToDsk = async (data: Uint8Array, name: string) => {
+    const which = activePane;
+    const pane = getPane(which);
+    if (pane?.readOnly) { addLog(`Painel ${which} está somente-leitura.`, `Pane ${which} is read-only.`, 'warn'); return; }
+    if (!pane) { await doK7ToDsk(which, null as any, null, 0, 'blank', { data, name }); return; }
+    setK7DskConfirm({ which, wavBytes: null as any, opts: null, fileIndex: 0, prebuilt: { data, name } });
   };
   const requestLoadBasic = (newText: string, label: string, source: BasicSrc | null = null) => {
     const name = suggestNameFrom(source, label);
@@ -2378,6 +2416,22 @@ export default function App() {
       }
       requestLoadBasic(text, entry.fullName, { pane: selectedDsk.pane, entry, diskName: pane.fileName, containerIndex: pane.container?.index });
     } catch (err: any) { addLog(`Editar BAS: ${err.message}`, `Edit BAS: ${err.message}`, 'error'); }
+  };
+
+  // Visualização Rápida .BAS — abre um modal SOMENTE LEITURA com o programa detokenizado (não vai p/ o editor).
+  const handleDskQuickViewBas = async () => {
+    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo .BAS.', 'Select a .BAS file.', 'warn'); return; }
+    const entry = selectedDsk.entries[0];
+    if ((entry.ext || '').toUpperCase() !== 'BAS') { addLog('Selecione um arquivo .BAS.', 'Select a .BAS file.', 'warn'); return; }
+    const pane = getPane(selectedDsk.pane);
+    if (!pane) return;
+    try {
+      const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
+      if (!res.success) { addLog(`Visualizar BAS: ${res.error}`, `View BAS: ${res.error}`, 'error'); return; }
+      const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag, pane.format === 'dragon' ? 'dragon' : 'coco');
+      const ok = !(tokenized || !text.trim());
+      setBasQuickView({ name: entry.fullName, text: ok ? text : '', ok });
+    } catch (err: any) { addLog(`Visualizar BAS: ${err.message}`, `View BAS: ${err.message}`, 'error'); }
   };
 
   // Extrai o(s) arquivo(s) selecionado(s) de dentro da imagem para uma pasta do Windows (Salvar como).
@@ -4570,6 +4624,7 @@ export default function App() {
                   <button onClick={() => handleDskCopy(false)} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
                   <button onClick={openDskRename} disabled={selectedDsk.entries.length !== 1} title={currentLang === 'pt-br' ? 'Renomear o arquivo' : 'Rename the file'} aria-label={currentLang === 'pt-br' ? 'Renomear' : 'Rename'} className="dsk-tool"><Pencil size={15} /></button>
                   <button onClick={handleDskDelete} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
+                  <button onClick={handleDskQuickViewBas} disabled={(selectedDsk.entries[0].ext || '').toUpperCase() !== 'BAS'} title={t('Visualização Rápida .BAS', 'Quick .BAS View')} aria-label="Visualização Rápida .BAS" className="dsk-tool"><Search size={15} /></button>
                   <button onClick={handleDskEditBas} disabled={(selectedDsk.entries[0].ext || '').toUpperCase() !== 'BAS'} title={t('Editar .BAS no editor BASIC', 'Edit .BAS in the BASIC editor')} aria-label="Editar BAS" className="dsk-tool"><FileCode2 size={15} /></button>
                   <button onClick={handleDskExtractToPc} title={currentLang === 'pt-br' ? 'Extrair o(s) arquivo(s) selecionado(s) para uma pasta do Windows' : 'Extract the selected file(s) to a Windows folder'} aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'} className="dsk-tool"><Download size={15} /></button>
                   <button onClick={handleDskCompare} disabled={selectedDsk.entries.length !== 1} title={currentLang === 'pt-br' ? 'Comparar com um arquivo do PC (diff hexadecimal)' : 'Compare with a file from the PC (hex diff)'} aria-label={currentLang === 'pt-br' ? 'Comparar' : 'Compare'} className="dsk-tool"><GitCompare size={15} /></button>
@@ -4641,7 +4696,7 @@ export default function App() {
         <div style={{ display: activeTab === 'k7' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
           <K7Tab lang={currentLang} active={activeTab === 'k7'} platform={platform} onOpenBasic={handleK7OpenBasic}
             detokenize={(bytes) => decodeBasToText(bytes, undefined, platform === 'dragon' ? 'dragon' : 'coco')}
-            onSendToXroar={handleK7ToXroar} onSendToDsk={handleK7ToDsk} onLog={addLog} />
+            onSendToXroar={handleK7ToXroar} onSendToDsk={handleK7ToDsk} onLoaderToDsk={handleLoaderToDsk} onLog={addLog} />
         </div>
 
         {/* Aba OS-9 — sempre montada (display toggle) para NÃO perder a edição em memória ao trocar de aba */}
@@ -5233,6 +5288,37 @@ export default function App() {
         </div>
       )}
 
+      {/* Modal: fita K7 → DSK quando o painel já tem um disco em uso (gravar no atual ou criar um novo em branco) */}
+      {k7DskConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setK7DskConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Gravar fita no Painel ${k7DskConfirm.which}?` : `Write tape into Pane ${k7DskConfirm.which}?`}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `O Painel ${k7DskConfirm.which} já tem um disco em uso. Você pode adicionar o arquivo da fita a esse disco, ou descartá-lo e criar um disco novo em branco para receber a fita.`
+                : `Pane ${k7DskConfirm.which} already has a disk in use. You can add the tape file to that disk, or discard it and create a new blank disk to receive the tape.`}
+            </p>
+            <p className="text-[11px] text-amber-400/90 leading-relaxed">
+              {currentLang === 'pt-br'
+                ? '⚠ "Novo disco em branco" descarta a imagem atual do painel — alterações não salvas serão perdidas.'
+                : '⚠ "New blank disk" discards the pane\'s current image — unsaved changes will be lost.'}
+            </p>
+            <div className="flex justify-end gap-2 pt-1 flex-wrap">
+              <button onClick={() => setK7DskConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={() => { const c = k7DskConfirm; setK7DskConfirm(null); doK7ToDsk(c.which, c.wavBytes, c.opts, c.fileIndex, 'blank', c.prebuilt); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5">
+                <Plus size={13} /> {currentLang === 'pt-br' ? 'Novo disco em branco' : 'New blank disk'}
+              </button>
+              <button onClick={() => { const c = k7DskConfirm; setK7DskConfirm(null); doK7ToDsk(c.which, c.wavBytes, c.opts, c.fileIndex, 'current', c.prebuilt); }} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+                <SaveAll size={13} /> {currentLang === 'pt-br' ? 'Salvar no disco atual' : 'Save to current disk'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: recriar a imagem do painel noutro formato RS-DOS (35↔40) MANTENDO os arquivos. */}
       {reformatConfirm && (
         <div className="glass-modal-overlay" onClick={() => setReformatConfirm(null)}>
@@ -5275,6 +5361,25 @@ export default function App() {
                 <Save size={13} /> {currentLang === 'pt-br' ? 'Salvar' : 'Save'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Visualização Rápida .BAS — modal SOMENTE LEITURA */}
+      {basQuickView && (
+        <div className="glass-modal-overlay" onClick={() => setBasQuickView(null)}>
+          <div className="glass-panel p-4 flex flex-col gap-3" style={{ width: 640, maxWidth: '92%', height: '78vh' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="p-2 rounded-full bg-slate-800/60 text-[var(--primary)] flex-shrink-0"><Search size={18} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide flex-1 truncate">{currentLang === 'pt-br' ? 'Visualização Rápida .BAS' : 'Quick .BAS View'} — <span className="font-mono normal-case text-[var(--text-secondary)]">{basQuickView.name}</span></h3>
+              <button onClick={() => setBasQuickView(null)} className="dsk-tool" title={currentLang === 'pt-br' ? 'Fechar' : 'Close'}><X size={16} /></button>
+            </div>
+            <div className="flex-1 overflow-auto glass-panel" style={{ minHeight: 0, background: 'var(--bg-deep, #0a0f18)', padding: 12 }}>
+              {basQuickView.ok
+                ? <pre className="text-[12px] font-mono whitespace-pre-wrap" style={{ color: 'var(--text-primary, #e5e5e5)', margin: 0 }}>{basQuickView.text}</pre>
+                : <span className="text-[12px]" style={{ color: '#fbbf24' }}>{currentLang === 'pt-br' ? 'Não foi possível detokenizar este .BAS (formato tokenizado não suportado ou arquivo binário).' : 'Could not detokenize this .BAS (unsupported tokenized format or binary file).'}</span>}
+            </div>
+            <div className="text-[10px] text-[var(--text-muted)] flex-shrink-0">{currentLang === 'pt-br' ? 'Somente leitura. Para editar, use o botão de editar (código) na barra.' : 'Read-only. To edit, use the edit (code) button in the toolbar.'}</div>
           </div>
         </div>
       )}

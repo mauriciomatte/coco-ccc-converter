@@ -297,7 +297,8 @@ function segmentDataRegions(samples: Float32Array, sampleRate: number): Array<{ 
 
 export interface CasGapResult {
   sampleRate: number; durationSec: number; foundSync: boolean; segments: number; multi: boolean;
-  segs: CasBlock[][]; blocks: CasBlock[]; files: CasFileInfo[]; payload: number[]; payloadTimes: number[];
+  segs: CasBlock[][]; segTimes: Array<{ start: number; end: number }>;
+  blocks: CasBlock[]; files: CasFileInfo[]; payload: number[]; payloadTimes: number[];
 }
 
 /** K2 forense — decodificação GAP-AWARE: segmenta a fita pelas pausas (hiss), decodifica CADA
@@ -310,6 +311,7 @@ export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}):
   const regions = segmentDataRegions(samples, sampleRate);
   const pad = Math.floor(0.05 * sampleRate);
   const segs: CasBlock[][] = [];                                   // blocos POR SEGMENTO (preserva EOFs/ordem)
+  const segTimes: Array<{ start: number; end: number }> = [];     // tempo (s) de cada segmento usado → p/ reproduzir os gaps
   const payload: number[] = [], payloadTimes: number[] = [];
   let foundSync = false, usedSegments = 0;
   for (const reg of regions) {
@@ -334,13 +336,13 @@ export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}):
       }
       i++;
     }
-    if (segBlocks.length) { segs.push(segBlocks); foundSync = true; usedSegments++; }
+    if (segBlocks.length) { segs.push(segBlocks); segTimes.push({ start: reg.a / sampleRate, end: reg.b / sampleRate }); foundSync = true; usedSegments++; }
   }
   // Fallback: nada recuperado por segmento → decode contínuo (fita simples / sem gaps claros).
   if (!foundSync) {
     const c = decodeCasTape(wavBuffer, opts);
     const pay = extractCasFileData(c.blocks, 0);
-    return { sampleRate, durationSec, foundSync: c.foundSync, segments: regions.length, multi: false, segs: c.blocks.length ? [c.blocks] : [], blocks: c.blocks, files: c.files, payload: pay, payloadTimes: [] };
+    return { sampleRate, durationSec, foundSync: c.foundSync, segments: regions.length, multi: false, segs: c.blocks.length ? [c.blocks] : [], segTimes: [], blocks: c.blocks, files: c.files, payload: pay, payloadTimes: [] };
   }
   // `blocks` (achatado) p/ a lista de arquivos do painel: 1º namefile + todos os data + 1 EOF.
   const flat: CasBlock[] = [];
@@ -350,19 +352,21 @@ export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}):
     else if (bl.type === 0x01) flat.push(bl);
   }
   flat.push({ type: 0xFF, data: [], checksumOk: true });
-  return { sampleRate, durationSec, foundSync, segments: usedSegments, multi: usedSegments > 1, segs, blocks: flat, files: filesFromBlocks(flat), payload, payloadTimes };
+  return { sampleRate, durationSec, foundSync, segments: usedSegments, multi: usedSegments > 1, segs, segTimes, blocks: flat, files: filesFromBlocks(flat), payload, payloadTimes };
 }
 
 /** Reconstrói um .CAS FIEL à fita original multi-segmento: cada segmento ganha seu próprio leader
  *  + sync e mantém o EOF, exatamente como o loader multi-estágio espera ler (header pt.1, header
  *  pt.2/loader, tela, programa). É isto que faz o jogo carregar igual à fita no XRoar. */
-export function buildFaithfulCas(segs: CasBlock[][]): Buffer {
+export function buildFaithfulCas(segs: CasBlock[][], nameLeader = 128): Buffer {
   const out: number[] = [];
   const leader = (n: number) => { for (let k = 0; k < n; k++) out.push(0x55); };
   const block = (type: number, data: number[]) => { out.push(0x3c, type & 0xff, data.length & 0xff); let s = (type + data.length) & 0xff; for (const x of data) { out.push(x & 0xff); s = (s + x) & 0xff; } out.push(s & 0xff); };
   for (const sg of segs) {
     leader(128);                                                   // leader antes de CADA segmento (o loader re-sincroniza)
-    for (const bl of sg) { block(bl.type, bl.data); leader(bl.type === 0x00 ? 128 : 2); } // gap maior depois do namefile
+    // `nameLeader` (gap após o namefile): 128 p/ o .cas (fast-load ignora); maior p/ o WAV em tempo
+    // real, dando ao CoCo tempo de processar o namefile antes do 1º data block (fita simples).
+    for (const bl of sg) { block(bl.type, bl.data); leader(bl.type === 0x00 ? nameLeader : 2); }
   }
   leader(2);
   return Buffer.from(out);
@@ -402,21 +406,50 @@ export function buildCleanCas(blocks: CasBlock[]): Buffer {
   return Buffer.from(out);
 }
 
-/** K10/K5 (A2) — FSK encode: bytes CAS → WAV LIMPO (onda quadrada, 8-bit mono, taxa escolhida). */
-export function encodeCasToWav(casBytes: Uint8Array | number[], sampleRate = 22050): Buffer {
-  const cyc1 = Math.max(2, Math.round(sampleRate / 2400)), cyc0 = Math.max(2, Math.round(sampleRate / 1200)); // amostras/ciclo
+const PCM_SILENCE = 128;                                            // 8-bit mid = silêncio
+/** bytes CAS → PCM 8-bit (FSK onda quadrada), SEM cabeçalho WAV. */
+function casToPcm(casBytes: Uint8Array | number[], sampleRate: number): number[] {
+  const cyc1 = Math.max(2, Math.round(sampleRate / 2400)), cyc0 = Math.max(2, Math.round(sampleRate / 1200));
   const pcm: number[] = [];
   const HI = 210, LO = 46;
   const emitCycle = (len: number) => { const half = len >> 1; for (let k = 0; k < len; k++) pcm.push(k < half ? HI : LO); };
   for (const byte of casBytes) for (let b = 0; b < 8; b++) emitCycle((byte >> b) & 1 ? cyc1 : cyc0); // LSB-first
-  const dataLen = pcm.length;
-  const buf = Buffer.alloc(44 + dataLen);
+  return pcm;
+}
+function pcm8ToWav(pcm: number[], sampleRate: number): Buffer {
+  const dataLen = pcm.length, buf = Buffer.alloc(44 + dataLen);
   buf.write('RIFF', 0); buf.writeUInt32LE(36 + dataLen, 4); buf.write('WAVE', 8);
   buf.write('fmt ', 12); buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(1, 22);
   buf.writeUInt32LE(sampleRate, 24); buf.writeUInt32LE(sampleRate, 28); buf.writeUInt16LE(1, 32); buf.writeUInt16LE(8, 34);
   buf.write('data', 36); buf.writeUInt32LE(dataLen, 40);
   for (let i = 0; i < dataLen; i++) buf[44 + i] = pcm[i] & 0xff;
   return buf;
+}
+
+/** K10/K5 (A2) — FSK encode: bytes CAS → WAV LIMPO (onda quadrada, 8-bit mono, taxa escolhida). */
+export function encodeCasToWav(casBytes: Uint8Array | number[], sampleRate = 22050): Buffer {
+  return pcm8ToWav(casToPcm(casBytes, sampleRate), sampleRate);
+}
+
+/** WAV LIMPO com TEMPOS reais (serve p/ fita simples E multi-segmento). Diferente do .cas (que não
+ *  guarda tempo), aqui inserimos SILÊNCIO entre os blocos p/ o CoCo ter tempo de processar antes de
+ *  ler o próximo — especialmente após o NAMEFILE (onde o BASIC/loader faz alocação) — e o silêncio
+ *  REAL medido entre os segmentos (motor parado, p/ desenhar a tela). Limpo, menor e nítido. */
+export function buildCleanWav(segs: CasBlock[][], segTimes: Array<{ start: number; end: number }>, sampleRate = 22050): Buffer {
+  const pcm: number[] = [];
+  const silence = (sec: number) => { const n = Math.max(0, Math.round(sec * sampleRate)); for (let k = 0; k < n; k++) pcm.push(PCM_SILENCE); };
+  for (let i = 0; i < segs.length; i++) {
+    // gap ANTES do segmento i: silêncio real medido (multi, motor parado) ou um lead-in no 1º.
+    const gap = i === 0 ? Math.max(0.2, Math.min(segTimes[0]?.start ?? 0.3, 0.5)) : Math.max(0.2, (segTimes[i]?.start ?? 0) - (segTimes[i - 1]?.end ?? 0));
+    silence(gap);
+    // Segmento = FSK contínua (leader + namefile + LEADER LONGO + data… + EOF). O leader longo após o
+    // namefile dá tempo p/ o CoCo processar antes do 1º data block, SEM isolar (mantém o sync) — em
+    // fita simples (sem loader) é o "inter-record gap" que faltava.
+    const seg = casToPcm(buildFaithfulCas([segs[i]], 320), sampleRate); // leader pós-namefile LONGO (≈inter-record gap)
+    for (let k = 0; k < seg.length; k++) pcm.push(seg[k]);          // (sem spread: arrays grandes estouram a pilha)
+  }
+  silence(0.2);
+  return pcm8ToWav(pcm, sampleRate);
 }
 
 /** Reamostra um WAV para `targetRate` em 8-bit mono (interpolação linear) — encolhe o arquivo

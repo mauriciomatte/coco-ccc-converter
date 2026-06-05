@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, encodeCasToWav, resampleWav8 } from './converter/wav';
+import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8 } from './converter/wav';
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
@@ -11,6 +11,8 @@ import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlan
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
+import { scanSoftKristian } from './converter/loaderscan';
+import { buildNoLoaderBin, readCdcuInfo, stripToProgram } from './converter/loaderpak';
 
 let mainWindow: BrowserWindow | null = null;
 let allowClose = false; // só true depois que o usuário confirma no modal de "Sair"
@@ -494,6 +496,11 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
         { name: 'Disco (.dsk/.vdk/.jvc/.dmk)', extensions: ['dsk', 'vdk', 'jvc', 'dmk'] },
         { name: 'All Files', extensions: ['*'] },
       ]
+    : kind === 'program'
+    ? [
+        { name: 'Programa (.bin/.rom/.ccc/.hex/.sna)', extensions: ['bin', 'rom', 'ccc', 'hex', 'sna'] },
+        { name: 'All Files', extensions: ['*'] },
+      ]
     : [
         { name: 'CoCo/Dragon', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'cas', 'wav', 'bin', 'rom', 'ccc', 'sna', 'asc', 'bas'] },
         { name: 'All Files', extensions: ['*'] },
@@ -534,7 +541,9 @@ ipcMain.handle('k7-export-clean', async (_, wavBytes: Uint8Array, opts: any, for
     const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     if (!r.foundSync || !r.segs.length) return { success: false, error: 'Não foi possível decodificar a fita (sem sync/blocos).' };
     const cas = buildFaithfulCas(r.segs);
-    const out = format === 'wav' ? encodeCasToWav(cas, sampleRate || 22050) : cas;
+    // WAV: SEMPRE com tempos reais (silêncio após namefile/entre blocos + gaps medidos) p/ rodar em
+    // tempo real, tanto fita simples quanto com loader. O .cas continua contíguo (fast-load).
+    const out = format === 'wav' ? buildCleanWav(r.segs, r.segTimes, sampleRate || 22050) : cas;
     const ext = format === 'wav' ? 'wav' : 'cas';
     const res = await dialog.showSaveDialog(mainWindow, {
       title: format === 'wav' ? 'Salvar WAV limpo (normalizado)' : 'Salvar CAS limpo (normalizado)',
@@ -604,8 +613,9 @@ ipcMain.handle('k7-export-sizes', async (_, wavBytes: Uint8Array, opts: any, rat
     const buf = Buffer.from(wavBytes);
     const r = decodeCasTapeGapAware(buf, opts || {});
     const cas = r.foundSync && r.segs.length ? buildFaithfulCas(r.segs) : Buffer.alloc(0);
-    const wav = cas.length ? encodeCasToWav(cas, rate || 11025) : Buffer.alloc(0);
-    const fullBytes = Math.round((r.durationSec || 0) * (rate || 11025)) + 44; // fita completa reamostrada (8-bit mono)
+    const wav = cas.length ? buildCleanWav(r.segs, r.segTimes, rate || 11025) : Buffer.alloc(0);
+    const fullRate = Math.max(rate || 11025, 22050); // FSK 2400Hz exige >=22kHz, senão corrompe (I/O ERROR)
+    const fullBytes = Math.round((r.durationSec || 0) * fullRate) + 44; // fita completa reamostrada (8-bit mono)
     return { success: true, casSize: cas.length, wavSize: wav.length, fullSize: fullBytes, programBytes: r.payload.length };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -650,6 +660,84 @@ ipcMain.handle('k7-cas-to-wav', async (_, casBytes: Uint8Array, sampleRate: numb
   try {
     const wav = encodeCasToWav(Buffer.from(casBytes), sampleRate || 22050);
     return { success: true, data: new Uint8Array(wav) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// ───────── LOADER SoftKristian → BIN/DSK sem loader (autostart) ─────────
+// 3c0z8. Detecta o loader SoftKristian numa fita e devolve os endereços (tela/programa/exec) + avisos
+//   de conflito de memória (pilha do DOS ~$7E00, RAM reservada $0600–$25FF). Ver loaderscan.ts.
+ipcMain.handle('loader-scan', async (_, wavBytes: Uint8Array, opts: any) => {
+  try {
+    const pr = scanSoftKristian(Buffer.from(wavBytes), opts || {});
+    if (!pr) return { success: true, detected: false, reason: 'no-sync' };
+    const progEnd = (pr.progLoad + pr.program.length) & 0xFFFFF;
+    return {
+      success: true, detected: pr.isSoftKristian, confidence: pr.confidence,
+      name: pr.name, telaLoad: pr.telaLoad, telaLen: pr.telaLen, hasScreen: pr.telaLen > 0,
+      progLoad: pr.progLoad, progExec: pr.progExec, progLen: pr.program.length, progEnd,
+      cloadmCalls: pr.cloadmCalls, notes: pr.notes,
+      warnStack: progEnd >= 0x7E00,                                  // encosta na pilha do sistema
+      warnDos: pr.progLoad < 0x2600 && progEnd > 0x0600,             // sobrepõe RAM reservada do DOS
+    };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z9. Monta o BIN sem loader (tela + programa + stub-autostart + assinatura CDCU) com os endereços
+//   confirmados/editados pelo usuário. Re-escaneia para obter os bytes de tela/programa.
+ipcMain.handle('loader-build', async (_, wavBytes: Uint8Array, opts: any, params: any) => {
+  try {
+    const pr = scanSoftKristian(Buffer.from(wavBytes), opts || {});
+    if (!pr || !pr.program.length) return { success: false, error: 'Loader não detectado nesta fita.' };
+    const bin = buildNoLoaderBin({
+      screen: pr.screen, screenLoad: params.screenLoad ?? pr.telaLoad,
+      program: pr.program, progLoad: params.progLoad ?? pr.progLoad,
+      origExec: params.progExec ?? pr.progExec,
+      mode: params.mode === 'delay' ? 'delay' : 'key', trap: params.trap !== false,
+    });
+    const name = (params.name || pr.name || 'GAME').replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'GAME';
+    return { success: true, data: new Uint8Array(bin), name };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z10. VOLTA (round-trip): reconhece a assinatura CDCU num .bin/.dsk-file e recupera o PROGRAMA PURO
+//   (sem tela/stub), reembrulhando em .CAS (ML) e .WAV para reexportar.
+ipcMain.handle('loader-strip', async (_, binBytes: Uint8Array, name: string) => {
+  try {
+    const buf = Buffer.from(binBytes);
+    const info = readCdcuInfo(buf);
+    if (!info) return { success: true, found: false };
+    const st = stripToProgram(buf);
+    if (!st) return { success: true, found: false };
+    const safe = (name || 'GAME').replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'GAME';
+    const cas = encodeCas([{ name: safe, fileType: 2, asciiFlag: 0, loadAddr: st.load, execAddr: st.exec, payload: st.program }]);
+    const wav = encodeCasToWav(cas, 22050);
+    return { success: true, found: true, name: safe, load: st.load, exec: st.exec, progLen: st.program.length, cas: new Uint8Array(cas), wav: new Uint8Array(wav) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z11. VOLTA com diálogos: abre um .bin, reconhece o CDCU e salva o PROGRAMA PURO em .cas ou .wav.
+ipcMain.handle('loader-revert', async () => {
+  try {
+    if (!mainWindow) return { success: false, error: 'Sem janela.' };
+    const open = await dialog.showOpenDialog(mainWindow, {
+      title: 'Reverter arquivo do app (CDCU) → programa puro', properties: ['openFile'],
+      filters: [{ name: 'CoCo binary (.bin)', extensions: ['bin'] }, { name: 'All Files', extensions: ['*'] }],
+    });
+    if (open.canceled || !open.filePaths[0]) return { cancelled: true };
+    const buf = fs.readFileSync(open.filePaths[0]);
+    if (!readCdcuInfo(buf)) return { success: true, found: false };
+    const st = stripToProgram(buf);
+    if (!st) return { success: true, found: false };
+    const base = path.basename(open.filePaths[0]).replace(/\.[^.]+$/, '');
+    const safe = (base || 'GAME').replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'GAME';
+    const save = await dialog.showSaveDialog(mainWindow, {
+      title: 'Salvar programa puro (.cas/.wav)', defaultPath: safe + '.cas',
+      filters: [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'WAV', extensions: ['wav'] }],
+    });
+    if (save.canceled || !save.filePath) return { cancelled: true };
+    const cas = encodeCas([{ name: safe, fileType: 2, asciiFlag: 0, loadAddr: st.load, execAddr: st.exec, payload: st.program }]);
+    fs.writeFileSync(save.filePath, /\.wav$/i.test(save.filePath) ? encodeCasToWav(cas, 22050) : cas);
+    return { success: true, found: true, path: save.filePath, name: safe, load: st.load, exec: st.exec, progLen: st.program.length };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
