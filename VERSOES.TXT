@@ -10,6 +10,27 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.27 — 2026-06-06
+--------------------------------------------------------------------------------
+NOVO — Botão "Recuperar" (aba K7): salva fitas degradadas que dão NO-SYNC
+  • Fitas de 40+ anos (e capturas imperfeitas) costumam estar LENTAS/esticadas: a FSK toda alongada faz
+    o limiar fixo de 600 µs errar a leitura dos bits → NO-SYNC mesmo com os dados intactos. O novo botão
+    "Recuperar" CALIBRA o limiar 1/0 automaticamente, por segmento, em vez de assumir velocidade fixa.
+  • Como funciona: para CADA segmento da fita mede o histograma dos períodos de onda e acha o limiar que
+    melhor separa os dois grupos (2400 Hz = bit 1 / 1200 Hz = bit 0) por OTSU; testa também uma varredura
+    de limiares (550–775 µs) com e sem corte de amplitude (hiss) e fica com o ajuste que recupera MAIS
+    blocos válidos (checksum OK). Auto-segue a velocidade real da fita (ex.: ~730 µs em vez de 600).
+  • Liga/desliga na aba K7 (ícone ✨); quando ativo, ignora o Limiar/Amplitude manuais e re-decodifica
+    sozinho. O fallback contínuo (fitas sem gaps claros) também passou a varrer limiares.
+  • Primeiro passo do ROADMAP de recuperação (R1): destrava fitas lentas/esticadas. Próximos passos
+    previstos: diagnóstico visual (mapa de blocos bom/ruim) e fusão de múltiplas capturas ("RAID de fita").
+
+CORREÇÃO — "Reverter"/"→ Sem loader": .WAV agora carrega na leitura padrão
+  • O .WAV gerado ao recuperar o programa puro (Reverter / loader-strip) era montado quase sem timing e
+    falhava no header na carga padrão. Agora é gerado em TEMPO REAL (lead-in + leader longo, via o mesmo
+    motor do "→ WAV"), lendo confiável no hardware/emulador. O .CAS continua fast-load (compacto).
+
+--------------------------------------------------------------------------------
 v1.0.26 — 2026-06-05
 --------------------------------------------------------------------------------
 NOVO — "→ Sem loader (autostart)": fitas SoftKristian (tela de abertura + loader) viram BIN/DSK que RODA

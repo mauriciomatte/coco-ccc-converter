@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2,
   Play, Pause, Square, Circle, Rewind, FastForward, AudioLines, ZoomIn, ZoomOut, FileCode2,
-  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare,
+  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles,
 } from 'lucide-react';
 import MiniXRoar from './MiniXRoar';
 
@@ -205,7 +205,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [view, setView] = useState({ start: 0, len: 1 });          // janela visível (frações 0..1)
   const [decoded, setDecoded] = useState<any>(null);               // K2: resultado do decode FSK→CAS
   const [decoding, setDecoding] = useState(false);
-  const [dec, setDec] = useState({ midUs: cfg.midUs ?? 600, minAmp: cfg.minAmp ?? 0 }); // K8: parâmetros de ajuste fino
+  const [dec, setDec] = useState<{ midUs: number; minAmp: number; recover?: boolean }>({ midUs: cfg.midUs ?? 600, minAmp: cfg.minAmp ?? 0 }); // K8: parâmetros de ajuste fino (+ recover R1)
   const [exporting, setExporting] = useState(false);
   const rawRef = useRef<Uint8Array | null>(null);                  // bytes crus do WAV (p/ decode/export)
   const [sel, setSel] = useState<{ a: number; b: number } | null>(null); // K3: seleção (índices de amostra)
@@ -1209,11 +1209,14 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
                 <button onClick={() => nudgeAmp(0.01)} disabled={!audio || dec.minAmp >= 0.3} className="dsk-tool" style={{ padding: '1px 3px', color: audio ? '#34d399' : undefined }} title={t('+0,01', '+0.01')}><Plus size={11} /></button>
               </div>
             </div>
-            <div className="flex items-center justify-between mt-1">
-              <button onClick={() => { setDec({ midUs: 600, minAmp: 0 }); setWavRate(22050); }} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: audio ? '#34d399' : undefined }} title={t('Voltar TODOS os ajustes de som ao padrão seguro (Limiar 600 µs, Amplitude 0, WAV 22 kHz) — evita parâmetros errados', 'Reset ALL sound settings to the safe default (Threshold 600 µs, Amplitude 0, WAV 22 kHz) — avoids wrong parameters')}><RotateCcw size={11} /> {t('Padrão', 'Default')}</button>
+            <div className="flex items-center justify-between mt-1 gap-1">
+              <div className="flex items-center gap-1">
+                <button onClick={() => { setDec({ midUs: 600, minAmp: 0 }); setWavRate(22050); }} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: audio ? '#34d399' : undefined }} title={t('Voltar TODOS os ajustes de som ao padrão seguro (Limiar 600 µs, Amplitude 0, WAV 22 kHz) — evita parâmetros errados', 'Reset ALL sound settings to the safe default (Threshold 600 µs, Amplitude 0, WAV 22 kHz) — avoids wrong parameters')}><RotateCcw size={11} /> {t('Padrão', 'Default')}</button>
+                <button onClick={() => setDec(d => ({ ...d, recover: !d.recover }))} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: dec.recover ? ACCENT : (audio ? '#34d399' : undefined), fontWeight: dec.recover ? 700 : 400 }} title={t('RECUPERAR fitas degradadas: calibra o limiar 1/0 automaticamente por segmento (Otsu + varredura) — destrava fitas lentas/esticadas que o limiar fixo erra. Ignora o Limiar/Amplitude manuais.', 'RECOVER degraded tapes: auto-calibrates the 1/0 threshold per segment (Otsu + sweep) — unlocks slow/stretched tapes the fixed threshold misses. Overrides the manual Threshold/Amplitude.')}><Sparkles size={11} /> {t('Recuperar', 'Recover')}{dec.recover ? ' ✓' : ''}</button>
+              </div>
               <span className="text-[9px] font-mono text-[var(--text-muted)]">{decoded ? `${decoded.bitCount} bits · ${decoded.byteCount} B` : ''}</span>
             </div>
-            <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t('Mexa no limiar/amplitude para destravar fitas difíceis (ex.: dinowars).', 'Adjust threshold/amplitude to unlock difficult tapes (e.g. dinowars).')}</div>
+            <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{dec.recover ? t('Recuperação ATIVA: limiar automático por segmento (para fitas degradadas/lentas).', 'RECOVERY ON: automatic per-segment threshold (for degraded/slow tapes).') : t('Mexa no limiar/amplitude para destravar fitas difíceis — ou ligue "Recuperar".', 'Adjust threshold/amplitude to unlock difficult tapes — or turn on "Recover".')}</div>
           </div>
 
           {/* EXPORTAR — taxa do WAV + tamanhos finais EM TEMPO REAL (atualizam ao mexer no som/kHz) */}

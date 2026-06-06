@@ -10,6 +10,29 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.27 — 2026-06-06
+--------------------------------------------------------------------------------
+NEW — "Recover" button (K7 tab): rescues degraded tapes that give NO-SYNC
+  • 40+ year-old tapes (and imperfect captures) are often SLOW/stretched: the whole FSK is lengthened, so
+    the fixed 600 µs threshold misreads the bits → NO-SYNC even when the data is intact. The new "Recover"
+    button auto-CALIBRATES the 1/0 threshold, per segment, instead of assuming a fixed speed.
+  • How it works: for EACH tape segment it measures the histogram of wave periods and finds the threshold
+    that best separates the two groups (2400 Hz = bit 1 / 1200 Hz = bit 0) via OTSU; it also tries a
+    threshold sweep (550–775 µs) with and without an amplitude (hiss) gate, and keeps the setting that
+    recovers the MOST valid blocks (checksum OK). It auto-follows the tape's real speed (e.g. ~730 µs
+    instead of 600).
+  • Toggle in the K7 tab (✨ icon); when on, it ignores the manual Threshold/Amplitude and re-decodes by
+    itself. The continuous fallback (tapes with no clear gaps) now sweeps thresholds too.
+  • First step of the recovery ROADMAP (R1): unlocks slow/stretched tapes. Planned next: visual diagnostics
+    (good/bad block map) and fusing multiple captures ("tape RAID").
+
+FIX — "Revert"/"→ No loader": .WAV now loads with the standard reader
+  • The .WAV produced when recovering the pure program (Revert / loader-strip) was built with almost no
+    timing and failed at the header on a standard load. It is now generated in REAL TIME (lead-in + long
+    leader, via the same engine as "→ WAV"), reading reliably on hardware/emulator. The .CAS stays
+    fast-load (compact).
+
+--------------------------------------------------------------------------------
 v1.0.26 — 2026-06-05
 --------------------------------------------------------------------------------
 NEW — "→ No loader (autostart)": SoftKristian tapes (opening screen + loader) become a BIN/DSK that RUNS

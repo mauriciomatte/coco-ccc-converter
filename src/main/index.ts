@@ -699,8 +699,22 @@ ipcMain.handle('loader-build', async (_, wavBytes: Uint8Array, opts: any, params
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
+// Embrulha um programa ML puro (load/exec) num "segmento" CAS (namefile + data 255 + EOF) para gerar
+// um WAV de TEMPO REAL via buildCleanWav (lead-in + leader longo). O .cas continua sendo fast-load;
+// o .wav passa a carregar na leitura padrão (antes o encodeCasToWav quase sem timing falhava no header).
+function mlProgramToSegs(name: string, load: number, exec: number, prog: Buffer): any[][] {
+  const nm = (name || 'GAME').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8).padEnd(8, ' ');
+  const nf: number[] = [];
+  for (let i = 0; i < 8; i++) nf.push(nm.charCodeAt(i));
+  nf.push(2, 0, 0, (exec >> 8) & 0xFF, exec & 0xFF, (load >> 8) & 0xFF, load & 0xFF); // ML, ascii=0, gap=0, exec, load
+  const blocks: any[] = [{ type: 0, data: nf, checksumOk: true }];
+  for (let i = 0; i < prog.length; i += 255) blocks.push({ type: 1, data: [...prog.subarray(i, Math.min(i + 255, prog.length))], checksumOk: true });
+  blocks.push({ type: 0xFF, data: [], checksumOk: true });
+  return [blocks];
+}
+
 // 3c0z10. VOLTA (round-trip): reconhece a assinatura CDCU num .bin/.dsk-file e recupera o PROGRAMA PURO
-//   (sem tela/stub), reembrulhando em .CAS (ML) e .WAV para reexportar.
+//   (sem tela/stub), reembrulhando em .CAS (ML, fast-load) e .WAV (tempo real) para reexportar.
 ipcMain.handle('loader-strip', async (_, binBytes: Uint8Array, name: string) => {
   try {
     const buf = Buffer.from(binBytes);
@@ -710,7 +724,7 @@ ipcMain.handle('loader-strip', async (_, binBytes: Uint8Array, name: string) => 
     if (!st) return { success: true, found: false };
     const safe = (name || 'GAME').replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'GAME';
     const cas = encodeCas([{ name: safe, fileType: 2, asciiFlag: 0, loadAddr: st.load, execAddr: st.exec, payload: st.program }]);
-    const wav = encodeCasToWav(cas, 22050);
+    const wav = buildCleanWav(mlProgramToSegs(safe, st.load, st.exec, Buffer.from(st.program)), [], 22050); // .wav = tempo real
     return { success: true, found: true, name: safe, load: st.load, exec: st.exec, progLen: st.program.length, cas: new Uint8Array(cas), wav: new Uint8Array(wav) };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -735,8 +749,11 @@ ipcMain.handle('loader-revert', async () => {
       filters: [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'WAV', extensions: ['wav'] }],
     });
     if (save.canceled || !save.filePath) return { cancelled: true };
-    const cas = encodeCas([{ name: safe, fileType: 2, asciiFlag: 0, loadAddr: st.load, execAddr: st.exec, payload: st.program }]);
-    fs.writeFileSync(save.filePath, /\.wav$/i.test(save.filePath) ? encodeCasToWav(cas, 22050) : cas);
+    const isWav = /\.wav$/i.test(save.filePath);
+    const out = isWav
+      ? buildCleanWav(mlProgramToSegs(safe, st.load, st.exec, Buffer.from(st.program)), [], 22050) // .wav = tempo real
+      : encodeCas([{ name: safe, fileType: 2, asciiFlag: 0, loadAddr: st.load, execAddr: st.exec, payload: st.program }]); // .cas = fast-load
+    fs.writeFileSync(save.filePath, out);
     return { success: true, found: true, path: save.filePath, name: safe, load: st.load, exec: st.exec, progLen: st.program.length };
   } catch (error: any) { return { success: false, error: error.message }; }
 });

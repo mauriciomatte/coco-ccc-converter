@@ -166,7 +166,36 @@ const CAS_TYPE_NAME: Record<number, string> = { 0: 'BASIC', 1: 'Data', 2: 'Machi
 
 export interface CasBlock { type: number; data: number[]; checksumOk: boolean; }
 export interface CasFileInfo { name: string; ftype: number; ftypeName: string; ascii: boolean; gapped: boolean; loadAddr: number; execAddr: number; sizeBytes: number; blocks: number; checksumOk: boolean; }
-export interface DecodeOpts { midUs?: number; minUs?: number; maxUs?: number; minAmp?: number; }
+export interface DecodeOpts { midUs?: number; minUs?: number; maxUs?: number; minAmp?: number; recover?: boolean; }
+
+/** R1 — RECUPERAÇÃO: calcula o limiar 1/0 a partir do HISTOGRAMA dos períodos por OTSU. As fitas
+ *  degradadas costumam estar LENTAS/esticadas (a FSK toda alongada) → o limiar fixo de 600µs erra.
+ *  O período tem dois grupos (2400Hz = bit 1, curto; 1200Hz = bit 0, longo), mas em fita ruim a
+ *  distribuição é LARGA/com jitter (não um bimodal limpo). Otsu acha o limiar que melhor SEPARA os
+ *  dois grupos (máxima variância entre-classes) — robusto a distribuição larga. Auto-calibra por
+ *  segmento, seguindo a velocidade real (ex.: dinowars → ~730µs em vez de 600). */
+function adaptiveThresholds(periods: number[]): { minUs: number; midUs: number; maxUs: number } | null {
+  const lo = 200, hi = 1350, bw = 10, n = Math.ceil((hi - lo) / bw);
+  const h = new Array(n).fill(0);
+  let total = 0;
+  for (const u of periods) if (u >= lo && u < hi) { h[Math.floor((u - lo) / bw)]++; total++; }
+  if (total < 40) return null;
+  const binC = (i: number) => lo + i * bw + bw / 2;
+  let sumAll = 0; for (let i = 0; i < n; i++) sumAll += binC(i) * h[i];
+  let wB = 0, sumB = 0, maxVar = -1, bestT = -1;                            // Otsu
+  for (let t = 0; t < n; t++) {
+    wB += h[t]; if (wB === 0) continue;
+    const wF = total - wB; if (wF === 0) break;
+    sumB += binC(t) * h[t];
+    const mB = sumB / wB, mF = (sumAll - sumB) / wF, d = mB - mF;
+    const v = wB * wF * d * d;
+    if (v > maxVar) { maxVar = v; bestT = t; }
+  }
+  if (bestT < 0) return null;
+  const midUs = binC(bestT);
+  if (midUs < 380 || midUs > 1000) return null;                             // sanidade: limiar FSK plausível
+  return { minUs: 180, midUs, maxUs: 1350 };
+}
 export interface CasDecodeResult {
   sampleRate: number; bitsPerSample: number; channels: number; totalSamples: number; durationSec: number;
   foundSync: boolean; inverted: boolean; bitCount: number; byteCount: number;
@@ -225,13 +254,22 @@ function filesFromBlocks(blocks: CasBlock[]): CasFileInfo[] {
  *  absolutos na fita inteira (usado pela decodificação gap-aware por segmento). */
 function decodeStreamFromSamples(samples: Float32Array, sampleRate: number, opts: DecodeOpts, timeOffset = 0):
   { foundSync: boolean; inverted: boolean; bitCount: number; bytes: number[]; byteTimes: number[] } {
-  const midUs = opts.midUs ?? 600, minUs = opts.minUs ?? 300, maxUs = opts.maxUs ?? 1200, minAmp = opts.minAmp ?? 0;
+  let midUs = opts.midUs ?? 600, minUs = opts.minUs ?? 300, maxUs = opts.maxUs ?? 1200;
+  const minAmp = opts.minAmp ?? 0;
   const cross: number[] = [], segMax: number[] = [];
   let prevSign = Math.sign(samples[0]) || 1, curMax = 0;
   for (let i = 1; i < samples.length; i++) {
     const a = Math.abs(samples[i]); if (a > curMax) curMax = a;
     const sign = Math.sign(samples[i]) || 1;
     if (sign !== prevSign) { if (sign > 0 && prevSign < 0) { const f = -samples[i - 1] / (samples[i] - samples[i - 1]); cross.push(i - 1 + f); segMax.push(curMax); curMax = 0; } prevSign = sign; }
+  }
+  // R1 — modo recover: calibra o limiar 1/0 pelo HISTOGRAMA dos períodos deste segmento (trata fita
+  // lenta/esticada, que o limiar fixo de 600µs erra). Se não achar dois picos claros, mantém o fixo.
+  if (opts.recover) {
+    const pers: number[] = [];
+    for (let i = 1; i < cross.length; i++) { if (segMax[i] < minAmp) continue; pers.push(((cross[i] - cross[i - 1]) / sampleRate) * 1e6); }
+    const adapt = adaptiveThresholds(pers);
+    if (adapt) { minUs = adapt.minUs; midUs = adapt.midUs; maxUs = adapt.maxUs; }
   }
   const bitsArr: number[] = [], bitPos: number[] = [];
   for (let i = 1; i < cross.length; i++) {
@@ -301,10 +339,42 @@ export interface CasGapResult {
   blocks: CasBlock[]; files: CasFileInfo[]; payload: number[]; payloadTimes: number[];
 }
 
+/** Parseia os bytes de UM segmento em blocos VÁLIDOS (checksum OK, tipos 0/1/FF) + o payload (data). */
+function parseSegBytes(bytes: number[], times: number[]): { segBlocks: CasBlock[]; pay: number[]; payT: number[] } {
+  const segBlocks: CasBlock[] = []; const pay: number[] = [], payT: number[] = [];
+  let i = 0;
+  while (i < bytes.length) {
+    if (bytes[i] === 0x3c && i + 3 + (bytes[i + 2] || 0) + 1 <= bytes.length) {
+      const type = bytes[i + 1], len = bytes[i + 2];
+      let sum = (type + len) & 0xff; for (let k = 0; k < len; k++) sum = (sum + bytes[i + 3 + k]) & 0xff;
+      if (sum === bytes[i + 3 + len]) {                              // checksum OK → bloco real (filtra ruído)
+        if (type === 0x00 || type === 0x01 || type === 0xFF) {
+          const data = bytes.slice(i + 3, i + 3 + len);
+          segBlocks.push({ type, data, checksumOk: true });
+          if (type === 0x01) for (let k = 0; k < len; k++) { pay.push(bytes[i + 3 + k]); payT.push(times[i + 3 + k]); }
+        }
+        i += 3 + len + 1; continue;
+      }
+    }
+    i++;
+  }
+  return { segBlocks, pay, payT };
+}
+
+// R1/R2 — candidatos de limiar por segmento no modo RECUPERAR: Otsu (auto) + uma varredura fixa
+// (cobre fita lenta/esticada quando o Otsu de um segmento curto/só-leader falha).
+const RECOVER_CANDS: DecodeOpts[] = [
+  { recover: true }, { recover: false, midUs: 550 }, { recover: false, midUs: 600 }, { recover: false, midUs: 650 },
+  { recover: false, midUs: 700 }, { recover: false, midUs: 725 }, { recover: false, midUs: 750 }, { recover: false, midUs: 775 },
+  // com gating de AMPLITUDE: filtra cruzamentos fracos/ruído antes do histograma (fitas com hiss alto)
+  { recover: true, minAmp: 0.05 }, { recover: true, minAmp: 0.1 }, { recover: false, midUs: 725, minAmp: 0.08 },
+];
+
 /** K2 forense — decodificação GAP-AWARE: segmenta a fita pelas pausas (hiss), decodifica CADA
  *  segmento isolado e CONCATENA os blocos válidos (namefile + todos os data blocks + 1 EOF).
  *  Recupera o PROGRAMA INTEIRO de fitas com tela/loader (que o decode contínuo trunca no 1º gap)
- *  e descarta o lixo do ruído. Se houver ≤1 segmento, cai no decode contínuo (fitas simples). */
+ *  e descarta o lixo do ruído. Se houver ≤1 segmento, cai no decode contínuo (fitas simples).
+ *  R1 — `opts.recover`: por segmento testa Otsu + varredura de limiar e fica com o melhor. */
 export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}): CasGapResult {
   const { samples, sampleRate } = readWavSamples(wavBuffer);
   const durationSec = samples.length / sampleRate;
@@ -314,33 +384,37 @@ export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}):
   const segTimes: Array<{ start: number; end: number }> = [];     // tempo (s) de cada segmento usado → p/ reproduzir os gaps
   const payload: number[] = [], payloadTimes: number[] = [];
   let foundSync = false, usedSegments = 0;
+  const cands = opts.recover ? RECOVER_CANDS : [opts];
   for (const reg of regions) {
     const a = Math.max(0, reg.a - pad), b = Math.min(samples.length, reg.b + pad);
-    const dec = decodeStreamFromSamples(samples.subarray(a, b), sampleRate, opts, a / sampleRate);
-    if (!dec.foundSync) continue;
-    const bytes = dec.bytes, times = dec.byteTimes;
-    const segBlocks: CasBlock[] = [];
-    let i = 0;
-    while (i < bytes.length) {
-      if (bytes[i] === 0x3c && i + 3 + (bytes[i + 2] || 0) + 1 <= bytes.length) {
-        const type = bytes[i + 1], len = bytes[i + 2];
-        let sum = (type + len) & 0xff; for (let k = 0; k < len; k++) sum = (sum + bytes[i + 3 + k]) & 0xff;
-        if (sum === bytes[i + 3 + len]) {                          // checksum OK → bloco real (filtra ruído)
-          if (type === 0x00 || type === 0x01 || type === 0xFF) {
-            const data = bytes.slice(i + 3, i + 3 + len);
-            segBlocks.push({ type, data, checksumOk: true });
-            if (type === 0x01) for (let k = 0; k < len; k++) { payload.push(bytes[i + 3 + k]); payloadTimes.push(times[i + 3 + k]); }
-          }
-          i += 3 + len + 1; continue;
-        }
-      }
-      i++;
+    const sub = samples.subarray(a, b);
+    // recover: testa cada candidato de limiar e fica com o que recupera MAIS blocos válidos.
+    let best: { segBlocks: CasBlock[]; pay: number[]; payT: number[] } | null = null;
+    for (const c of cands) {                                        // recover: candidatos autocontidos (ignora K8)
+      const dec = decodeStreamFromSamples(sub, sampleRate, c, a / sampleRate);
+      if (!dec.foundSync) continue;
+      const p = parseSegBytes(dec.bytes, dec.byteTimes);
+      if (p.segBlocks.length && (!best || p.segBlocks.length > best.segBlocks.length)) best = p;
     }
-    if (segBlocks.length) { segs.push(segBlocks); segTimes.push({ start: reg.a / sampleRate, end: reg.b / sampleRate }); foundSync = true; usedSegments++; }
+    if (best) {
+      segs.push(best.segBlocks); segTimes.push({ start: reg.a / sampleRate, end: reg.b / sampleRate });
+      for (let k = 0; k < best.pay.length; k++) { payload.push(best.pay[k]); payloadTimes.push(best.payT[k]); }
+      foundSync = true; usedSegments++;
+    }
   }
-  // Fallback: nada recuperado por segmento → decode contínuo (fita simples / sem gaps claros).
-  if (!foundSync) {
-    const c = decodeCasTape(wavBuffer, opts);
+  // Fallback: nada (ou nenhum PAYLOAD) recuperado por segmento → decode contínuo (fita simples / sem
+  // gaps claros). A condição `!payload.length` evita que um segmento com blocos espúrios (só namefile/
+  // EOF, sem data) marque foundSync e bloqueie o fallback que recuperaria o programa.
+  if (!foundSync || !payload.length) {
+    let c = decodeCasTape(wavBuffer, opts);
+    if (opts.recover) {                                              // recover: varre limiares no contínuo também
+      let bestLen = extractCasFileData(c.blocks, 0).length;
+      for (const cand of RECOVER_CANDS) {
+        const t = decodeCasTape(wavBuffer, cand);
+        const l = t.foundSync ? extractCasFileData(t.blocks, 0).length : 0;
+        if (l > bestLen) { c = t; bestLen = l; }
+      }
+    }
     const pay = extractCasFileData(c.blocks, 0);
     return { sampleRate, durationSec, foundSync: c.foundSync, segments: regions.length, multi: false, segs: c.blocks.length ? [c.blocks] : [], segTimes: [], blocks: c.blocks, files: c.files, payload: pay, payloadTimes: [] };
   }
