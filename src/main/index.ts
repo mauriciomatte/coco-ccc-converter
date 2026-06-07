@@ -7,6 +7,7 @@ import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
+import { isDmk, dmkToRaw, normalizeDiskImage } from './converter/dmk';
 import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, os9ReadTree, os9ApplyTree, os9SystemArea, os9ChildLsn, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
@@ -173,6 +174,17 @@ ipcMain.handle('read-dsk-directory', async (_, dskUint8Array: Uint8Array) => {
   } catch (error: any) {
     return { success: false, error: error.message };
   }
+});
+
+// 2b2. Normaliza bytes de imagem vindos do renderer (ex.: arrastar-e-soltar): se for DMK
+// (imagem de trilha), decodifica para imagem RAW de setores; senão devolve igual. Idempotente.
+ipcMain.handle('normalize-image', async (_, bytes: Uint8Array) => {
+  try {
+    const buf = Buffer.from(bytes);
+    if (!isDmk(buf)) return { success: true, isDmk: false, image: bytes };
+    const { raw, geom } = dmkToRaw(buf);
+    return { success: true, isDmk: true, image: new Uint8Array(raw), geom };
+  } catch (error: any) { return { success: false, error: error.message }; }
 });
 
 // 2b3. Escolhe um arquivo .dsk (35T RS-DOS) para INSERIR num slot vazio da MiniIDE. Devolve os bytes
@@ -814,7 +826,8 @@ ipcMain.handle('image-analyze', async () => {
 
     // 2) MiniIDE / HDBDOS — needs a full scan; cap the size so we never slurp a multi-GB image.
     if (stat.size <= 800 * 1024 * 1024) {
-      const buf = readFileWithProgress(filePath, stat.size, 'read');
+      // DMK (track-level) → decode to a raw sector image so the OS-9/RS-DOS detectors below see it.
+      const buf = normalizeDiskImage(readFileWithProgress(filePath, stat.size, 'read'));
       const disks = scanMiniIdeImage(buf, (loaded, total) =>
         mainWindow?.webContents.send('image-progress', { phase: 'scan', loaded, total }));
       // An OS-9/NitrOS-9 partition lives RAW at offset 0 in MiniIDE and CoCoSDC.VHD images (proven by
@@ -846,7 +859,8 @@ ipcMain.handle('image-analyze', async () => {
         // STANDALONE = o filesystem OS-9 preenche o arquivo (disco solto) → abre EDITÁVEL em memória.
         // Senão é uma PARTIÇÃO de container (VHD/IMG) → somente-leitura (edição via "Habilitar edição"/O5).
         const oid = parseIdent(buf, 0);
-        const os9Standalone = stat.size <= oid.totalSectors * 256 + 4096;
+        // Use the (normalised) buffer length, not stat.size: a DMK file is larger than its raw image.
+        const os9Standalone = buf.length <= oid.totalSectors * 256 + 4096;
         return { success: true, kind: 'os9', filePath, fileName, os9Base: 0, os9Volume, os9Standalone, entries: [] };
       }
     }
@@ -879,9 +893,9 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
         return { success: true, image: new Uint8Array(deDoubleDisk(slot)) };
       } finally { fs.closeSync(fd); }
     }
-    // plain dsk / container
+    // plain dsk / container (DMK → raw sector image)
     const total = fs.statSync(filePath).size;
-    const buf = readFileWithProgress(filePath, total, 'read');
+    const buf = normalizeDiskImage(readFileWithProgress(filePath, total, 'read'));
     return { success: true, image: new Uint8Array(buf) };
   } catch (error: any) {
     return { success: false, error: error.message };
@@ -965,11 +979,11 @@ ipcMain.handle('os9-pick-buffer', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Abrir disco OS-9 (.os9 / .dsk)',
     properties: ['openFile'],
-    filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk'] }, { name: 'All Files', extensions: ['*'] }],
+    filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk', 'dmk'] }, { name: 'All Files', extensions: ['*'] }],
   });
   if (result.canceled || !result.filePaths.length) return { cancelled: true };
   try {
-    const data = fs.readFileSync(result.filePaths[0]);
+    const data = normalizeDiskImage(fs.readFileSync(result.filePaths[0]));
     if (!isOs9DiskStrict(data, 0)) return { success: false, error: 'Não é um disco OS-9 (RBF) válido.' };
     return { success: true, image: new Uint8Array(data), fileName: path.basename(result.filePaths[0]), filePath: result.filePaths[0] };
   } catch (error: any) { return { success: false, error: error.message }; }
@@ -1125,7 +1139,7 @@ ipcMain.handle('os9-container-edit', async (_, filePath: string, base: number, o
 // 3c1l. Abre um arquivo OS-9 por caminho (drag-and-drop) → bytes p/ a aba OS-9.
 ipcMain.handle('os9-open-path', async (_, filePath: string) => {
   try {
-    const data = fs.readFileSync(filePath);
+    const data = normalizeDiskImage(fs.readFileSync(filePath));
     return { success: true, image: new Uint8Array(data), fileName: filePath.split(/[\\/]/).pop() || 'DISCO.OS9', filePath };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -1245,16 +1259,19 @@ ipcMain.handle('open-dsk-pane', async () => {
     title: 'Open .DSK / .VDK image',
     properties: ['openFile'],
     filters: [
-      { name: 'Disk Images (RS-DOS / Dragon)', extensions: ['dsk', 'vdk'] },
+      { name: 'Disk Images (RS-DOS / Dragon / DMK)', extensions: ['dsk', 'vdk', 'dmk'] },
       { name: 'RS-DOS Disk Image', extensions: ['dsk'] },
       { name: 'Dragon VDK Image', extensions: ['vdk'] },
+      { name: 'DMK Image', extensions: ['dmk'] },
       { name: 'All Files', extensions: ['*'] }
     ]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false, cancelled: true };
   try {
     const fp = result.filePaths[0];
-    const buf = fs.readFileSync(fp);
+    // DMK (track-level image) → decode to a raw sector image first; everything downstream
+    // (Dragon/RS-DOS/OS-9 parsers, edit, save) works on the raw form.
+    const buf = normalizeDiskImage(fs.readFileSync(fp));
     // Dragon DOS / VDK first; otherwise standard RS-DOS.
     const dragon = readDragonDirectory(buf);
     if (dragon) {

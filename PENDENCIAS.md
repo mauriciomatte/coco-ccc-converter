@@ -14,8 +14,13 @@
 - [x] **O5 — escrever na partição OS-9 de containers** ✅ v1.0.23 — botão "Habilitar edição" (grava
       direto no arquivo, só os setores alterados), **guarda de sistema** (`os9SystemArea`: OS9Boot/SYS/
       CMDS/DEFS protegidos — só pastas de usuário), valida antes de gravar. Validado por container sintético.
+- [x] **Leitura DMK** ✅ v1.0.28 — `dmk.ts` (de-DMK → raw) ligado em todos os caminhos de abertura;
+      destrava discos OS-9/RS-DOS/Dragon distribuídos em DMK. Validado byte-a-byte (ver ROADMAP_OS9 Fase 4).
+- [ ] **Leitura SDF** — DIFERIDA: SDF é p/ discos não-padrão/protegidos (não OS-9 padrão); falta amostra
+      `.sdf` real p/ implementar+validar a Sector ID Table de 8 B (spec no ROADMAP_OS9 Fase 4).
 - [ ] **O6 — validação em Toolshed / emulador REAL**: testar O4/O5 num MiniIDE/CoCoSDC real + emulador
-      antes de confiar 100% (nível de bytes já validado; falta hardware/emulador).
+      antes de confiar 100% (nível de bytes já validado; falta hardware/emulador). XRoar já disponível
+      localmente; Toolshed a instalar (ver ROADMAP_OS9 "O6").
 - [x] **Defrag / defrag de arquivo OS-9** ✅ v1.0.22.
 - [x] **Copiar PASTAS (recursivo)** entre os dois explorers ✅ v1.0.23 (drag de pasta = cópia recursiva).
 - [x] **Arrastar arquivo OS-9 para fora → Windows Explorer** ✅ v1.0.23 (alça ⠿ + `startDrag`).

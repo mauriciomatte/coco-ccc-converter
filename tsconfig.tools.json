@@ -15,6 +15,8 @@
   "include": [
     "tools/inspect.ts",
     "tools/os9probe.ts",
+    "tools/dmkprobe.ts",
+    "src/main/converter/dmk.ts",
     "src/main/converter/cas.ts",
     "src/main/converter/dsk.ts",
     "src/main/converter/bin.ts",

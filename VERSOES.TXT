@@ -10,6 +10,26 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.28 — 2026-06-07
+--------------------------------------------------------------------------------
+NOVO — Leitura de imagens DMK (abre discos OS-9 / RS-DOS / Dragon em formato de trilha)
+  • DMK é uma imagem de TRILHA (sync, address-marks, gaps e CRCs, como o controlador vê), não um dump
+    raw de setores. Muitos discos OS-9/NitrOS-9 circulam assim e antes davam "formato não suportado".
+  • Agora o app DECODIFICA o DMK para imagem de setores na ABERTURA e segue o fluxo normal — listar,
+    extrair, editar e salvar funcionam igual a um .dsk/.os9. Vale para os 3 sistemas de arquivo
+    (RS-DOS, OS-9/RBF, Dragon) e para arrastar-e-soltar. O XRoar continua recebendo o .dmk nativo.
+  • Detecção à prova de falso-positivo (assinatura + casamento exato de tamanho); avisa se o DMK estiver
+    degradado (setores faltando). Suporta face simples/dupla, dupla densidade (MFM) e simples (FM).
+  • Validado byte-a-byte: a decodificação de um DMK de 720K reproduz EXATAMENTE o disco raw equivalente
+    (diferença de 1 byte de metadado); 630/720/1440/2880 setores recuperados nos 4 discos de teste.
+
+ESTUDO — Formato SDF (CoCoSDC) mapeado, implementação adiada
+  • SDF é o formato do CoCoSDC para discos NÃO-padrão / protegidos (não os discos OS-9 padrão). Spec
+    coletado (header 'SDF1' 512 B + track-records de 6656 B). Falta uma amostra .sdf real p/ implementar
+    e validar com segurança — sem isso não entra (regra: nada de leitura não-validada). Detalhes no
+    ROADMAP_OS9 (Fase 4).
+
+--------------------------------------------------------------------------------
 v1.0.27 — 2026-06-06
 --------------------------------------------------------------------------------
 NOVO — Botão "Recuperar" (aba K7): salva fitas degradadas que dão NO-SYNC

@@ -26,6 +26,9 @@ const api = {
   dskDetectContainer: (dskBuffer: Uint8Array, stdDisk: number) =>
     ipcRenderer.invoke('dsk-detect-container', dskBuffer, stdDisk),
 
+  // DMK → raw sector image (read-only). Idempotente: bytes não-DMK voltam iguais.
+  normalizeImage: (bytes: Uint8Array) => ipcRenderer.invoke('normalize-image', bytes),
+
   xroarPickFile: (kind?: string) =>
     ipcRenderer.invoke('xroar-pick-file', kind),
   k7Decode: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('k7-decode', wavBytes, opts),

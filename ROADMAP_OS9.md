@@ -245,6 +245,54 @@ de escrita estar provado.
 
 ---
 
+## Fase 4 — Imagens de TRILHA (DMK / SDF) — DMK ✅ (2026-06-07)
+
+Muitos discos OS-9/NitrOS-9 (e os blanks do nosso corpus) circulam como **imagem de trilha**, não
+como dump raw de setores. Os parsers (RBF, RS-DOS, Dragon) só consomem raw → a solução é **decodificar
+a imagem de trilha para raw na leitura** e seguir o fluxo normal.
+
+### DMK — ✅ IMPLEMENTADO (`src/main/converter/dmk.ts`, read-only)
+Descoberta: 4 discos OS-9 do corpus estavam em DMK disfarçados de `.DSK` em `amostras/blank-disks/`
+(tamanhos 224016/256016/512016/1024016 = `16 + trilhas×lados×6400`).
+
+- **Formato** (clean-room, fato técnico): header 16 B (`[0]` write-protect; `[1]` nº trilhas; `[2..3]`
+  trackLen LE incl. tabela IDAM; `[4]` flags, bit `0x10`=face única; `[12..15]` `0` ou `0x12345678`).
+  Cada trilha = tabela IDAM de 64×2 B (offset 14 bits + bit `0x8000`=dupla densidade) + bytes crus
+  da trilha (FM = cada byte DOBRADO → passo 2; MFM = passo 1). Setor = `A1 A1 A1 FE trk side sec sz crc`
+  … `A1 A1 A1 (FB|F8) dados crc`.
+- **`isDmk`** (magic + casamento EXATO de tamanho, zero falso-positivo) · **`dmkToRaw`** (decodifica
+  por (trilha, lado) físicos, normaliza interleave, reporta `sectorsFound/Expected` p/ flagrar DMK
+  degradado) · **`normalizeDiskImage`** (idempotente).
+- **Integração:** de-DMK na LEITURA em `open-dsk-pane`, `image-analyze` (detecção OS-9/RS-DOS roda no
+  raw), `image-extract`, `os9-pick-buffer`, `os9-open-path`, e IPC `normalize-image` no topo do
+  `loadPaneFromBuffer` (cobre arrastar-e-soltar). O XRoar continua recebendo o `.dmk` NATIVO (ele lê DMK).
+- **Validação (`tools/dmkprobe.ts`):** 4/4 detectados, geometria exata, **todos os setores
+  decodificados** (630/720/1440/2880), OS-9 RBF válido; o par **720K bate byte-a-byte** com o `.OS9`
+  gêmeo (1 byte de metadado). 158K/360K diferem só em metadados de formatação (são blanks distintos).
+
+### SDF — ESTUDADO, DIFERIDO (sem amostra; baixa relevância p/ OS-9)
+SDF é o formato do **CoCoSDC para discos NÃO-PADRÃO / protegidos** (o manual: "anything other than 18
+sectors per track and 256 bytes per sector… copy-protection scheme"). Como o **OS-9/RBF é padrão**
+(18 setores × 256 B), discos OS-9 **não** são distribuídos como SDF — SDF guarda jogos protegidos.
+Spec coletado p/ implementação futura:
+- Header de arquivo 512 B: `'SDF1'` (0-3), cilindros (4, ≤80), lados (5), write-perm (6), nested-sectors
+  (7), resto zero. Track-records de **6656 B** em ordem física (cil/lado): header 256 B (`[0]`=nº
+  entradas usadas, `[1..7]` reservado, `[8..255]` Sector ID Table = 31×8 B) + **6250 B** de dados crus
+  + 150 B de padding (alinha a 512).
+- **PENDENTE p/ implementar:** o layout exato da entrada de 8 B (cil/lado/setor/sz/flags/offset/CRC)
+  não está claro nas páginas do manual; obter de uma **amostra `.sdf`** + firmware/`cocosdc-commander`
+  (`libsdc.c`). **Ação:** pedir/baixar um `.sdf` real antes de codar (regra do projeto: nada de parser
+  não-validado). Refs: CoCo SDC User Guide; `github.com/n6il/cocosdc-commander`.
+
+## O6 — validação da ESCRITA em emulador/hardware (status 2026-06-07)
+- **XRoar disponível** localmente: `G:\Meu Drive\EmuCoco\ASM_PRG\xroar\xroar.exe` (há também a aba
+  XRoar embarcada p/ teste manual). **Toolshed NÃO instalado** (sem `os9`/`decb` no PATH).
+- **Plano:** (a) harness de **round-trip de consistência** (insert/delete/mkdir via `os9.ts` → re-parse
+  → conferir bitmap × segmentos, todos os arquivos legíveis, CRC de módulos inalterado); (b) **boot/dir
+  manual no XRoar** de um disco que escrevemos; (c) opcional: instalar Toolshed p/ cross-check `os9 dir`.
+
+---
+
 ## Riscos / pontos de atenção
 - **Hierarquia de diretórios** (a UI atual é de diretório único) — maior mudança de UX.
 - Arquivos **multi-segmento / fragmentados**; **Level 1 × Level 2**; **6809 × 6309**.

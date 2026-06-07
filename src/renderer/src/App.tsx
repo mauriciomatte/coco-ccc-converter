@@ -1416,6 +1416,14 @@ export default function App() {
   // Carrega uma imagem num painel; detecta contêiner multi-disco (N x 161280) e mostra o disco 0.
   // `created` = imagem CRIADA pelo botão ✚ (badge "NOVA: nome") vs ABERTA de arquivo (badge "LIDA: formato").
   const loadPaneFromBuffer = async (which: 'A' | 'B', full: Uint8Array, fileName: string, index = 0, sourcePath?: string, created = false): Promise<boolean> => {
+    // DMK (imagem de trilha, ex.: arrastar-e-soltar um .dmk) → decodifica p/ imagem RAW de setores.
+    // Idempotente para bytes não-DMK (que vêm dos handlers do main já normalizados).
+    const norm = await window.cocoApi.normalizeImage(full);
+    if (norm?.success && norm.isDmk) {
+      full = norm.image;
+      addLog(`DMK decodificado → imagem de setores (${(full.length / 1024).toFixed(0)} KB).`,
+             `DMK decoded → raw sector image (${(full.length / 1024).toFixed(0)} KB).`, 'info');
+    }
     let count = (full.length > 0 && full.length % STD_DISK === 0) ? full.length / STD_DISK : 1;
     if (count > 1) {
       // Um arquivo múltiplo de 161.280 pode ser um contêiner multi-disco OU um disco único

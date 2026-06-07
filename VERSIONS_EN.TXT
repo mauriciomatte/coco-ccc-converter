@@ -10,6 +10,26 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.28 — 2026-06-07
+--------------------------------------------------------------------------------
+NEW — DMK image reading (opens OS-9 / RS-DOS / Dragon disks in track-level format)
+  • DMK is a TRACK-level image (sync, address marks, gaps and CRCs, as the controller sees them), not a
+    raw sector dump. Many OS-9/NitrOS-9 disks ship this way and previously showed "unsupported format".
+  • The app now DECODES the DMK to a raw sector image ON OPEN and proceeds normally — list, extract,
+    edit and save all work just like a .dsk/.os9. Works for all three filesystems (RS-DOS, OS-9/RBF,
+    Dragon) and for drag-and-drop. XRoar still receives the native .dmk.
+  • False-positive-proof detection (signature + exact size match); warns if the DMK is degraded (missing
+    sectors). Supports single/double sided, double density (MFM) and single density (FM).
+  • Validated byte-for-byte: decoding a 720K DMK reproduces EXACTLY the equivalent raw disk (1 metadata
+    byte of difference); 630/720/1440/2880 sectors recovered across the 4 test disks.
+
+STUDY — SDF format (CoCoSDC) mapped, implementation deferred
+  • SDF is the CoCoSDC format for NON-standard / protected disks (not standard OS-9 disks). Spec gathered
+    ('SDF1' 512-byte header + 6656-byte track records). A real .sdf sample is needed to implement and
+    validate safely — until then it stays out (rule: no unvalidated reading). Details in ROADMAP_OS9
+    (Phase 4).
+
+--------------------------------------------------------------------------------
 v1.0.27 — 2026-06-06
 --------------------------------------------------------------------------------
 NEW — "Recover" button (K7 tab): rescues degraded tapes that give NO-SYNC
