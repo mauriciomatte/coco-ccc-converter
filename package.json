@@ -1,6 +1,6 @@
 {
   "name": "coco-ccc-converter",
-  "version": "1.0.49",
+  "version": "1.0.56",
   "description": "TRS-80 Color Computer CAS/WAV/DSK to CCC EPROM Converter",
   "main": "./out/main/index.js",
   "author": "Antigravity CoCo Team",
@@ -35,8 +35,8 @@
   },
   "build": {
     "appId": "com.emucoco.cccconverter",
-    "productName": "CoCo CCC Converter",
-    "artifactName": "CoCoDSK&CCCUtility_Setup ${version}.${ext}",
+    "productName": "CoCo File Image Utility",
+    "artifactName": "CoCoFIU_Setup ${version}.${ext}",
     "directories": {
       "output": "dist"
     },
@@ -47,6 +47,13 @@
       {
         "from": "resources/os9seed",
         "to": "os9seed",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "resources/splash",
+        "to": "splash",
         "filter": [
           "**/*"
         ]
@@ -63,7 +70,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "CoCoDSK&CCCUtility_Setup ${version}.${ext}"
+      "artifactName": "CoCoFIU_Setup ${version}.${ext}"
     },
     "linux": {
       "target": [

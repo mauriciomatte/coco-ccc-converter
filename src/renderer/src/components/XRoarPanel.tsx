@@ -89,6 +89,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
   const [showHelp, setShowHelp] = useState(false);
   const [wide80, setWide80] = useState(false); // toggle 80/32 colunas (CoCo 3) — true = WIDTH 80 (minúsculas)
+  const [progName, setProgName] = useState(''); // nome do programa (.bin/.rom/…) carregado, p/ exibir no painel
   const lastLoadKey = useRef(0);
   const lastTypeKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
@@ -182,6 +183,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       const e = (res.ext || '').toLowerCase();
       const isBin = e === 'bin' || e === 'hex';
       const arr = Array.from(new Uint8Array(res.data));
+      setProgName(res.name);
       if (isBin && binAutorun) {
         bootProgRef.current = { name: res.name, data: arr };
         setBootProg({ name: res.name, data: arr });
@@ -458,16 +460,25 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         {/* PROGRAMA (.bin/.rom/.ccc/.hex/.sna) — carrega e roda direto (LOADM/EXEC automático) */}
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
           <div className={sectionTitle}>{t('Programa (.bin/.rom)', 'Program (.bin/.rom)')}</div>
-          <button onClick={openProgram} disabled={!ready} className="dsk-tool flex items-center gap-1.5 justify-start" style={{ padding: '3px 7px' }}
-            title={t('Abrir e RODAR um programa (.bin/.rom/.ccc/.hex/.sna) — o XRoar detecta o formato e executa (LOADM/EXEC automático).', 'Open and RUN a program (.bin/.rom/.ccc/.hex/.sna) — XRoar detects the format and executes it (LOADM/EXEC auto).')}>
-            <FolderOpen size={13} /><span className="text-[10px] font-bold">{t('Abrir e rodar .bin/.rom', 'Open & run .bin/.rom')}</span>
-          </button>
-          <button onClick={() => setBinAutorun(v => !v)} className="dsk-tool flex items-center gap-1.5 justify-start" style={{ padding: '3px 7px', color: binAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
-            title={t('.bin AutoRun. LIGADO: .bin/.hex bootam o XRoar com o arquivo (xroar arquivo.bin) e RODAM sozinhos. DESLIGADO: só carregam na memória (você roda com EXEC). (.ccc/.rom/.sna sempre rodam.)', '.bin AutoRun. ON: .bin/.hex boot XRoar with the file (xroar file.bin) and RUN automatically. OFF: just load into memory (run with EXEC). (.ccc/.rom/.sna always run.)')}>
-            {binAutorun ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
-            <span className="text-[10px] font-bold">.bin AutoRun {binAutorun ? t('lig.', 'on') : t('desl.', 'off')}</span>
-          </button>
-          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM (cartucho) e .SNA rodam direto. .BIN de máquina precisa bootar com o arquivo (AutoRun) p/ executar.', '.CCC/.ROM (cartridge) and .SNA run directly. Machine .BIN must boot with the file (AutoRun) to execute.')}</div>
+          {/* nome do programa carregado (em destaque) — só aparece quando há algo carregado */}
+          {progName && (
+            <div className="text-[10px] font-bold truncate px-1.5 py-1 rounded" title={progName}
+              style={{ background: 'var(--primary-glow)', color: '#fff', border: '1px solid var(--border-active)' }}>
+              {progName}
+            </div>
+          )}
+          <div className="flex gap-1.5">
+            <button onClick={openProgram} disabled={!ready} className="dsk-tool flex-1 flex items-center gap-1.5 justify-center" style={{ padding: '3px 7px' }}
+              title={t('Abrir e RODAR um programa (.bin/.rom/.ccc/.hex/.sna) — o XRoar detecta o formato e executa (LOADM/EXEC automático).', 'Open and RUN a program (.bin/.rom/.ccc/.hex/.sna) — XRoar detects the format and executes it (LOADM/EXEC auto).')}>
+              <FolderOpen size={13} /><span className="text-[10px] font-bold">{t('Abrir', 'Open')}</span>
+            </button>
+            <button onClick={() => setBinAutorun(v => !v)} className="dsk-tool flex-1 flex items-center gap-1.5 justify-center" style={{ padding: '3px 7px', color: binAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
+              title={t('AutoRun do .bin. LIGADO: .bin/.hex bootam o XRoar com o arquivo (xroar arquivo.bin) e RODAM sozinhos. DESLIGADO: só carregam na memória (você roda com EXEC). (.ccc/.rom/.sna sempre rodam.)', '.bin AutoRun. ON: .bin/.hex boot XRoar with the file (xroar file.bin) and RUN automatically. OFF: just load into memory (run with EXEC). (.ccc/.rom/.sna always run.)')}>
+              {binAutorun ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
+              <span className="text-[10px] font-bold">{t('AutoRun', 'AutoRun')}</span>
+            </button>
+          </div>
+          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM (cartucho) e .SNA rodam direto. .BIN de máquina precisa do AutoRun p/ executar.', '.CCC/.ROM (cartridge) and .SNA run directly. Machine .BIN needs AutoRun to execute.')}</div>
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
@@ -524,7 +535,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         <div className="glass-panel p-2.5 flex flex-col gap-2">
           <div>
             <div className={sectionTitle}>{t('Máquina', 'Machine')}</div>
-            <select value={machine} onChange={(e) => { setReady(false); setWide80(false); setMachine(e.target.value); }} className="input-select text-xs py-1 w-full">
+            <select value={machine} onChange={(e) => { setReady(false); setWide80(false); setProgName(''); setMachine(e.target.value); }} className="input-select text-xs py-1 w-full">
               {MACHINES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </div>

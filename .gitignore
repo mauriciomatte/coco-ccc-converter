@@ -42,6 +42,9 @@ docs/refs/
 # Sample disk/cassette/cartridge images (kept local; commercial content)
 amostras/
 
+# Splash: imagem-fonte pesada (8 MB) — só versionamos o otimizado em resources/splash/splash.png
+splashscreen.png
+
 # Scratch/dev helper files
 run.bat
 scratch_helpmodal.txt

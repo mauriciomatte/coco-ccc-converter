@@ -103,8 +103,9 @@ Normalmente você nem usa isto à mão: as outras abas montam o disco para você
 
 ## 9. Programa (.bin/.rom/.ccc/.hex/.sna)
 
-- **Abrir e rodar .bin/.rom** carrega e **executa** um programa; o XRoar detecta o formato.
-- O toggle **".bin AutoRun"**: **ligado** = um `.bin/.hex` boota o emulador **com** o arquivo e roda sozinho;
+- O **nome do programa carregado** aparece em destaque no topo do bloco.
+- **Abrir** carrega e **executa** um programa (`.bin/.rom/.ccc/.hex/.sna`); o XRoar detecta o formato.
+- O toggle **"AutoRun"** (ao lado de Abrir): **ligado** = um `.bin/.hex` boota o emulador **com** o arquivo e roda sozinho;
   **desligado** = só carrega na memória (você roda com `EXEC`). Cartuchos `.ccc/.rom` e snapshots `.sna`
   **sempre** rodam direto.
 

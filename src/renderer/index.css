@@ -553,6 +553,9 @@ button {
 .items-start { align-items: flex-start; }
 .justify-between { justify-content: space-between; }
 .justify-center { justify-content: center; }
+.justify-start { justify-content: flex-start; }
+.text-left { text-align: left; }
+.text-right { text-align: right; }
 
 .w-full { width: 100%; }
 .w-16 { width: 64px; }

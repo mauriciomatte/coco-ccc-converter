@@ -19,13 +19,16 @@ import basicPtMd from '../help/basic.pt.md?raw';
 import basicEnMd from '../help/basic.en.md?raw';
 import xroarPtMd from '../help/xroar.pt.md?raw';
 import xroarEnMd from '../help/xroar.en.md?raw';
+import fujinetPtMd from '../help/fujinet.pt.md?raw';
+import fujinetEnMd from '../help/fujinet.en.md?raw';
 
-export type HelpTopic = 'os9' | 'dsk' | 'k7' | 'gw' | 'basic' | 'xroar';
+export type HelpTopic = 'os9' | 'dsk' | 'k7' | 'gw' | 'basic' | 'xroar' | 'fujinet';
 type Lang = 'pt-br' | 'en-us';
 
 const DOCS: Record<HelpTopic, { pt: string; en: string }> = {
   os9: { pt: os9PtMd, en: os9EnMd }, dsk: { pt: dskPtMd, en: dskEnMd }, k7: { pt: k7PtMd, en: k7EnMd },
   gw: { pt: gwPtMd, en: gwEnMd }, basic: { pt: basicPtMd, en: basicEnMd }, xroar: { pt: xroarPtMd, en: xroarEnMd },
+  fujinet: { pt: fujinetPtMd, en: fujinetEnMd },
 };
 const TITLES: Record<HelpTopic, { pt: string; en: string }> = {
   os9: { pt: 'Aba OS-9 / NitrOS-9', en: 'OS-9 / NitrOS-9 Tab' },
@@ -34,6 +37,7 @@ const TITLES: Record<HelpTopic, { pt: string; en: string }> = {
   gw: { pt: 'Aba GW (Greaseweazle)', en: 'GW Tab (Greaseweazle)' },
   basic: { pt: 'Aba BASIC', en: 'BASIC Tab' },
   xroar: { pt: 'Aba XRoar (Emulador)', en: 'XRoar Tab (Emulator)' },
+  fujinet: { pt: 'Aba FujiNet / Online', en: 'FujiNet / Online Tab' },
 };
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

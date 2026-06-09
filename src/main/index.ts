@@ -9,6 +9,120 @@ import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, lo
 import { readFatVolume, listFatFiles, readFatFile, fatReplaceFile, fatAddFile, fatDeleteFile, Reader, Writer } from './converter/fat';
 import { isDmk, dmkToRaw, normalizeDiskImage } from './converter/dmk';
 import { rawToSdf } from './converter/sdf';
+import { downloadUrl } from './net/download';
+import { tnfsList, tnfsReadFile, parseTnfsStatusHtml } from './net/tnfs';
+import { startTnfsServer, folderProvider, containerProvider, localIPv4, TnfsServerHandle, TnfsProvider } from './net/tnfsServer';
+
+let tnfsSrv: TnfsServerHandle | null = null;
+function buildProvider(mode: string, p: string): TnfsProvider {
+  return mode === 'container' ? containerProvider(p) : folderProvider(p);
+}
+// FujiNet — SERVIDOR WiFi (TNFS) servindo uma PASTA ou um CONTAINER (discos internos como .dsk).
+ipcMain.handle('tnfs-server-start', async (_, opts: { mode: string; path: string }) => {
+  try {
+    if (tnfsSrv) { tnfsSrv.stop(); tnfsSrv = null; }
+    const provider = buildProvider(opts.mode, opts.path);
+    tnfsSrv = await startTnfsServer(provider, (pt, en, type) => mainWindow?.webContents.send('net-log', { pt, en, type }));
+    return { success: true, ip: tnfsSrv.ip, port: tnfsSrv.port, describe: tnfsSrv.describe };
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha ao iniciar o servidor.' }; }
+});
+ipcMain.handle('tnfs-server-stop', async () => {
+  try { tnfsSrv?.stop(); tnfsSrv = null; return { success: true }; }
+  catch (e: any) { return { success: false, error: e?.message }; }
+});
+ipcMain.handle('tnfs-server-status', async () => ({ running: !!tnfsSrv, ip: tnfsSrv?.ip || localIPv4(), port: tnfsSrv?.port || 16384, describe: tnfsSrv?.describe || '' }));
+// Pré-visualiza o que SERÁ servido (lista a raiz) sem iniciar o servidor.
+ipcMain.handle('tnfs-server-preview', async (_, opts: { mode: string; path: string }) => {
+  let prov: TnfsProvider | null = null;
+  try {
+    prov = buildProvider(opts.mode, opts.path);
+    const entries = prov.list('/');
+    return { success: true, describe: prov.describe, entries };
+  } catch (e: any) { return { success: false, error: e?.message }; }
+  finally { try { prov?.dispose?.(); } catch { /* */ } }
+});
+import { isZip, listZip, extractZipByName } from './converter/zip';
+
+// Escolher uma PASTA (p/ a pasta compartilhada do servidor FujiNet, etc.).
+ipcMain.handle('pick-directory', async () => {
+  if (!mainWindow) return { cancelled: true };
+  const r = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'] });
+  if (r.canceled || !r.filePaths.length) return { cancelled: true };
+  return { path: r.filePaths[0] };
+});
+
+// Escolher um ARQUIVO (devolve o caminho) — p/ servir um container no servidor TNFS.
+ipcMain.handle('pick-file', async (_, filters?: { name: string; extensions: string[] }[]) => {
+  if (!mainWindow) return { cancelled: true };
+  const r = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: filters || [{ name: 'Imagens / Containers', extensions: ['img', 'vhd', 'dsk', 'os9', 'vdk', 'dmk', 'sdf'] }, { name: 'All Files', extensions: ['*'] }] });
+  if (r.canceled || !r.filePaths.length) return { cancelled: true };
+  return { path: r.filePaths[0] };
+});
+
+// FujiNet / Online (M1a) — baixa um arquivo por URL (HTTP/HTTPS) e devolve os bytes ao renderer.
+ipcMain.handle('net-download-url', async (_, url: string) => {
+  try {
+    const r = await downloadUrl(String(url || '').trim());
+    if (!r.success) return { success: false, error: r.error };
+    const buf = r.data!;
+    // ZIP (caso comum no Color Computer Archive): devolve a lista de entradas + os bytes do zip,
+    // p/ o renderer escolher/extrair a imagem (via 'zip-extract'). Sem dependência nativa (zlib).
+    if (isZip(buf)) {
+      const entries = listZip(buf).filter(e => !e.isDir).map(e => ({ name: e.name, size: e.size }));
+      return { success: true, isZip: true, name: r.name, entries, data: new Uint8Array(buf), bytes: r.bytes };
+    }
+    return { success: true, name: r.name, data: new Uint8Array(buf), bytes: r.bytes };
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha no download.' }; }
+});
+
+// FujiNet — lista da comunidade (status TNFS) buscada ao vivo, com fallback embutido.
+ipcMain.handle('tnfs-community', async () => {
+  const FALLBACK = ['tnfs.fujinet.online', 'fujinet.abbuc.de', 'fujinet.diller.org', 'fujinet.pl', 'fuji.buriedbits.org']
+    .map(h => ({ host: h, tcpUp: true, udpUp: true }));
+  try {
+    const r = await downloadUrl('https://fujinet.online/tnfs-server-status/');
+    if (!r.success || !r.data) return { success: true, servers: FALLBACK, fallback: true };
+    const servers = parseTnfsStatusHtml(r.data.toString('utf8'));
+    if (!servers.length) return { success: true, servers: FALLBACK, fallback: true };
+    return { success: true, servers };
+  } catch { return { success: true, servers: FALLBACK, fallback: true }; }
+});
+
+// FujiNet / TNFS (M1b) — navegar um hub e baixar imagens.
+ipcMain.handle('tnfs-list', async (_, host: string, path: string) => {
+  try {
+    const entries = await tnfsList(String(host || '').trim(), String(path || '/'));
+    return { success: true, entries };
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha no TNFS.' }; }
+});
+
+let tnfsReadCancelFlag = false;
+ipcMain.handle('tnfs-read-cancel', () => { tnfsReadCancelFlag = true; return { success: true }; });
+ipcMain.handle('tnfs-read', async (_, host: string, path: string) => {
+  try {
+    tnfsReadCancelFlag = false;
+    let lastT = 0;
+    const buf = await tnfsReadFile(String(host || '').trim(), String(path), {
+      shouldAbort: () => tnfsReadCancelFlag,
+      // throttle por TEMPO (~250 ms): a barra anda suave mesmo em servidor lento (1 KB/s) ou rápido (MB/s).
+      onProgress: (got) => { const now = Date.now(); if (now - lastT >= 250) { lastT = now; mainWindow?.webContents.send('tnfs-progress', { got }); } },
+    });
+    const name = String(path).split('/').pop() || 'arquivo';
+    if (isZip(buf)) {
+      const entries = listZip(buf).filter(e => !e.isDir).map(e => ({ name: e.name, size: e.size }));
+      return { success: true, isZip: true, name, entries, data: new Uint8Array(buf), bytes: buf.length };
+    }
+    return { success: true, name, data: new Uint8Array(buf), bytes: buf.length };
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha ao ler do TNFS.' }; }
+});
+
+// Extrai UMA entrada de um ZIP (descomprime) e devolve os bytes ao renderer.
+ipcMain.handle('zip-extract', async (_, zipBytes: Uint8Array, entryName: string) => {
+  try {
+    const data = extractZipByName(Buffer.from(zipBytes), String(entryName));
+    return { success: true, name: String(entryName).split('/').pop() || 'arquivo', data: new Uint8Array(data), bytes: data.length };
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha ao extrair do ZIP.' }; }
+});
 
 // Se o caminho de saída for .sdf, codifica o buffer RAW (OS-9/RS-DOS uniforme) em SDF (CoCoSDC);
 // senão devolve o RAW. A geometria vem do descritor OS-9 (SPT/lados).
@@ -17,7 +131,7 @@ function encodeForOs9Path(raw: Buffer, filePath: string): Buffer {
   const id = parseIdent(raw, 0);
   return rawToSdf(raw, { sectorsPerTrack: id.sectorsPerTrack || 18, sides: id.sides || 1 });
 }
-import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, os9ReadTree, os9ApplyTree, os9SystemArea, os9ChildLsn, readClusterBitmap, os9MakeBootable, os9BootInfo, os9CloneBootable, OS9_GEOMETRIES } from './converter/os9';
+import { isOs9Disk, isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, os9ReadTree, os9ApplyTree, os9SystemArea, os9ChildLsn, readClusterBitmap, os9MakeBootable, os9BootInfo, os9CloneBootable, OS9_GEOMETRIES } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -26,6 +140,45 @@ import { buildNoLoaderBin, readCdcuInfo, stripToProgram } from './converter/load
 
 let mainWindow: BrowserWindow | null = null;
 let allowClose = false; // só true depois que o usuário confirma no modal de "Sair"
+
+// --- Splash screen (5 s, barra de progresso) ---
+let splashWindow: BrowserWindow | null = null;
+let mainReady = false, splashDone = false, splashFinished = false;
+// Resolve o splash.html (prod: <resources>/splash via extraResources; dev: <projeto>/resources/splash).
+function splashHtmlPath(): string | null {
+  const dirs = app.isPackaged
+    ? [path.join(process.resourcesPath, 'splash')]
+    : [path.join(process.cwd(), 'resources', 'splash'), path.join(app.getAppPath(), 'resources', 'splash')];
+  for (const d of dirs) { const p = path.join(d, 'splash.html'); if (fs.existsSync(p)) return p; }
+  return null;
+}
+// Mostra a janela principal quando a splash terminou (5 s) E o main está pronto.
+function finishSplash() {
+  if (splashFinished || !mainReady || !splashDone) return;
+  splashFinished = true;
+  try { splashWindow?.close(); } catch { /* ignore */ }
+  splashWindow = null;
+  mainWindow?.maximize();
+  mainWindow?.show();
+}
+function createSplash() {
+  const p = splashHtmlPath();
+  if (!p) { splashDone = true; return; } // sem splash → segue direto
+  splashWindow = new BrowserWindow({
+    width: 600, height: 560, frame: false, transparent: true, resizable: false,
+    center: true, alwaysOnTop: true, skipTaskbar: true, show: false,
+    webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  // idioma atual (settings.json) p/ traduzir o rodapé da splash
+  let lang = 'pt-br';
+  try {
+    const cfgPath = path.join(app.getPath('userData'), 'settings.json');
+    if (fs.existsSync(cfgPath)) { const c = JSON.parse(fs.readFileSync(cfgPath, 'utf-8')); if (c?.currentLang) lang = c.currentLang; }
+  } catch { /* ignore */ }
+  splashWindow.loadFile(p, { query: { v: app.getVersion(), lang } });
+  splashWindow.once('ready-to-show', () => splashWindow?.show());
+  setTimeout(() => { splashDone = true; finishSplash(); }, 5000);
+}
 
 // Gabaritos OS-9 EMBUTIDOS (discos-semente NitrOS-9 bootáveis) — um por geometria que o NitrOS-9
 // distribui para CoCo. Em produção ficam em <resources>/os9seed (electron-builder extraResources);
@@ -74,7 +227,7 @@ function createWindow() {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true, // sem barra de menu (nem ao pressionar Alt)
-    title: 'CoCo CCC Converter',
+    title: 'CoCo File Image Utility (CoCoFIU)',
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -104,8 +257,9 @@ function createWindow() {
   });
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.maximize(); // abre maximizado, preenchendo a tela
-    mainWindow?.show();
+    // Não mostra já: espera a splash (5 s) terminar. finishSplash() maximiza + mostra quando ambos prontos.
+    mainReady = true;
+    finishSplash();
     // DevTools NÃO abre automaticamente; abra manualmente com F12 / Ctrl+Shift+I.
   });
 
@@ -123,6 +277,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  createSplash();   // splash por 5 s (barra de progresso) antes de mostrar a janela principal
   createWindow();
 
   app.on('activate', () => {
@@ -934,8 +1089,14 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
 ipcMain.handle('os9-detect-buffer', async (_, bufU8: Uint8Array) => {
   try {
     const raw = normalizeDiskImage(Buffer.from(bufU8));
-    if (!isOs9DiskStrict(raw, 0)) return { os9: false };
-    return { os9: true, volume: parseIdent(raw, 0).name.trim(), image: new Uint8Array(raw) };
+    if (isOs9DiskStrict(raw, 0)) return { os9: true, volume: parseIdent(raw, 0).name.trim(), image: new Uint8Array(raw) };
+    // Cabeçalho OS-9 presente mas o arquivo é menor que DD.TOT×256 → disco OS-9 TRUNCADO/incompleto.
+    // Reconhece (p/ rotear à aba OS-9 com aviso) em vez de cair no parser RS-DOS com erro confuso.
+    if (isOs9Disk(raw, 0)) {
+      const id = parseIdent(raw, 0); const expected = id.totalSectors * 256;
+      if (raw.length < expected) return { os9: true, truncated: true, volume: id.name.trim(), have: raw.length, expected, image: new Uint8Array(raw) };
+    }
+    return { os9: false };
   } catch { return { os9: false }; }
 });
 

@@ -85,6 +85,22 @@ const api = {
   os9MakeBootable: (buffer: Uint8Array) => ipcRenderer.invoke('os9-make-bootable', buffer),
   os9NewBootable: (geomKey: string, withPrograms: boolean, forceRef?: boolean) => ipcRenderer.invoke('os9-new-bootable', geomKey, withPrograms, forceRef),
 
+  // FujiNet / Online
+  netDownloadUrl: (url: string) => ipcRenderer.invoke('net-download-url', url),
+  tnfsList: (host: string, path: string) => ipcRenderer.invoke('tnfs-list', host, path),
+  tnfsRead: (host: string, path: string) => ipcRenderer.invoke('tnfs-read', host, path),
+  tnfsReadCancel: () => ipcRenderer.invoke('tnfs-read-cancel'),
+  onTnfsProgress: (cb: (m: { got: number }) => void) => { const h = (_e: any, m: any) => cb(m); ipcRenderer.on('tnfs-progress', h); return () => ipcRenderer.removeListener('tnfs-progress', h); },
+  tnfsCommunity: () => ipcRenderer.invoke('tnfs-community'),
+  tnfsServerStart: (opts: { mode: string; path: string }) => ipcRenderer.invoke('tnfs-server-start', opts),
+  tnfsServerStop: () => ipcRenderer.invoke('tnfs-server-stop'),
+  tnfsServerStatus: () => ipcRenderer.invoke('tnfs-server-status'),
+  tnfsServerPreview: (opts: { mode: string; path: string }) => ipcRenderer.invoke('tnfs-server-preview', opts),
+  onNetLog: (cb: (m: { pt: string; en: string; type?: string }) => void) => { const h = (_e: any, m: any) => cb(m); ipcRenderer.on('net-log', h); return () => ipcRenderer.removeListener('net-log', h); },
+  zipExtract: (zipBytes: Uint8Array, entryName: string) => ipcRenderer.invoke('zip-extract', zipBytes, entryName),
+  pickDirectory: () => ipcRenderer.invoke('pick-directory'),
+  pickFile: (filters?: { name: string; extensions: string[] }[]) => ipcRenderer.invoke('pick-file', filters),
+
   onImageProgress: (cb: (p: any) => void) => {
     const listener = (_e: any, p: any) => cb(p);
     ipcRenderer.on('image-progress', listener);

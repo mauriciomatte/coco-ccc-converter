@@ -44,9 +44,11 @@ import {
   SaveAll,
   ArrowRightLeft,
   MoreHorizontal,
-  Search
+  Search,
+  Globe
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
+import FujiNetTab from './components/FujiNetTab';
 import XRoarPanel from './components/XRoarPanel';
 import BasicEditor from './components/BasicEditor';
 import DiskMap, { DiskLegend } from './components/DiskMap';
@@ -99,12 +101,13 @@ interface LogMessage {
 
 const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
   'pt-br': {
-    title: 'CoCo DSK & CCC Utility',
+    title: 'CoCo File Image Utility (CoCoFIU)',
     subtitle: 'MANIPULADOR DE IMAGENS. Por Mauricio Matte (c) 2026',
     tabDsk: 'DSK',
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
     tabBasic: 'BASIC',
+    tabFujinet: 'FujiNet',
     hexEditorBtn: 'Editor Hexadecimal',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Leitura/Gravação de Discos Reais',
@@ -269,12 +272,13 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     hexEditorInstructions: 'Use as Setas para navegar. Digite caracteres hexadecimais para sobrescrever em HEX. ESC para sair.',
   },
   'en-us': {
-    title: 'CoCo DSK & CCC Utility',
-    subtitle: 'IMAGE MANAGER. By Mauricio Matte (c) 2026',
+    title: 'CoCo File Image Utility (CoCoFIU)',
+    subtitle: 'IMAGE UTILITY. By Mauricio Matte (c) 2026',
     tabDsk: 'DSK',
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
     tabBasic: 'BASIC',
+    tabFujinet: 'FujiNet',
     hexEditorBtn: 'Hex Editor',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Read/Write Real Disks',
@@ -485,7 +489,7 @@ function fileTracks(entry: any): string {
 export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
-  const [activeTab, setActiveTab] = useState<'dsk' | 'k7' | 'os9' | 'xroar' | 'gw' | 'basic' | 'eprom'>('dsk');
+  const [activeTab, setActiveTab] = useState<'dsk' | 'k7' | 'os9' | 'xroar' | 'gw' | 'basic' | 'fujinet' | 'eprom'>('dsk');
   const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string } | null>(null);
   const [xroarExpanded, setXroarExpanded] = useState(false); // aba XRoar em tela cheia (esconde laterais + console)
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null); // modal de ajuda (DSK/GW renderizados no App)
@@ -870,8 +874,8 @@ export default function App() {
     if (welcomeLogged.current) return;  // uma vez só (evita 2× no StrictMode e ao trocar idioma)
     welcomeLogged.current = true;
     addLog(
-      'Bem-vindo ao CoCo DSK & CCC Utility. Navegue pelas abas para manipular imagens de discos.',
-      'Welcome to CoCo DSK & CCC Utility. Browse the tabs to work with disk images.',
+      'Bem-vindo ao CoCo File Image Utility (CoCoFIU). Navegue pelas abas para manipular imagens de discos.',
+      'Welcome to CoCo File Image Utility (CoCoFIU). Browse the tabs to work with disk images.',
       'info'
     );
     addLog(
@@ -1405,8 +1409,13 @@ export default function App() {
       const buffer = det.image ? new Uint8Array(det.image) : slice;
       const fileName = /\.(os9|dsk)$/i.test(label) ? label : `${label.replace(/\.[^.]+$/, '')}.os9`;
       openOs9Doc({ buffer, fileName, editable: true });
-      addLog(`OS-9: "${label}"${det.volume ? ` (volume "${det.volume}")` : ''} é um disco OS-9 → aberto EDITÁVEL na aba OS-9.`,
-             `OS-9: "${label}"${det.volume ? ` (volume "${det.volume}")` : ''} is an OS-9 disk → opened EDITABLE in the OS-9 tab.`, 'success');
+      if (det.truncated) {
+        addLog(`OS-9: "${label}" ("${det.volume}") é um disco OS-9, mas o arquivo está TRUNCADO/incompleto: ${det.have} de ${det.expected} bytes (faltam dados). Aberto na aba OS-9, mas pode falhar ou mostrar só parte — baixe o arquivo de novo (pode estar corrompido na origem).`,
+               `OS-9: "${label}" ("${det.volume}") is an OS-9 disk, but the file is TRUNCATED/incomplete: ${det.have} of ${det.expected} bytes (missing data). Opened in the OS-9 tab, but it may fail or show only part — re-download the file (it may be corrupt at the source).`, 'warn');
+      } else {
+        addLog(`OS-9: "${label}"${det.volume ? ` (volume "${det.volume}")` : ''} é um disco OS-9 → aberto EDITÁVEL na aba OS-9.`,
+               `OS-9: "${label}"${det.volume ? ` (volume "${det.volume}")` : ''} is an OS-9 disk → opened EDITABLE in the OS-9 tab.`, 'success');
+      }
       return true;
     } catch { return false; }
   };
@@ -3515,6 +3524,18 @@ export default function App() {
     } catch (err: any) { addLog(`gw write: ${err.message}`, `gw write: ${err.message}`, 'error'); }
   };
 
+  // FujiNet/Online → abrir uma imagem baixada: OS-9 vai p/ a aba OS-9; o resto cai num painel da DSK.
+  const handleFujinetOpenImage = async (name: string, bytes: Uint8Array) => {
+    try {
+      const routed = await maybeRouteOs9(bytes, name);
+      if (routed) return;
+      const which = activePane || 'A';
+      const ok = await loadPaneFromBuffer(which, bytes, name);
+      if (ok) { setActivePane(which); setActiveTab('dsk'); addLog(`Imagem aberta no Painel ${which}: ${name}`, `Image opened in Pane ${which}: ${name}`, 'success'); }
+      else addLog(`Não foi possível abrir como imagem: ${name}`, `Could not open as an image: ${name}`, 'warn');
+    } catch (e: any) { addLog(`FujiNet abrir: ${e?.message}`, `FujiNet open: ${e?.message}`, 'error'); }
+  };
+
   const renderGwTab = () => {
     const geo = GW_FORMATS.find(f => f.id === gwFormat) || { cyls: 35, heads: 1 };
     const total = geo.cyls * geo.heads;
@@ -4039,18 +4060,18 @@ export default function App() {
             <Disc size={14} /> {t('tabDsk')}
           </button>
           <button
-            onClick={() => setActiveTab('k7')}
-            className={`tab-btn ${activeTab === 'k7' ? 'tab-btn-active' : ''}`}
-            title={currentLang === 'pt-br' ? 'K7 — fita cassete (waveform, WAV/CAS/VOC)' : 'K7 — cassette tape (waveform, WAV/CAS/VOC)'}
-          >
-            <AudioLines size={14} /> K7
-          </button>
-          <button
             onClick={() => setActiveTab('os9')}
             className={`tab-btn ${activeTab === 'os9' ? 'tab-btn-active' : ''}`}
             title={currentLang === 'pt-br' ? 'OS-9 / NitrOS-9 (RBF) — navegador hierárquico' : 'OS-9 / NitrOS-9 (RBF) — hierarchical browser'}
           >
             <HardDrive size={14} /> OS-9
+          </button>
+          <button
+            onClick={() => setActiveTab('k7')}
+            className={`tab-btn ${activeTab === 'k7' ? 'tab-btn-active' : ''}`}
+            title={currentLang === 'pt-br' ? 'K7 — fita cassete (waveform, WAV/CAS/VOC)' : 'K7 — cassette tape (waveform, WAV/CAS/VOC)'}
+          >
+            <AudioLines size={14} /> K7
           </button>
           <button
             onClick={() => setActiveTab('xroar')}
@@ -4063,6 +4084,12 @@ export default function App() {
             className={`tab-btn ${activeTab === 'gw' ? 'tab-btn-active' : ''}`}
           >
             <HardDrive size={14} /> {t('tabGw')}
+          </button>
+          <button
+            onClick={() => setActiveTab('fujinet')}
+            className={`tab-btn ${activeTab === 'fujinet' ? 'tab-btn-active' : ''}`}
+          >
+            <Globe size={14} /> {t('tabFujinet')}
           </button>
           <button
             onClick={() => setActiveTab('basic')}
@@ -4738,7 +4765,7 @@ export default function App() {
             sourceLabel={basicSource ? `${basicSource.entry.fullName} (${basicSource.pane})` : null}
             onUpdateInDsk={handleBasicUpdateInDsk}
           />
-        ) : (activeTab === 'xroar' || activeTab === 'os9' || activeTab === 'k7') ? null : (
+        ) : (activeTab === 'xroar' || activeTab === 'os9' || activeTab === 'k7' || activeTab === 'fujinet') ? null : (
           <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
             {/* DSK toolbar — folga simples (mb-3) como na aba BASIC; o brilho do painel ativo
                 foi reduzido p/ anel fino (CSS .dsk-pane-active) para não vazar e "colar" na barra. */}
@@ -4838,6 +4865,11 @@ export default function App() {
         {/* XRoar emulator — always mounted (hidden unless active) so it never reboots on tab switch */}
         <div style={{ display: activeTab === 'xroar' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
           <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} pendingType={xroarType} onLog={addLog} platform={platform} expanded={xroarExpanded} onToggleExpand={() => setXroarExpanded(v => !v)} />
+        </div>
+
+        {/* Aba FujiNet — sempre montada (display toggle) p/ preservar listagem/host/favoritos ao trocar de aba */}
+        <div style={{ display: activeTab === 'fujinet' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
+          <FujiNetTab lang={currentLang} onLog={addLog} onOpenImage={handleFujinetOpenImage} />
         </div>
 
         {/* SPLITTER 3 (Horizontal) — escondido quando o XRoar está expandido (tela cheia) */}

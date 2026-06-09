@@ -1,13 +1,122 @@
 ================================================================================
-  CoCo DSK & CCC Utility  —  VERSION HISTORY
-  .DSK image manager and file-to-.CCC converter (CoCoEPROMpak)
-  Author: Mauricio Matte (c) 2026
+  CoCo File Image Utility (CoCoFIU)  —  VERSION HISTORY
+  TRS-80 Color Computer / Dragon disk image utility
+  Author: Mauricio Matte (c) 2026   (formerly "CoCo DSK & CCC Utility" / "CoCo Image Utility")
 ================================================================================
 
 How to read this file: the NEWEST versions are at the TOP. On each release,
 add a new section at the beginning with the date and a description of what was
 changed/added/fixed.
 
+
+--------------------------------------------------------------------------------
+v1.0.56 — 2026-06-09
+--------------------------------------------------------------------------------
+RENAME — the program is now "CoCo File Image Utility (CoCoFIU)" + new splash image
+  • Name updated in ALL records: window title, main-screen title (PT/EN), console welcome message (PT/EN),
+    index.html <title>, installer productName and artifactName (CoCoFIU_Setup …), and the changelog headers.
+    (Previously "CoCo Image Utility (CoCoIMU)".)
+  • SPLASH: image swapped for the new one (amostras/newsplash.png → resources/splash/splash.png, shrunk from
+    ~8.6 MB to ~1 MB, 760×567, transparency preserved via .NET System.Drawing).
+
+--------------------------------------------------------------------------------
+v1.0.55 — 2026-06-09
+--------------------------------------------------------------------------------
+NEW — FujiNet: WiFi SERVER (TNFS) — phase M3 (folder or container) + fixes
+  • The app is now a TNFS SERVER (UDP 16384, read-only) that the FujiNet mounts live. Pure-Node
+    implementation (src/main/net/tnfsServer.ts: MOUNT/UMOUNT/OPENDIR/READDIR/CLOSEDIR/STAT/OPEN/READ/CLOSE/
+    LSEEK — LSEEK is essential for FujiNet's random sector access). UI wired in the FujiNet tab's right
+    panel: choose the SOURCE (Folder × Container), pick the folder/file, see the "Shared files" list,
+    START/STOP, and the PC IP to put in a host slot. Connection log in the console. IPCs
+    tnfs-server-start/stop/status/preview + pick-file; matching preload.
+  • PROVIDERS: Folder (real files) and Container — MiniIDE/CoCoSDC(FAT)/DriveWire: each inner disk is exposed
+    as a .dsk (reuses scanMiniIdeImage / FAT Reader / DriveWire slices). The source is persisted.
+  • VALIDATED end-to-end (loopback): server + our client → LIST and READ of a 368,640-byte file identical to
+    the original. (Real boot with the FujiNet board = human validation pending.) Harness
+    tools/tnfsservetest.ts.
+  • FIXES: (a) a TRUNCATED OS-9 image is now recognized by its header and routed to the OS-9 tab with a clear
+    warning (instead of the "Invalid DSK image size" error); (b) the TNFS client reads until the REAL EOF
+    (does not trust the STAT size) — no truncation on servers that misreport size.
+  • LARGE DOWNLOADS no longer "freeze": TNFS downloads 512 bytes per round-trip, so a tens-of-MB file (e.g. a
+    30 MB CoCoSDC card image) would take a very long time. Now, above 4 MB the app WARNS and asks for
+    confirmation; and every download shows a PROGRESS BAR (GW-tab style — cells that fill up) in a STATUS BAR
+    between the TNFS-hub panel and "Open by URL", with the file name, KB/KB (%) and a CANCEL button (IPC
+    tnfs-progress/tnfs-read-cancel). So the user clearly sees a download is in progress.
+
+--------------------------------------------------------------------------------
+v1.0.54 — 2026-06-09
+--------------------------------------------------------------------------------
+NEW — Splash screen + program RENAMED to "CoCo Image Utility (CoCoIMU)"
+  • Startup splash for 5 seconds, with a progress bar running left → right. Shows the picture
+    (splashscreen.png shrunk from 8.16 MB → ~1 MB, 760×567, transparency preserved via .NET System.Drawing
+    → resources/splash/splash.png), and below it, centered: "version X.X.XX" and
+    "IMAGE UTILITY. By Mauricio Matte (c) 2026" (PT: "versão" + "MANIPULADOR DE IMAGENS. Por …").
+    Frameless/transparent window; the main window only appears after the 5 s. Packaged via extraResources
+    (resources/splash → <app>/splash); the language comes from settings.json.
+  • RENAMED: the program is now "CoCo Image Utility (CoCoIMU)". Updated: window title, main-screen title,
+    console welcome message, installer productName and artifactName (CoCoIMU_Setup …). The version shown on
+    the splash follows package.json automatically.
+
+--------------------------------------------------------------------------------
+v1.0.53 — 2026-06-09
+--------------------------------------------------------------------------------
+NEW — FujiNet: server management (favorites + community) and tab PERSISTENCE
+  • Just-in-time server dropdown: a "My servers" group (user favorites) + a "Community (live)" group fetched
+    from fujinet.online/tnfs-server-status (table parsed; UDP status shown and UDP-down servers DISABLED,
+    since TNFS is UDP). Built-in fallback if the fetch fails. IPC tnfs-community + preload tnfsCommunity.
+    (Validated: 18 servers parsed with correct TCP/UDP.)
+  • "Manage" modal: add/remove favorites (host + optional label + start folder), connect directly, and
+    "save to favorites" from the community list. A ★ button saves the current host.
+  • "Disconnect" button next to "Connect": clears the on-screen TNFS session/listing (TNFS is per-operation,
+    mount/umount, so there is no held connection — disconnect = back to the pre-connection state).
+  • PERSISTENCE (fixes "the tab kept nothing"): the FujiNet tab is now ALWAYS MOUNTED (like XRoar/OS-9/K7)
+    → listing/host/path survive tab switches; and favorites + last host + shared folder + read-only are
+    saved in the config (cfg.fujinet) → survive restart.
+  • CSS FIX: defined the missing .text-left/.justify-start/.text-right utilities in index.css (that's why
+    the TNFS listing names appeared centered — they inherited the <button> text-align:center).
+
+--------------------------------------------------------------------------------
+v1.0.52 — 2026-06-09
+--------------------------------------------------------------------------------
+NEW — FujiNet: working TNFS client (phase M1b) — browse hubs and download images
+  • TNFS client (Trivial Network File System, UDP 16384) implemented in pure Node (src/main/net/tnfs.ts:
+    MOUNT/UMOUNT/OPENDIR/READDIR/CLOSEDIR/STAT/OPEN/READ/CLOSE, little-endian, with retransmission). IPCs
+    tnfs-list and tnfs-read (read detects .zip like the URL path); preload tnfsList/tnfsRead.
+  • In the FujiNet tab, the "TNFS servers (FujiNet hubs)" block is now FUNCTIONAL: type the host (e.g.
+    tnfs.fujinet.online), Connect, browse folders (↑ to go up) and click a file to DOWNLOAD and OPEN it in a
+    pane (OS-9 → OS-9 tab; .zip unzipped on the fly).
+  • VALIDATED against the real hub: "/" listed the 7 folders (ADAM…MSDOS); "/COCO" listed 11 .dsk (160K each);
+    downloading /COCO/news.dsk = exactly 161,280 bytes. Harness tools/tnfsprobe.ts.
+  • FujiNet tab Help (pt-BR and US) updated.
+
+--------------------------------------------------------------------------------
+v1.0.51 — 2026-06-09
+--------------------------------------------------------------------------------
+NEW — FujiNet / Online tab (structure) + working "Open by URL" (phase M1a)
+  • Added the **FujiNet / Online** tab, isolated (easy to enable/disable like EPROM), with a VERTICAL split:
+    LEFT = "Access servers" (client); RIGHT = "WiFi server (FujiNet)" (serve files to the board). Connection
+    messages go to the shared console.
+  • READY (M1a): "Open by URL (HTTP/HTTPS)" — downloads a .dsk/.vdk/.sdf/.os9/.img/.ccc/.cas from a link and
+    opens it in a pane (OS-9 goes to the OS-9 tab). Networking in MAIN (src/main/net/download.ts, no native
+    dep; follows redirects, 30s timeout, 64 MB cap); IPC net-download-url + preload netDownloadUrl.
+  • Automatic ZIP (most of the Color Computer Archive comes as .zip): the app UNZIPS on the fly (pure-Node ZIP
+    reader using zlib.inflateRawSync, no native dep — src/main/converter/zip.ts). 1 image in the zip → opens
+    directly; several → shows a picker. Validated on the real "3D Brickaway (Avalon Hill).zip" file
+    (→ 3DBRICK.DSK, 161,280 bytes). IPC zip-extract + preload zipExtract.
+  • SCAFFOLDED (next phases): "TNFS servers" (client, M1b) and the "WiFi server" with shared folder/port
+    16384/read-only + explorer (M3) show a "soon" badge.
+  • FujiNet tab Help (pt-BR and US) created. Added a pick-directory IPC (choose the shared folder).
+
+--------------------------------------------------------------------------------
+v1.0.50 — 2026-06-09
+--------------------------------------------------------------------------------
+IMPROVEMENT — XRoar tab: "Program (.bin/.rom)" block shows the loaded name and is more compact
+  • The NAME of the loaded program (.bin/.rom/.ccc/.hex/.sna) now appears HIGHLIGHTED at the top of the
+    block (a highlighted chip) — previously there was no indication of the loaded file.
+  • The "Open & run .bin/.rom" button became just "Open" (the block title already says .bin/.rom) and the
+    ".bin AutoRun on/off" toggle became just "AutoRun" (the icon/color show on/off). They now sit SIDE BY
+    SIDE, freeing space at the top for the program name.
+  • XRoar tab Help (pt-BR and US) updated.
 
 --------------------------------------------------------------------------------
 v1.0.49 — 2026-06-09

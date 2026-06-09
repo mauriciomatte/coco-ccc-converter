@@ -103,8 +103,9 @@ You usually don't do this by hand: the other tabs mount the disk for you (sectio
 
 ## 9. Program (.bin/.rom/.ccc/.hex/.sna)
 
-- **Open & run .bin/.rom** loads and **runs** a program; XRoar detects the format.
-- The **".bin AutoRun"** toggle: **on** = a `.bin/.hex` boots the emulator **with** the file and runs by
+- The **loaded program name** is shown highlighted at the top of the block.
+- **Open** loads and **runs** a program (`.bin/.rom/.ccc/.hex/.sna`); XRoar detects the format.
+- The **"AutoRun"** toggle (next to Open): **on** = a `.bin/.hex` boots the emulator **with** the file and runs by
   itself; **off** = it only loads into memory (you run it with `EXEC`). Cartridges `.ccc/.rom` and snapshots
   `.sna` **always** run directly.
 
