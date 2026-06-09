@@ -10,6 +10,14 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.45 — 2026-06-09
+--------------------------------------------------------------------------------
+CORREÇÃO — "lado/lados" não traduzido no menu "Novo OS9…" (en-US)
+  • As opções de geometria do menu "Novo OS9…" (Em branco / Bootável / Bootável + programas) tinham o
+    rótulo fixo em português ("1 lado", "2 lados") mesmo no idioma inglês. Agora seguem o idioma:
+    "1 side (SS)" / "2 sides (DS)" em en-US e "1 lado (SS)" / "2 lados (DS)" em pt-BR.
+
+--------------------------------------------------------------------------------
 v1.0.44 — 2026-06-08
 --------------------------------------------------------------------------------
 NOVO — Gabaritos OS-9 EMBUTIDOS (cria disco bootável sem caçar disco de referência)

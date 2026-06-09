@@ -10,6 +10,14 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.45 — 2026-06-09
+--------------------------------------------------------------------------------
+FIX — "lado/lados" not translated in the "New OS9…" menu (en-US)
+  • The geometry options in the "New OS9…" menu (Blank / Bootable / Bootable + programs) had a
+    hard-coded Portuguese label ("1 lado", "2 lados") even in English. They now follow the language:
+    "1 side (SS)" / "2 sides (DS)" in en-US and "1 lado (SS)" / "2 lados (DS)" in pt-BR.
+
+--------------------------------------------------------------------------------
 v1.0.44 — 2026-06-08
 --------------------------------------------------------------------------------
 NEW — Built-in OS-9 templates (create a bootable disk without hunting for a reference)

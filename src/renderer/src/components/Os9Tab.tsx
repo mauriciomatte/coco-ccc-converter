@@ -35,9 +35,11 @@ const fmtDate = (d?: Os9Date | null) => (d ? `${d.year}-${pad(d.month)}-${pad(d.
 const fmtSize = (n: number) => (n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B');
 const sanitizeName = (s: string) => s.replace(/[\/\\]/g, '').replace(/[^\x20-\x7e]/g, '').slice(0, 28).trim();
 
-const GEOMS: { key: string; label: string }[] = [
-  { key: '158k', label: '158K · 35T · 1 lado (SS)' }, { key: '180k', label: '180K · 40T · 1 lado (SS)' },
-  { key: '360k', label: '360K · 40T · 2 lados (DS)' }, { key: '720k', label: '720K · 80T · 2 lados (DS)' },
+const GEOMS: { key: string; labelPt: string; labelEn: string }[] = [
+  { key: '158k', labelPt: '158K · 35T · 1 lado (SS)', labelEn: '158K · 35T · 1 side (SS)' },
+  { key: '180k', labelPt: '180K · 40T · 1 lado (SS)', labelEn: '180K · 40T · 1 side (SS)' },
+  { key: '360k', labelPt: '360K · 40T · 2 lados (DS)', labelEn: '360K · 40T · 2 sides (DS)' },
+  { key: '720k', labelPt: '720K · 80T · 2 lados (DS)', labelEn: '720K · 80T · 2 sides (DS)' },
 ];
 // Geometrias com GABARITO OS-9 EMBUTIDO (NitrOS-9): criam bootável automaticamente, sem pedir
 // referência. As demais (158K/35T e 180K/40s) não têm sistema OS-9 livre p/ CoCo → pedem disco seu.
@@ -228,25 +230,28 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     else requestNew(value);
   };
   // opções do dropdown "Novo…": em branco · bootável (clona sistema de referência) · bootável + programas
+  const gl = (g: { labelPt: string; labelEn: string }) => pt ? g.labelPt : g.labelEn; // rótulo da geometria no idioma atual
+  const refSuffix = pt ? ' — referência sua' : ' — your reference';
+  const seedSuffix = pt ? ' ✓ gabarito' : ' ✓ template';
   const renderNewOptions = () => (
     <>
       <optgroup label={pt ? 'Em branco' : 'Blank'}>
-        {GEOMS.map(g => <option key={'b' + g.key} value={g.key}>{g.label}</option>)}
+        {GEOMS.map(g => <option key={'b' + g.key} value={g.key}>{gl(g)}</option>)}
       </optgroup>
       <optgroup label={pt ? 'Bootável (gabarito NitrOS-9)' : 'Bootable (NitrOS-9 template)'}>
         {GEOMS.flatMap(g => OS9_SEEDED.has(g.key) ? [
-          <option key={'k' + g.key} value={'boot:' + g.key}>{g.label}{pt ? ' ✓ gabarito' : ' ✓ template'}</option>,
-          <option key={'kr' + g.key} value={'bootref:' + g.key}>{g.label}{pt ? ' — referência sua' : ' — your reference'}</option>,
+          <option key={'k' + g.key} value={'boot:' + g.key}>{gl(g)}{seedSuffix}</option>,
+          <option key={'kr' + g.key} value={'bootref:' + g.key}>{gl(g)}{refSuffix}</option>,
         ] : [
-          <option key={'k' + g.key} value={'boot:' + g.key}>{g.label}{pt ? ' — referência sua' : ' — your reference'}</option>,
+          <option key={'k' + g.key} value={'boot:' + g.key}>{gl(g)}{refSuffix}</option>,
         ])}
       </optgroup>
       <optgroup label={pt ? 'Bootável + programas' : 'Bootable + programs'}>
         {GEOMS.flatMap(g => OS9_SEEDED.has(g.key) ? [
-          <option key={'p' + g.key} value={'bootprog:' + g.key}>{g.label}{pt ? ' ✓ gabarito' : ' ✓ template'}</option>,
-          <option key={'pr' + g.key} value={'bootprogref:' + g.key}>{g.label}{pt ? ' — referência sua' : ' — your reference'}</option>,
+          <option key={'p' + g.key} value={'bootprog:' + g.key}>{gl(g)}{seedSuffix}</option>,
+          <option key={'pr' + g.key} value={'bootprogref:' + g.key}>{gl(g)}{refSuffix}</option>,
         ] : [
-          <option key={'p' + g.key} value={'bootprog:' + g.key}>{g.label}{pt ? ' — referência sua' : ' — your reference'}</option>,
+          <option key={'p' + g.key} value={'bootprog:' + g.key}>{gl(g)}{refSuffix}</option>,
         ])}
       </optgroup>
     </>
