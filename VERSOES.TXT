@@ -10,6 +10,264 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.44 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO — Gabaritos OS-9 EMBUTIDOS (cria disco bootável sem caçar disco de referência)
+  • O app agora vem com discos-semente ("gabaritos") NitrOS-9 BOOTÁVEIS embutidos para as geometrias
+    360K (40T DS) e 720K (80T DS). Em "Novo OS9… → Bootável" (ou "Bootável + programas"), ao escolher
+    360K/720K o disco é criado AUTOMATICAMENTE — não pede mais um disco de referência. As opções
+    aparecem marcadas com "✓ gabarito" no menu.
+  • Geometrias 158K (35T) e 180K (40T um lado) aparecem marcadas "— referência sua": não existe sistema
+    OS-9 livre para CoCo nessas geometrias (35T só como OS-9 Tandy proprietário; 40T-SS é formato de
+    Dragon), então o app continua pedindo um disco de referência seu. A Ajuda da aba OS-9 explica e
+    indica onde baixar (Color Computer Archive e nitros9.sourceforge.io).
+  • LIBERDADE DE ESCOLHA: mesmo em 360K/720K (que têm gabarito), o menu agora também traz a variante
+    "— referência sua", tanto em "Bootável" quanto em "Bootável + programas". Assim você pode usar uma
+    versão específica do sistema (ex.: NitrOS-9 6309/Level 2, ou um disco que você já configurou) em vez
+    do gabarito embutido — nunca fica preso ao gabarito. (O IPC passou a aceitar "forceRef": quando a
+    variante "referência sua" é escolhida, o app IGNORA o gabarito e abre o seletor de arquivo.)
+  • MENSAGEM MAIS CLARA: ao inserir programas num disco sem espaço, a mensagem deixou de dizer
+    genericamente "sem espaço contíguo" e passou a informar o tamanho necessário × setores livres,
+    sugerindo um disco de referência maior ou um programa menor (a alocação já fragmenta automaticamente,
+    então a causa real é falta de espaço total, não fragmentação).
+  • Licença: os gabaritos são imagens do NitrOS-9, distribuído livremente pela comunidade Color Computer
+    (código sob GPL). Créditos no arquivo NOTICE.txt empacotado junto. Empacotamento via electron-builder
+    "extraResources" (resources/os9seed → <app>/resources/os9seed); o app resolve o caminho em dev e em
+    produção. Seeds validados: bootáveis, boot track no track 34, clone+parse RBF OK (360K/720K).
+  • Ajuda das abas OS-9 (pt-BR e US) atualizada: gabaritos embutidos × referência própria, tabela de
+    geometrias e fontes de download.
+
+--------------------------------------------------------------------------------
+v1.0.43 — 2026-06-08
+--------------------------------------------------------------------------------
+DOCUMENTAÇÃO — Ajuda da aba DSK ampliada (cobertura completa de funcionalidades)
+  • O manual da aba DSK (botão "?") foi reescrito para cobrir TODAS as funções existentes, item a item:
+    os dois painéis A/B e o painel ativo; toda a barra de ferramentas (Novo, Importar, Injetar,
+    Copiar/Recortar/Colar + área de transferência de arquivos, Excluir, Desfazer/Refazer, Ordenar A-Z
+    do disco ativo × Ordenar Todos do contêiner, Copiar Painel A→B, Testar Painel no XRoar, Gravar GW,
+    Salvar/Salvar Como); abertura/importação (.dsk/.vdk/.jvc/DMK/SDF e contêineres DriveWire/MiniIDE/
+    CoCoSDC); navegação de contêiner (◀▶, número do disco, "Buscar disco" por nome de disco OU arquivo);
+    criar disco novo nos formatos CoCo 35T / CoCo 40T / Dragon 40T; injeção/extração e interpretação de
+    .CAS; duplo-clique para rodar; arrastar-e-soltar entre painéis (Ctrl=copiar, Shift=mover) e com o
+    Explorer do Windows; mapa do disco com cores, ocupação e fragmentação na barra de status; DEFRAG e
+    DEFRAG ARQ.; discos de "arte" em somente-leitura; editor hexadecimal + desassemblador 6809 (origem,
+    fluxo, marcas de código/dados/vetores); salvar/SDF/gravar de volta no contêiner; e o roteamento de
+    discos OS-9/dupla-face para a aba OS-9. Versões pt-BR e US atualizadas em conjunto.
+
+--------------------------------------------------------------------------------
+v1.0.42 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO/CORREÇÃO — .SDF no "Salvar Como" da aba DSK + fim dos logs duplicados no console
+  • A aba DSK agora oferece o tipo ".sdf" no "Salvar Como" (para um disco RS-DOS único — raw, um lado,
+    256 B/setor). Assim dá para converter um .dsk RS-DOS em .sdf direto pela aba DSK. (Contêiner e
+    Dragon/.vdk não oferecem .sdf por enquanto.)
+  • CORREÇÃO: o console de diagnóstico mostrava as mensagens de inicialização (boas-vindas, formatos,
+    "configurações carregadas") em DUPLICIDADE. Causa: o React.StrictMode (modo de desenvolvimento)
+    executa os efeitos duas vezes, e a mensagem de boas-vindas ainda re-logava ao trocar o idioma.
+    Agora esses logs de inicialização rodam UMA única vez (guarda por referência) e o de boas-vindas
+    não repete ao alternar BR/US.
+  • Aba K7: removido o rótulo redundante (ícone de onda + "K7") da direita da barra; no lugar ficou o
+    botão de Ajuda. Ajuda da aba DSK: documentado o arrastar-e-soltar entre painéis (Ctrl=copiar,
+    Shift=mover) e entre painel ↔ Explorer do Windows.
+
+
+--------------------------------------------------------------------------------
+v1.0.41 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO — Escrita/criação de imagens SDF (CoCoSDC) — agora SDF é um formato completo
+  • Além de LER, o app agora GRAVA SDF. Na aba OS-9, "Salvar Como" oferece o tipo ".sdf"; ao editar um
+    .sdf, o "Salvar" já regrava em SDF. Assim dá para CRIAR um disco do zero (Novo → Em branco ou
+    Bootável) e salvá-lo como .sdf, e CONVERTER um .os9/.dsk para .sdf.
+  • O encoder gera trilhas MFM padrão (256 B/setor) com address marks e GAPs como um SDF real, e
+    calcula os CRCs no mesmo algoritmo do controlador WD (FDC) — validado: os CRCs batem byte-a-byte
+    com os de um SDF real (FHL FLEX 5.0.4), garantindo leitura no CoCoSDC real.
+  • Validação por round-trip: rawToSdf→sdfToRaw reproduz o disco original byte-a-byte (disco OS-9 real
+    de 360K e geometrias em branco 158K/180K/360K/720K). Detecção pelo magic SDF1.
+  • Observação: a GERAÇÃO cobre discos de geometria padrão (OS-9/RS-DOS/Dragon, MFM 256 B). Layouts FM/
+    densidade-mista/copy-protected continuam apenas LEGÍVEIS (não regerados).
+  • `.SDF` adicionado à lista de formatos suportados na mensagem de boas-vindas do console.
+
+
+--------------------------------------------------------------------------------
+v1.0.40 — 2026-06-08
+--------------------------------------------------------------------------------
+MELHORIA — Aba OS-9: tela inicial sem duplicação (um painel até carregar um disco)
+  • Com a aba VAZIA, antes apareciam DOIS painéis idênticos pedindo "abrir/criar". Agora aparece só UM
+    painel (o A / Topo), em altura cheia. Ao abrir ou criar um disco, o segundo painel (B / Base) surge
+    e a tela passa ao modo de dois exploradores. O painel A é o destino padrão da primeira abertura.
+  • Ajuda do .sdf documentada (no manual da aba DSK): o app LÊ SDF (abrir/extrair/editar conteúdo); não
+    cria nem grava .sdf — salve como .dsk/.os9; crie SDF no próprio CoCoSDC ou via dmk2sdf.
+
+
+--------------------------------------------------------------------------------
+v1.0.39 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO — Ajuda (manual) por aba, bilíngue (PT-BR / EN), + correção no "Novo OS-9…"
+  • Cada aba ganhou um manual próprio acessível por um botão de Ajuda:
+      - OS-9: botão "?" ao lado do "Novo OS-9…" (estado inicial) e na barra de ferramentas.
+      - DSK / K7 / BASIC: botão "?" na barra de ferramentas (compacto, evita 2ª linha).
+      - GW: botão "Ajuda" inline, à direita do título "GREASEWEAZLE…".
+      - XRoar (sem barra no topo): botão "Como usar a aba XRoar" no painel direito, abaixo de Controles.
+  • Os manuais explicam TODOS os recursos de cada aba, em PT-BR e EN (o idioma segue o do app). Os
+    textos ficam em arquivos .md (src/renderer/src/help/) e são renderizados num modal.
+  • CORREÇÃO (OS-9): ao escolher "Bootável"/"Bootável + programas" no "Novo OS-9…", se o disco-gabarito
+    for INCOMPATÍVEL (geometria diferente, não-bootável ou não-OS-9), o app agora INFORMA o motivo na
+    própria tela inicial (antes falhava em silêncio). Com um gabarito válido, o disco é criado
+    automaticamente ao selecionar o arquivo (não há botão "Criar" — não é necessário).
+
+
+--------------------------------------------------------------------------------
+v1.0.38 — 2026-06-08
+--------------------------------------------------------------------------------
+MELHORIA — Filtro de tela do XRoar (Nítido/Suave) p/ legibilidade do texto 80 colunas
+  • Novo seletor "Filtro de tela" na aba XRoAR: Nítido (pixel) = pixels exatos, bom p/ jogos; Suave
+    (linear) = uniformiza as hastes do texto fino de 80 colunas (que ficavam irregulares por causa da
+    escala não-inteira). Para OS-9 isso resolve a legibilidade que sobrava mesmo em RGB/expandido.
+  • Ao testar OS-9 (botão Testar/Bootar), o app agora já liga RGB + filtro SUAVE automaticamente, além
+    de CoCo 3 — tela pronta e legível sem ajustes. O filtro fica salvo nas configs.
+
+
+--------------------------------------------------------------------------------
+v1.0.37 — 2026-06-08
+--------------------------------------------------------------------------------
+MELHORIA — Botão EXPANDIR a tela do XRoar (mais nitidez)
+  • Novo botão de expandir (canto superior direito da tela do XRoar): esconde as barras laterais E o
+    console de diagnóstico do rodapé, dando ao emulador TODA a área da aba. Como a tela 4:3 é limitada
+    pela ALTURA, ganhar altura aumenta o canvas → texto bem maior e mais nítido (ótimo p/ as 80 colunas
+    do OS-9). Clique de novo para recolher e ver os painéis.
+
+
+--------------------------------------------------------------------------------
+v1.0.36 — 2026-06-08
+--------------------------------------------------------------------------------
+MELHORIA — Testar OS-9 já deixa o XRoar PRONTO p/ OS-9 (CoCo 3 + RGB automático)
+  • Ao usar "Testar"/"Bootar OS-9" na aba OS-9, o XRoar é configurado automaticamente: máquina CoCo 3 e
+    SAÍDA DE VÍDEO = RGB (nítido). As 80 colunas hi-res do NitrOS-9 ficam legíveis sem você precisar
+    trocar nada (o vídeo Composto borra texto hi-res — vale até no hardware real).
+  • Nota: o banner verde de 32 colunas que aparece no início do boot é o modo texto verde do CoCo
+    (verde por natureza, em RGB e em composto) — NÃO é artefato; as telas de 80 colunas (lista de
+    módulos, shell) é que ficam preto-no-branco nítidas em RGB.
+
+
+--------------------------------------------------------------------------------
+v1.0.35 — 2026-06-08
+--------------------------------------------------------------------------------
+CORREÇÃO — Boot de discos OS-9 no XRoar embarcado (o comando DOS não bootava)
+  • O XRoar embarcado estava sendo iniciado com "-no-disk-auto-os9", que DESLIGA a detecção de imagens
+    OS-9 sem cabeçalho (JVC). Como mandamos o disco OS-9 ao XRoar como .dsk cru, ele assumia a GEOMETRIA
+    ERRADA → o comando DOS lia a "trilha 34" no lugar errado → o boot voltava ao prompt do BASIC ("OK").
+    Agora usamos "-disk-auto-os9" (padrão do XRoar): a geometria OS-9 é detectada e o disco BOOTA. Não
+    afeta discos RS-DOS (só discos que realmente parecem OS-9 são detectados).
+  • Ao testar um disco OS-9 (botão Testar/Bootável da aba OS-9), a máquina do XRoar é forçada para
+    CoCo 3 (NitrOS-9 6809 Level 2 exige CoCo 3 / 512K) — evita falha de boot por máquina errada.
+  • Lembrete: "dir" num disco OS-9 dentro do BASIC mostra lixo + "FS ERROR" — é normal (dir é comando
+    RS-DOS; não lê o filesystem OS-9). O certo é montar e dar "DOS" p/ bootar.
+
+
+--------------------------------------------------------------------------------
+v1.0.34 — 2026-06-08
+--------------------------------------------------------------------------------
+MELHORIA — Aba OS-9: botão "Fechar" imagem + rótulos de geometria mais claros (SS/DS)
+  • Novo botão "Fechar" (X) na barra de ferramentas da aba OS-9 — descarta a imagem atual e volta ao
+    estado vazio (com confirmação se houver edição não salva), como o "limpar painel" da aba DSK.
+  • Os tamanhos no "Novo…" agora mostram trilhas e lados: "158K · 35T · 1 lado (SS)", "180K · 40T · 1
+    lado (SS)", "360K · 40T · 2 lados (DS)", "720K · 80T · 2 lados (DS)" — fica claro o single/double-side.
+  • Observação: o dropdown que aparece no centro (tela vazia) e o da barra de ferramentas são o MESMO
+    controle, só exibido em dois lugares — não são funções diferentes.
+
+
+--------------------------------------------------------------------------------
+v1.0.33 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO — Dropdown "Novo…" da aba OS-9: discos BOOTÁVEIS e BOOTÁVEL + PROGRAMAS (35T/40T/DS)
+  • O menu "Novo…" agora tem três grupos: "Em branco" (como antes), "Bootável (clonar sistema)" e
+    "Bootável + programas", cada um nas geometrias 35T (158K), 40T (180K), DS (360K) e DS (720K).
+  • Bootável: clona um disco OS-9/NitrOS-9 de SISTEMA bootável de referência (você escolhe o .dsk; a
+    geometria é validada) → gera um disco bootável e USÁVEL (com kernel + sysgo/startup/CMDS/SYS), ao
+    contrário do "tornar bootável" em branco (que só carrega o kernel). O aparato de boot é binário
+    específico de versão/geometria — por isso clona-se de uma referência, como faz o os9gen/cobbler.
+  • Bootável + programas: além de clonar o sistema, você escolhe um ou mais programas; eles são inseridos
+    em CMDS e o arquivo "startup" é PRESERVADO e ANEXADO com os nomes — então rodam automaticamente no
+    boot (sem apagar a inicialização original do sistema).
+  • Validado por round-trip (tools/os9clone.ts): clone fiel byte-a-byte; programa em CMDS legível;
+    startup preserva o original e anexa; demais arquivos intactos; disco continua bootável. 12/12.
+    ⚠️ O boot/execução reais ainda devem ser confirmados por você no XRoar (CoCo 3, drive 0, DOS).
+
+
+--------------------------------------------------------------------------------
+v1.0.32 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO — Leitura de imagens SDF (CoCoSDC) — abre discos protegidos / densidade mista (FLEX)
+  • SDF é o formato do CoCoSDC (Darren Atkinson) p/ discos NÃO-padrão/protegidos — é um "DMK pré-indexado"
+    (cada trilha tem uma Sector ID Table no cabeçalho). Agora o app DECODIFICA o SDF para imagem de setores
+    na ABERTURA e segue o fluxo normal (listar/extrair/editar), igual ao DMK. Vale p/ RS-DOS, OS-9/RBF e
+    Dragon. `.sdf` adicionado aos diálogos "Abrir imagem" e "Abrir OS-9".
+  • Detecção à prova de falso-positivo pelo MAGIC 'SDF1' + casamento exato de tamanho (512 + cil×lados×6656)
+    — nunca pela extensão (".sdf" colide com o "Sam Disk Format" do SAM Coupé). Trata densidade simples (FM,
+    bytes duplicados), interleave e marca setores protegidos (CRC inválido / marca de dados apagados).
+  • Validado contra uma amostra REAL (FHL Color FLEX 5.0.4): a decodificação do .sdf bate 100% (630/630
+    setores) com a do MESMO disco em DMK. Read-only (gerar SDF não é necessário nos fluxos atuais).
+  • Spec completa do formato SDF documentada em docs/OS9_STATUS_EN.txt (§7), a partir de estudo técnico.
+
+
+--------------------------------------------------------------------------------
+v1.0.31 — 2026-06-08
+--------------------------------------------------------------------------------
+NOVO — Tornar discos OS-9 BOOTÁVEIS + validações em mídia/discos REAIS
+  • Botão "Bootável" na aba OS-9: clona o aparato de boot de um disco NitrOS-9 BOOTÁVEL de referência
+    (do mesmo tamanho) — copia o BOOT TRACK (track 34/KERNELFILE, que o comando DOS carrega em $2600 e
+    executa) + o arquivo OS9Boot e ajusta DD.BT/DD.BSZ/DD.FMT. (O boot do CoCo tem DUAS partes: o boot
+    track NO track 34 e o arquivo OS9Boot — ambos são necessários; é o que o "os9 gen" do Toolshed faz.)
+    Indicador "⚡ bootável / ○ não-bootável" na barra de status.
+  • A ESTRUTURA do disco gerado é validada por round-trip CONTRA UM DISCO REAL (boot track copiado
+    verbatim, reservado no bitmap, OS9Boot contíguo idêntico, DD.BT/DD.FMT corretos). ⚠️ O BOOT em si
+    precisa ser confirmado por você no XRoar (CoCo 3, drive 0, comando DOS). NOTA: um disco "tornado
+    bootável" carrega o KERNEL; para um sistema USÁVEL (shell) copie também os arquivos de sistema
+    (sysgo/startup/CMDS/SYS) — ou clone um disco de sistema completo.
+  • VALIDAÇÕES desta rodada (em discos/mídia REAIS, fora da UI):
+    – Escrita FAT (D12) testada contra uma CÓPIA do cartão RetroRewind real (15,85 GB, FAT32, clusters
+      de 32 KB, 4699 discos): write-back de arquivo existente, inserir/crescer/encolher/excluir + 40
+      arquivos-testemunha intactos em cada passo = 10/10.
+    – Escrita OS-9 testada contra discos NitrOS-9 reais BOOTÁVEIS (v3.3.0 6809 L2): inserir arquivo,
+      reler, e todos os 99/229 arquivos originais byte-idênticos + bootstrap preservado = 7/7 por disco.
+
+
+--------------------------------------------------------------------------------
+v1.0.30 — 2026-06-07
+--------------------------------------------------------------------------------
+NOVO — Escrita no cartão CoCoSDC (FAT) + discos OS-9 dentro de imagens FAT (RetroRewind)
+  • ESCRITA FAT (D12): agora dá para gravar de volta um .dsk editado para dentro de uma imagem CoCoSDC /
+    RetroRewind (cartão SD FAT12/16/32) — botão "Salvar" do contêiner faz o write-back ajustando a
+    cadeia de clusters e o diretório. Também é possível INSERIR um novo .dsk/.os9 no cartão (botão
+    "Inserir disco" no painel do contêiner). Toda gravação pede CONFIRMAÇÃO (pode ser a mídia real) e
+    é VERIFICADA relendo os bytes após escrever. Recomendado: trabalhe sempre numa CÓPIA.
+  • A escrita nunca carrega a imagem inteira (acesso aleatório), então funciona em cartões de vários GB.
+    Atualiza as DUAS cópias da FAT, gera nomes longos (LFN) corretos e cresce o diretório quando cheio.
+  • DISCOS OS-9 dentro de imagens FAT: ao abrir/navegar um contêiner CoCoSDC/RetroRewind, um .dsk que
+    seja OS-9 (RBF) agora é reconhecido e aberto EDITÁVEL na aba OS-9 (antes aparecia como "lixo" na
+    aba DSK). Vale para DMK/JVC também (normaliza antes).
+  • Validação: bateria de round-trip (tools/fatrt.ts) em imagens FAT12 e FAT32 sintéticas — inserir
+    (nomes curtos e longos), substituir (crescer/encolher a cadeia), excluir, reuso de espaço livre,
+    crescimento de diretório (40 arquivos) e integridade dos vizinhos: 28/28 OK.
+
+
+--------------------------------------------------------------------------------
+v1.0.29 — 2026-06-07
+--------------------------------------------------------------------------------
+NOVO — Testar discos OS-9 no XRoar (ponte da aba OS-9 para o emulador embarcado)
+  • Botão "Testar" na barra de ferramentas da aba OS-9: monta o disco que você criou/editou numa drive
+    do XRoar sem sair do app — agora dá para CONFERIR no emulador o que foi escrito.
+  • Modal com escolha da drive (D0-D3) e três modos:
+      – Bootar OS-9: reseta e digita DOS (CoCo) / BOOT (Dragon) — para um disco OS-9 BOOTÁVEL na drive 0.
+      – Montar + Reset: monta com boot limpo (inspecione com o OS-9 já rodando: "dir /dX").
+      – Montar (sem reset): monta sem reiniciar o que está rodando.
+  • Disponível para discos OS-9 EM MEMÓRIA (Novo / Abrir .os9 / arrastar / .dsk avulso). Fica desabilitado
+    para a partição OS-9 de um container (grande demais para um floppy do emulador).
+  • O disco raw OS-9 é enviado ao XRoar como .dsk (o emulador acerta a geometria pelo tamanho); o seletor
+    de disco do XRoar também passa a aceitar .os9.
+
+
+--------------------------------------------------------------------------------
 v1.0.28 — 2026-06-07
 --------------------------------------------------------------------------------
 NOVO — Leitura de imagens DMK (abre discos OS-9 / RS-DOS / Dragon em formato de trilha)

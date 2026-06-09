@@ -5,6 +5,7 @@ import {
   Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles,
 } from 'lucide-react';
 import MiniXRoar from './MiniXRoar';
+import { HelpButton, TabHelpModal } from './TabHelp';
 
 // ABA K7 (fita cassete) — FASE K1: K0 (waveform + casco) + PLAYER (Web Audio play/pause/stop) +
 // CASSETE ANIMADA sincronizada + PLAYHEAD + contador + velocidade (Época/×2/×4) + zoom/seek.
@@ -157,6 +158,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
 }) {
   const pt = lang === 'pt-br';
+  const [showHelp, setShowHelp] = useState(false);
   const t = (a: string, b: string) => (pt ? a : b);
   // Configurações persistentes da aba K7 (localStorage): ajustes de som, velocidade, formato de
   // extração, espelhamento e os pesos (larguras) dos 3 painéis de baixo.
@@ -1000,8 +1002,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         {ebtn(<Crop size={14} />, t('Recortar p/ a seleção (mantém só o trecho selecionado)', 'Crop to the selection (keep only the selected part)'), doTrim, !!selRange())}
         {ebtn(<Maximize2 size={14} />, t('Normalizar a amplitude (melhora a decodificação)', 'Normalize the amplitude (improves decoding)'), doNormalize, !!audio)}
         {ebtn(<SeparatorVertical size={14} />, t('Inserir PAUSA (1,0s de silêncio) no playhead/seleção — cria um gap entre segmentos (p/ fitas com loader, em tempo real)', 'Insert a PAUSE (1.0s silence) at the playhead/selection — creates a gap between segments (for loader tapes, real-time)'), doInsertGap, !!audio)}
-        <span className="ml-auto text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-bold flex items-center gap-1"><AudioLines size={13} /> K7</span>
+        <span className="ml-auto"><HelpButton onClick={() => setShowHelp(true)} lang={lang as any} /></span>
       </div>
+      {showHelp && <TabHelpModal topic="k7" lang={lang as any} onClose={() => setShowHelp(false)} />}
 
       {/* CORPO */}
       <div className="flex-1 flex" style={{ minHeight: 0 }}>

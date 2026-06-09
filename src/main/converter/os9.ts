@@ -676,7 +676,18 @@ export function os9Insert(raw: Buffer, parentFdLsn: number, name: string, data: 
   let segs: Os9Segment[] = [];
   if (dataClusters > 0) {
     const s = allocSegments(out, base, id, dataClusters);
-    if (!s) { setCluster(out, base, fdC, false); throw new Error('Sem espaço contíguo suficiente para os dados.'); }
+    if (!s) {
+      setCluster(out, base, fdC, false);
+      // allocSegments fragmenta (até 48 segmentos) → a falha é por espaço TOTAL insuficiente ou por
+      // fragmentação extrema. Reporta o espaço livre real para a mensagem ser acionável.
+      const freeSec = countFreeSectors(out, id, base);
+      const needSec = dataClusters * spc;
+      throw new Error(
+        `Espaço insuficiente para "${name}" (${data.length} bytes ≈ ${needSec} setores; ` +
+        `livres: ${freeSec}). Escolha um disco de referência com mais espaço livre, ` +
+        `ou um programa menor.`
+      );
+    }
     segs = s;
   }
   // 3) FD + dados
@@ -719,6 +730,115 @@ export function os9Delete(raw: Buffer, parentFdLsn: number, name: string, base =
   // se era diretório, o ".." dele apontava p/ o pai → decrementa o link count do pai
   if (fd.isDir) { const po = base + parentFdLsn * SEC; if (out[po + FD_LNK] > 0) w8(out, po + FD_LNK, out[po + FD_LNK] - 1); }
   return out;
+}
+
+// ---- Tornar um disco BOOTÁVEL (clona o aparato de boot de um disco de referência) ----
+//
+// Bootar OS-9/NitrOS-9 no CoCo tem DUAS partes (confirmado por engenharia reversa do
+// NOS9_6809_L2_v030300_coco3_40d_1.dsk e pelo wiki do NitrOS-9):
+//   1) BOOT TRACK (KERNELFILE): o comando DOS do Disk BASIC carrega o **track 34** (1 track = SPT
+//      setores, side 0) em $2600 e SALTA para $2602. Esse track contém REL+KRN (o bootstrap). Ele
+//      NÃO é um arquivo do filesystem — fica reservado direto no bitmap. (No disco real: LSN 1224..1241
+//      = "OS -"+módulos; o LSN 1242+ já é arquivo /DEFS/coco3vtio.d.)
+//   2) OS9Boot (BOOTFILE): arquivo CONTÍGUO na raiz com os demais módulos; DD.BT=LSN dos dados dele,
+//      DD.BSZ=tamanho. O KRN (já rodando) lê LSN0, acha DD.BT e carrega o OS9Boot na RAM.
+// `os9MakeBootable` antiga (só DD.BT+OS9Boot) gerava disco que o DOS não bootava (track 34 vazio).
+//
+// Aqui CLONAMOS os dois de um disco-referência bootável da MESMA geometria (mesmo totalSectors/SPT/
+// lados → mesmo LSN de track 34). É o que o `os9 gen -t KERNELFILE -b BOOTFILE` do Toolshed faz.
+// ⚠️ A ESTRUTURA é validada por round-trip (tools/os9mkboot.ts); o BOOT real precisa de confirmação
+// no XRoar/hardware (montar no drive 0, digitar DOS).
+export function os9MakeBootable(raw: Buffer, refDisk: Buffer, base = 0): Buffer {
+  const id = parseIdent(raw, base);
+  const ref = parseIdent(refDisk, 0);
+  // geometria precisa bater (senão o track 34 cai em LSN diferente e o boot track não casa)
+  if (id.totalSectors !== ref.totalSectors || id.sectorsPerTrack !== ref.sectorsPerTrack || id.sides !== ref.sides || id.sectorsPerCluster !== ref.sectorsPerCluster)
+    throw new Error(`Geometria do disco difere da referência (alvo ${id.totalSectors}/${id.sectorsPerTrack}/${id.sides}L vs ref ${ref.totalSectors}/${ref.sectorsPerTrack}/${ref.sides}L). Use um disco bootável do MESMO tamanho.`);
+  const refBoot = os9BootInfo(refDisk, 0);
+  if (!refBoot.bootable) throw new Error('O disco de referência não é bootável (DD.BT/DD.BSZ = 0).');
+  const spc = id.sectorsPerCluster;
+  // BOOT TRACK = track 34, side 0 → começa no LSN da cilindro 34 e ocupa SPT setores
+  const bootTrackLsn = 34 * id.sectorsPerTrack * id.sides;
+  const bootTrackSectors = id.sectorsPerTrack;
+  if ((bootTrackLsn + bootTrackSectors) * SEC > refDisk.length || (bootTrackLsn + bootTrackSectors) * SEC > raw.length)
+    throw new Error('Disco pequeno demais para um boot track no track 34.');
+  // sanidade: a referência tem boot no track 34? (assinatura "OS" do REL, ou módulo 0x87CD)
+  const sig0 = r8(refDisk, bootTrackLsn * SEC), sig1 = r8(refDisk, bootTrackLsn * SEC + 1);
+  if (!((sig0 === 0x4f && sig1 === 0x53) || (sig0 === 0x87 && sig1 === 0xcd)))
+    throw new Error('A referência não tem um boot track reconhecível no track 34.');
+
+  let out: Buffer = Buffer.from(raw);
+  // remove OS9Boot anterior (re-gerar) — libera seus clusters
+  if (findDirEntry(out, base, readFD(out, id.rootDirLsn, base), 'OS9Boot') >= 0) out = os9Delete(out, id.rootDirLsn, 'OS9Boot', base);
+  // 1) RESERVA os clusters do boot track ANTES de inserir o OS9Boot (senão o alocador poderia usá-los)
+  for (let lsn = bootTrackLsn; lsn < bootTrackLsn + bootTrackSectors; lsn++) setCluster(out, base, Math.floor(lsn / spc), true);
+  // 2) copia o boot track (KERNELFILE) verbatim da referência
+  refDisk.copy(out, base + bootTrackLsn * SEC, bootTrackLsn * SEC, (bootTrackLsn + bootTrackSectors) * SEC);
+  // 3) extrai o OS9Boot da referência e o insere como arquivo contíguo na raiz do alvo
+  const refRoot = readFD(refDisk, ref.rootDirLsn, 0);
+  const refBootLsn = findDirEntry(refDisk, 0, refRoot, 'OS9Boot');
+  if (refBootLsn < 0) throw new Error('Referência sem arquivo OS9Boot na raiz.');
+  const bootModule = readFileData(refDisk, readFD(refDisk, refBootLsn, 0), 0);
+  out = os9Insert(out, id.rootDirLsn, 'OS9Boot', bootModule, base, { attributes: 0x03 });
+  const fd = readFD(out, findDirEntry(out, base, readFD(out, id.rootDirLsn, base), 'OS9Boot'), base);
+  if (fd.segments.length !== 1) throw new Error('OS9Boot ficou fragmentado (sem run contíguo). Desfragmente o disco e tente de novo.');
+  // 4) DD.BT = LSN dos dados do OS9Boot; DD.BSZ = tamanho; DD.FMT = densidade da referência
+  w24(out, base + 0x15, fd.segments[0].lsn);
+  w16(out, base + 0x18, fd.size);
+  w8(out, base + 0x10, ref.format);
+  return out;
+}
+
+// ---- Criar disco BOOTÁVEL a partir de um disco de SISTEMA de referência ----
+//
+// Um disco OS-9 bootável e USÁVEL precisa do aparato de boot (boot track + OS9Boot, ver
+// os9MakeBootable) E dos arquivos de sistema (sysgo/startup/CMDS/SYS). Esses são blobs binários
+// específicos de geometria/versão que NÃO dá p/ sintetizar — então a forma robusta de "criar um
+// disco bootável" é CLONAR um disco de sistema de referência (que já tem tudo) e, opcionalmente,
+// inserir programas + escrever um `startup` que os executa no boot.
+//
+// `programs`: cada um vira um arquivo executável (attr 0x2D = exec+read público/dono) inserido em
+// CMDS (se existir no destino) ou na raiz, e seu nome entra no `startup`. ⚠️ devem ser MÓDULOS OS-9
+// executáveis; o BOOT/execução real precisa de confirmação no XRoar/hardware.
+export interface Os9Program { name: string; data: Buffer; }
+export function os9CloneBootable(refDisk: Buffer, programs: Os9Program[] = [], base = 0): Buffer {
+  if (!isOs9Disk(refDisk, base)) throw new Error('A referência não é um disco OS-9 válido.');
+  if (!os9BootInfo(refDisk, base).bootable) throw new Error('A referência não é bootável (DD.BT/DD.BSZ = 0). Escolha um disco de SISTEMA bootável.');
+  let out: Buffer = Buffer.from(refDisk); // o disco de referência JÁ é um sistema bootável completo
+  const id = parseIdent(out, base);
+  // diretório-alvo dos programas: CMDS (se for um dir) — está no PATH de execução — senão a raiz
+  const cmdsLsn = findDirEntry(out, base, readFD(out, id.rootDirLsn, base), 'CMDS');
+  const target = (cmdsLsn > 0 && readFD(out, cmdsLsn, base).isDir) ? cmdsLsn : id.rootDirLsn;
+  const names: string[] = [];
+  for (const p of programs) {
+    const nm = p.name.replace(/[\/\\]/g, '').replace(/[^\x20-\x7e]/g, '').trim().slice(0, 28);
+    if (!nm) continue;
+    if (findDirEntry(out, base, readFD(out, target, base), nm) >= 0) out = os9Delete(out, target, nm, base); // substitui
+    out = os9Insert(out, target, nm, p.data, base, { attributes: 0x2d, date: null });
+    names.push(nm);
+  }
+  if (names.length) {
+    // startup = script do shell executado pelo sysgo no boot (linhas terminadas em CR 0x0D). PRESERVA
+    // a inicialização original (do disco de sistema) e ANEXA os programas no fim — não substitui, senão
+    // a configuração de boot (setime/tmode/shell…) seria perdida.
+    const existingLsn = findDirEntry(out, base, readFD(out, id.rootDirLsn, base), 'startup');
+    let prefix = '';
+    if (existingLsn >= 0) {
+      prefix = readFileData(out, readFD(out, existingLsn, base), base).toString('latin1');
+      if (prefix.length && !prefix.endsWith('\r')) prefix += '\r';
+      out = os9Delete(out, id.rootDirLsn, 'startup', base);
+    }
+    const startup = Buffer.from(prefix + names.join('\r') + '\r', 'latin1');
+    out = os9Insert(out, id.rootDirLsn, 'startup', startup, base, { attributes: 0x03, date: null });
+  }
+  return out;
+}
+
+/** Lê os campos de bootstrap (DD.BT/DD.BSZ) — disco é bootável se DD.BT > 0 e DD.BSZ > 0. */
+export function os9BootInfo(raw: Buffer, base = 0): { bootable: boolean; bootLsn: number; bootSize: number } {
+  const bootLsn = r24(raw, base + 0x15);
+  const bootSize = r16(raw, base + 0x18);
+  return { bootable: bootLsn > 0 && bootSize > 0, bootLsn, bootSize };
 }
 
 // ---- Defrag (compactar segmentos fragmentados) -----------------------------

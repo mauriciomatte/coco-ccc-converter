@@ -1,0 +1,36 @@
+GABARITOS OS-9 EMBUTIDOS  /  BUNDLED OS-9 TEMPLATES
+================================================================================
+
+Estes discos-semente ("gabaritos") são imagens BOOTÁVEIS do NitrOS-9, usadas pelo
+CCC-converter para criar discos OS-9 bootáveis sem que o usuário precise fornecer
+um disco de referência.
+
+These seed disks ("templates") are BOOTABLE NitrOS-9 images, used by CCC-converter
+to create bootable OS-9 disks without the user having to supply a reference disk.
+
+--------------------------------------------------------------------------------
+ARQUIVOS / FILES
+--------------------------------------------------------------------------------
+  seed_360k.os9   NitrOS-9 6809 Level 1 — coco1 — 40 trilhas, 2 lados (360K / 1440 setores)
+                  origem: NOS9_6809_L1_v030300_coco1_40d_1.dsk
+  seed_720k.os9   NitrOS-9 6809 Level 1 — coco1 — 80 trilhas, 2 lados (720K / 2880 setores)
+                  origem: NOS9_6809_L1_v030300_coco1_80d.dsk
+
+  (158K/35T e 180K/40s NÃO têm gabarito embutido: o NitrOS-9 não distribui essas
+   geometrias para CoCo, e o OS-9 Tandy original de 35T é proprietário. Para esses
+   casos, o app pede um disco de referência seu — veja a Ajuda da aba OS-9.)
+
+--------------------------------------------------------------------------------
+LICENÇA / LICENSE
+--------------------------------------------------------------------------------
+NitrOS-9 é distribuído livremente pela comunidade Color Computer; o código-fonte é
+licenciado sob a GPL. As imagens acima foram obtidas da distribuição oficial
+(nitros9.sourceforge.io, snapshot v3.3.0). Criado pela equipe NitrOS-9:
+Wes Gale, Bill Noble, Curtis Boyle, Alan DeKok e demais colaboradores.
+
+NitrOS-9 is freely distributed by the Color Computer community; the source code is
+GPL-licensed. The images above were taken from the official distribution
+(nitros9.sourceforge.io, snapshot v3.3.0). Created by the NitrOS-9 team:
+Wes Gale, Bill Noble, Curtis Boyle, Alan DeKok and other contributors.
+
+Projeto / project: https://nitros9.sourceforge.io  ·  https://github.com/nitros9project/nitros9

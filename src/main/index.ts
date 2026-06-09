@@ -6,9 +6,18 @@ import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, enco
 import { parseCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
-import { readFatVolume, listFatFiles, readFatFile, Reader } from './converter/fat';
+import { readFatVolume, listFatFiles, readFatFile, fatReplaceFile, fatAddFile, fatDeleteFile, Reader, Writer } from './converter/fat';
 import { isDmk, dmkToRaw, normalizeDiskImage } from './converter/dmk';
-import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, os9ReadTree, os9ApplyTree, os9SystemArea, os9ChildLsn, readClusterBitmap, OS9_GEOMETRIES } from './converter/os9';
+import { rawToSdf } from './converter/sdf';
+
+// Se o caminho de saída for .sdf, codifica o buffer RAW (OS-9/RS-DOS uniforme) em SDF (CoCoSDC);
+// senão devolve o RAW. A geometria vem do descritor OS-9 (SPT/lados).
+function encodeForOs9Path(raw: Buffer, filePath: string): Buffer {
+  if (!/\.sdf$/i.test(filePath)) return raw;
+  const id = parseIdent(raw, 0);
+  return rawToSdf(raw, { sectorsPerTrack: id.sectorsPerTrack || 18, sides: id.sides || 1 });
+}
+import { isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData, createBlankOs9, os9Mkdir, os9Rename, os9Insert, os9Delete, os9DefragFile, os9DefragAll, os9ReadTree, os9ApplyTree, os9SystemArea, os9ChildLsn, readClusterBitmap, os9MakeBootable, os9BootInfo, os9CloneBootable, OS9_GEOMETRIES } from './converter/os9';
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
@@ -17,6 +26,24 @@ import { buildNoLoaderBin, readCdcuInfo, stripToProgram } from './converter/load
 
 let mainWindow: BrowserWindow | null = null;
 let allowClose = false; // só true depois que o usuário confirma no modal de "Sair"
+
+// Gabaritos OS-9 EMBUTIDOS (discos-semente NitrOS-9 bootáveis) — um por geometria que o NitrOS-9
+// distribui para CoCo. Em produção ficam em <resources>/os9seed (electron-builder extraResources);
+// em dev ficam em <projeto>/resources/os9seed. Geometrias sem gabarito livre (158K/35T e 180K/40s)
+// caem no seletor manual de referência. Devolve o caminho do .os9 ou null se não existir.
+const OS9_SEED_FILES: Record<string, string> = { '360k': 'seed_360k.os9', '720k': 'seed_720k.os9' };
+function os9SeedPath(geomKey: string): string | null {
+  const file = OS9_SEED_FILES[geomKey];
+  if (!file) return null;
+  const dirs = app.isPackaged
+    ? [path.join(process.resourcesPath, 'os9seed')]
+    : [path.join(process.cwd(), 'resources', 'os9seed'), path.join(app.getAppPath(), 'resources', 'os9seed')];
+  for (const d of dirs) {
+    const p = path.join(d, file);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
 
 // Reads a whole file into memory in chunks, emitting an `image-progress` event per chunk so
 // the renderer can show a real progress bar for large container images.
@@ -505,7 +532,7 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
       ]
     : kind === 'disk'
     ? [
-        { name: 'Disco (.dsk/.vdk/.jvc/.dmk)', extensions: ['dsk', 'vdk', 'jvc', 'dmk'] },
+        { name: 'Disco (.dsk/.vdk/.jvc/.dmk/.os9)', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'os9'] },
         { name: 'All Files', extensions: ['*'] },
       ]
     : kind === 'program'
@@ -514,7 +541,7 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
         { name: 'All Files', extensions: ['*'] },
       ]
     : [
-        { name: 'CoCo/Dragon', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'cas', 'wav', 'bin', 'rom', 'ccc', 'sna', 'asc', 'bas'] },
+        { name: 'CoCo/Dragon', extensions: ['dsk', 'vdk', 'jvc', 'dmk', 'os9', 'cas', 'wav', 'bin', 'rom', 'ccc', 'sna', 'asc', 'bas'] },
         { name: 'All Files', extensions: ['*'] },
       ];
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -777,7 +804,7 @@ ipcMain.handle('image-analyze', async () => {
     title: 'Abrir imagem (MiniIDE / CoCoSDC / OS-9 / .dsk / .vdk)',
     properties: ['openFile'],
     filters: [
-      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'os9', 'vdk', 'jvc', 'dmk', 'ima', 'bin', 'raw', 'vhd'] },
+      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'os9', 'vdk', 'jvc', 'dmk', 'sdf', 'ima', 'bin', 'raw', 'vhd'] },
       { name: 'All Files', extensions: ['*'] },
     ],
   });
@@ -798,7 +825,7 @@ ipcMain.handle('image-analyze', async () => {
           .filter(f => !f.name.startsWith('._') && f.size >= 4608); // skip macOS AppleDouble junk
         const entries = files.map((f, i) => ({
           id: i, label: f.name, info: `${(f.size / 1024).toFixed(0)} KB`, sub: f.path,
-          locator: { kind: 'fat', cluster: f.firstCluster, size: f.size },
+          locator: { kind: 'fat', cluster: f.firstCluster, size: f.size, path: f.path },
         }));
         return { success: true, kind: 'cocosdc', filePath, fileName, fatType: vol.type, entries };
       }
@@ -902,6 +929,90 @@ ipcMain.handle('image-extract', async (_, filePath: string, locator: any) => {
   }
 });
 
+// 3c1c2. É um disco OS-9 (RBF)? Usado pelo renderer ao extrair um disco de um contêiner (FAT/MiniIDE)
+// para decidir se abre na aba OS-9 em vez da aba DSK (RS-DOS). Aceita DMK/JVC (normaliza antes).
+ipcMain.handle('os9-detect-buffer', async (_, bufU8: Uint8Array) => {
+  try {
+    const raw = normalizeDiskImage(Buffer.from(bufU8));
+    if (!isOs9DiskStrict(raw, 0)) return { os9: false };
+    return { os9: true, volume: parseIdent(raw, 0).name.trim(), image: new Uint8Array(raw) };
+  } catch { return { os9: false }; }
+});
+
+// === ESCRITA FAT (D12 — CoCoSDC / RetroRewind SD) ===========================================
+// Abre o .img com fd read+write e devolve {vol, read, write, close} via callbacks de acesso aleatório
+// (nunca carrega a imagem inteira). SEGURANÇA: trabalhe sempre numa CÓPIA + valide no hardware.
+function openFatRW(filePath: string) {
+  const fd = fs.openSync(filePath, 'r+');
+  const read: Reader = (off, len) => { const b = Buffer.alloc(len); fs.readSync(fd, b, 0, len, off); return b; };
+  const write: Writer = (off, data) => { fs.writeSync(fd, data, 0, data.length, off); };
+  const vol = readFatVolume(read);
+  return { fd, read, write, vol, close: () => fs.closeSync(fd) };
+}
+
+// 3c1f3. Grava de volta UM .dsk editado no seu lugar no FAT (write-back), pelo caminho interno.
+ipcMain.handle('image-fat-writeback', async (_, filePath: string, innerPath: string, dataU8: Uint8Array) => {
+  const h = openFatRW(filePath);
+  try {
+    if (!h.vol) return { success: false, error: 'Volume FAT não reconhecido.' };
+    const res = fatReplaceFile(h.read, h.write, h.vol, innerPath, Buffer.from(dataU8));
+    // validação: relê o arquivo e confere os bytes
+    const back = readFatFile(h.read, h.vol, { name: '', path: innerPath, firstCluster: res.firstCluster, size: dataU8.length });
+    const ok = back.length === dataU8.length && Buffer.from(dataU8).equals(back);
+    return ok ? { success: true, firstCluster: res.firstCluster } : { success: false, error: 'Falha na verificação pós-gravação (bytes não conferem).' };
+  } catch (e: any) { return { success: false, error: e.message }; }
+  finally { h.close(); }
+});
+
+// 3c1f4. Insere um NOVO .dsk no FAT (na pasta dirPath; "" = raiz).
+ipcMain.handle('image-fat-add', async (_, filePath: string, dirPath: string, name: string, dataU8: Uint8Array) => {
+  const h = openFatRW(filePath);
+  try {
+    if (!h.vol) return { success: false, error: 'Volume FAT não reconhecido.' };
+    const res = fatAddFile(h.read, h.write, h.vol, String(dirPath || ''), String(name), Buffer.from(dataU8));
+    const back = readFatFile(h.read, h.vol, { name: '', path: name, firstCluster: res.firstCluster, size: dataU8.length });
+    const ok = back.length === dataU8.length && Buffer.from(dataU8).equals(back);
+    return ok ? { success: true, firstCluster: res.firstCluster } : { success: false, error: 'Falha na verificação pós-gravação.' };
+  } catch (e: any) { return { success: false, error: e.message }; }
+  finally { h.close(); }
+});
+
+// 3c1f4b. Escolhe um .dsk/.os9 no diálogo e o insere no FAT (na pasta dirPath). Devolve a entry nova
+// (cluster/tamanho/caminho) para o renderer anexar ao contêiner sem re-escanear a imagem inteira.
+ipcMain.handle('image-fat-add-pick', async (_, filePath: string, dirPath: string) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const sel = await dialog.showOpenDialog(mainWindow, {
+    title: 'Inserir disco no cartão CoCoSDC',
+    properties: ['openFile'],
+    filters: [{ name: 'Disco (.dsk/.os9/.vdk/.dmk)', extensions: ['dsk', 'os9', 'vdk', 'jvc', 'dmk'] }, { name: 'All Files', extensions: ['*'] }],
+  });
+  if (sel.canceled || !sel.filePaths.length) return { cancelled: true };
+  const src = sel.filePaths[0];
+  const name = path.basename(src);
+  const h = openFatRW(filePath);
+  try {
+    if (!h.vol) return { success: false, error: 'Volume FAT não reconhecido.' };
+    const data = fs.readFileSync(src);
+    const res = fatAddFile(h.read, h.write, h.vol, String(dirPath || ''), name, data);
+    const back = readFatFile(h.read, h.vol, { name: '', path: name, firstCluster: res.firstCluster, size: data.length });
+    if (!(back.length === data.length && data.equals(back))) return { success: false, error: 'Falha na verificação pós-gravação.' };
+    const innerPath = dirPath ? `${dirPath}/${name}` : name;
+    return { success: true, name, firstCluster: res.firstCluster, size: data.length, path: innerPath };
+  } catch (e: any) { return { success: false, error: e.message }; }
+  finally { h.close(); }
+});
+
+// 3c1f5. Exclui um arquivo do FAT pelo caminho interno.
+ipcMain.handle('image-fat-delete', async (_, filePath: string, innerPath: string) => {
+  const h = openFatRW(filePath);
+  try {
+    if (!h.vol) return { success: false, error: 'Volume FAT não reconhecido.' };
+    fatDeleteFile(h.read, h.write, h.vol, String(innerPath));
+    return { success: true };
+  } catch (e: any) { return { success: false, error: e.message }; }
+  finally { h.close(); }
+});
+
 // 3c1d. Read an OS-9 / NitrOS-9 (RBF) partition at `base` and return its hierarchical directory
 // tree (read-only). `base` is 0 for a loose .dsk/.os9 or for the OS-9 partition that lives at
 // offset 0 inside a MiniIDE / CoCoSDC.VHD image. We read at most the partition's own size (capped).
@@ -922,7 +1033,7 @@ ipcMain.handle('os9-read', async (_, filePath: string, base = 0) => {
         success: true, ident: parsed.ident, root: parsed.root,
         totalFiles: parsed.totalFiles, totalDirs: parsed.totalDirs,
         freeBytes: parsed.freeBytes, usedSectors: parsed.usedSectors,
-        usage: readClusterBitmap(buf, 0),
+        usage: readClusterBitmap(buf, 0), boot: os9BootInfo(buf, 0),
       };
     } finally { fs.closeSync(fd); }
   } catch (error: any) {
@@ -979,7 +1090,7 @@ ipcMain.handle('os9-pick-buffer', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Abrir disco OS-9 (.os9 / .dsk)',
     properties: ['openFile'],
-    filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk', 'dmk'] }, { name: 'All Files', extensions: ['*'] }],
+    filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk', 'dmk', 'sdf'] }, { name: 'All Files', extensions: ['*'] }],
   });
   if (result.canceled || !result.filePaths.length) return { cancelled: true };
   try {
@@ -992,7 +1103,7 @@ ipcMain.handle('os9-pick-buffer', async () => {
 // 3c1j2. Sobrescreve um arquivo .os9 existente com o buffer (botão "Salvar", sem diálogo).
 ipcMain.handle('os9-save-overwrite', async (_, filePath: string, bufU8: Uint8Array) => {
   try {
-    fs.writeFileSync(filePath, Buffer.from(bufU8));
+    fs.writeFileSync(filePath, encodeForOs9Path(Buffer.from(bufU8), filePath)); // .sdf → codifica em SDF
     return { success: true, path: filePath };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -1002,8 +1113,82 @@ ipcMain.handle('os9-parse-buffer', async (_, bufU8: Uint8Array) => {
   try {
     const buf = Buffer.from(bufU8);
     const p = parseOs9(buf, {});
-    return { success: true, ident: p.ident, root: p.root, totalFiles: p.totalFiles, totalDirs: p.totalDirs, freeBytes: p.freeBytes, usage: readClusterBitmap(buf, 0) };
+    return { success: true, ident: p.ident, root: p.root, totalFiles: p.totalFiles, totalDirs: p.totalDirs, freeBytes: p.freeBytes, usage: readClusterBitmap(buf, 0), boot: os9BootInfo(buf, 0) };
   } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c1g3. Cria um disco OS-9 BOOTÁVEL novo (p/ o dropdown "Novo…" da aba OS-9), clonando um disco de
+// SISTEMA de referência da geometria escolhida; opcionalmente insere programas + grava um `startup`
+// que os executa no boot. Geometria validada contra a referência. ⚠️ boot/execução real → confirmar XRoar.
+ipcMain.handle('os9-new-bootable', async (_, geomKey: string, withPrograms: boolean, forceRef?: boolean) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const expect: Record<string, { totalSectors: number; sides: number; label: string }> = {
+    '158k': { totalSectors: 630, sides: 1, label: '35T (158K)' },
+    '180k': { totalSectors: 720, sides: 1, label: '40T (180K)' },
+    '360k': { totalSectors: 1440, sides: 2, label: 'DS (360K)' },
+    '720k': { totalSectors: 2880, sides: 2, label: 'DS (720K)' },
+  };
+  const want = expect[geomKey];
+  if (!want) return { success: false, error: 'Geometria desconhecida.' };
+  // 1) disco de SISTEMA bootável de referência: usa o GABARITO EMBUTIDO (NitrOS-9) se existir p/ esta
+  //    geometria; senão pede um disco de referência ao usuário (158K/180K não têm gabarito livre).
+  let ref: Buffer;
+  let usedSeed = false;
+  const seedPath = forceRef ? null : os9SeedPath(geomKey);
+  if (seedPath) {
+    ref = normalizeDiskImage(fs.readFileSync(seedPath));
+    usedSeed = true;
+  } else {
+    const sel = await dialog.showOpenDialog(mainWindow, {
+      title: `Escolher um disco OS-9/NitrOS-9 BOOTÁVEL de referência — ${want.label}`,
+      properties: ['openFile'],
+      filters: [{ name: 'Disco OS-9 bootável', extensions: ['dsk', 'os9', 'dmk', 'jvc', 'sdf'] }, { name: 'All Files', extensions: ['*'] }],
+    });
+    if (sel.canceled || !sel.filePaths.length) return { cancelled: true };
+    ref = normalizeDiskImage(fs.readFileSync(sel.filePaths[0]));
+  }
+  try {
+    if (!isOs9DiskStrict(ref, 0)) return { success: false, error: 'A referência não é um disco OS-9 (RBF) válido.' };
+    const rid = parseIdent(ref, 0);
+    if (rid.totalSectors !== want.totalSectors || rid.sides !== want.sides)
+      return { success: false, error: `A referência é ${rid.totalSectors} setores/${rid.sides} lado(s); esperado ${want.label} (${want.totalSectors}/${want.sides}). Escolha um disco da geometria certa.` };
+    if (!os9BootInfo(ref, 0).bootable) return { success: false, error: 'A referência não é bootável (DD.BT=0). Escolha um disco de SISTEMA bootável.' };
+    // 2) opcional: escolher programas a embutir
+    let programs: { name: string; data: Buffer }[] = [];
+    if (withPrograms) {
+      const ps = await dialog.showOpenDialog(mainWindow, {
+        title: 'Escolher programa(s) OS-9 p/ carregar no boot (vão p/ CMDS + startup)',
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Programas OS-9', extensions: ['*'] }],
+      });
+      if (ps.canceled || !ps.filePaths.length) return { cancelled: true };
+      programs = ps.filePaths.map(fp => ({ name: path.basename(fp), data: fs.readFileSync(fp) }));
+    }
+    const out = os9CloneBootable(ref, programs, 0);
+    parseOs9(out, { base: 0 }); // valida antes de devolver
+    const fileName = (programs.length ? 'BOOT_PROG' : 'BOOT') + `_${geomKey}.os9`;
+    return { success: true, image: new Uint8Array(out), fileName, boot: os9BootInfo(out, 0), programs: programs.map(p => p.name), usedSeed };
+  } catch (e: any) { return { success: false, error: e.message }; }
+});
+
+// 3c1g2. Torna um disco OS-9 (buffer) BOOTÁVEL clonando o aparato de boot de um disco-REFERÊNCIA
+// bootável da MESMA geometria: copia o boot track (track 34/KERNELFILE) + o arquivo OS9Boot e ajusta
+// DD.BT/DD.BSZ/DD.FMT. ⚠️ ESTRUTURA validada (tools/os9mkboot.ts); o BOOT real precisa ser confirmado
+// no XRoar (montar drive 0, digitar DOS). Use um disco NitrOS-9 bootável do mesmo tamanho como ref.
+ipcMain.handle('os9-make-bootable', async (_, bufU8: Uint8Array) => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const sel = await dialog.showOpenDialog(mainWindow, {
+    title: 'Escolher um disco NitrOS-9 BOOTÁVEL de referência (mesmo tamanho)',
+    properties: ['openFile'],
+    filters: [{ name: 'Disco OS-9 bootável (.dsk/.os9/.dmk)', extensions: ['dsk', 'os9', 'dmk', 'jvc'] }, { name: 'All Files', extensions: ['*'] }],
+  });
+  if (sel.canceled || !sel.filePaths.length) return { cancelled: true };
+  try {
+    const ref = normalizeDiskImage(fs.readFileSync(sel.filePaths[0]));
+    if (!isOs9DiskStrict(ref, 0)) return { success: false, error: 'A referência não é um disco OS-9 (RBF) válido.' };
+    const out = os9MakeBootable(Buffer.from(bufU8), ref, 0);
+    return { success: true, image: new Uint8Array(out), boot: os9BootInfo(out, 0), bootName: path.basename(sel.filePaths[0]) };
+  } catch (e: any) { return { success: false, error: e.message }; }
 });
 
 // 3c1h. mkdir / rename num buffer OS-9 → retorna o buffer modificado.
@@ -1180,10 +1365,10 @@ ipcMain.handle('os9-save-buffer', async (_, bufU8: Uint8Array, defaultName: stri
   try {
     const res = await dialog.showSaveDialog(mainWindow, {
       title: 'Salvar disco OS-9', defaultPath: defaultName,
-      filters: [{ name: 'Disco OS-9', extensions: ['os9', 'dsk'] }],
+      filters: [{ name: 'Disco OS-9 (.os9/.dsk)', extensions: ['os9', 'dsk'] }, { name: 'Imagem CoCoSDC (.sdf)', extensions: ['sdf'] }],
     });
     if (res.canceled || !res.filePath) return { cancelled: true };
-    fs.writeFileSync(res.filePath, Buffer.from(bufU8));
+    fs.writeFileSync(res.filePath, encodeForOs9Path(Buffer.from(bufU8), res.filePath)); // .sdf → codifica em SDF
     return { success: true, path: res.filePath };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -1544,7 +1729,7 @@ ipcMain.handle('save-dsk-overwrite', async (_, filePath: string, dataUint8Array:
 });
 
 // 8. Save final cartridge/EPROM file to system disk
-ipcMain.handle('save-cartridge-file', async (_, romUint8Array: Uint8Array, defaultName: string, title?: string, customFilters?: any[]) => {
+ipcMain.handle('save-cartridge-file', async (_, romUint8Array: Uint8Array, defaultName: string, title?: string, customFilters?: any[], sdfGeom?: { sectorsPerTrack: number; sides: number }) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
 
   const defaultFilters = [
@@ -1564,7 +1749,9 @@ ipcMain.handle('save-cartridge-file', async (_, romUint8Array: Uint8Array, defau
   }
 
   try {
-    const romBuffer = Buffer.from(romUint8Array);
+    let romBuffer = Buffer.from(romUint8Array);
+    // .sdf escolhido + geometria informada → codifica o disco RAW em SDF (CoCoSDC) antes de gravar.
+    if (sdfGeom && /\.sdf$/i.test(result.filePath)) romBuffer = rawToSdf(romBuffer, sdfGeom);
     fs.writeFileSync(result.filePath, romBuffer);
     return { success: true, filePath: result.filePath };
   } catch (error: any) {

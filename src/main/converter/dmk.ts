@@ -34,6 +34,8 @@
 // reproduces the matching raw .OS9 images exactly. No third-party code is used; only the
 // on-disk format (a non-copyrightable fact) is reimplemented here.
 
+import { isSdf, sdfToRaw } from './sdf';
+
 const DMK_HEADER = 16;
 const IDAM_TABLE = 128;          // 64 entries × 2 bytes at the start of every track
 const IDAM_COUNT = 64;
@@ -162,7 +164,10 @@ export function dmkToRaw(buf: Buffer): { raw: Buffer; geom: DmkGeometry } {
   return { raw, geom };
 }
 
-/** Convenience: if `buf` is DMK, return its decoded raw image; otherwise return `buf` unchanged. */
+/** Convenience: if `buf` is a track-level image (DMK or SDF), return its decoded raw sector image;
+ *  otherwise return `buf` unchanged. SDF (CoCoSDC) is detected by its own 'SDF1' magic. */
 export function normalizeDiskImage(buf: Buffer): Buffer {
-  return isDmk(buf) ? dmkToRaw(buf).raw : buf;
+  if (isDmk(buf)) return dmkToRaw(buf).raw;
+  if (isSdf(buf)) return sdfToRaw(buf).raw;
+  return buf;
 }

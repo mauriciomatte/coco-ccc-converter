@@ -2,6 +2,7 @@ import React, { useRef, useState, useLayoutEffect, useEffect } from 'react';
 import { MC6847_FONT, mc6847Glyph } from '../mc6847font';
 import { Scissors, Copy, Clipboard, Search, Replace, Play, RotateCcw, Save, FolderOpen, Disc, FileCode2, AudioLines } from 'lucide-react';
 import { X } from 'lucide-react';
+import { HelpButton, TabHelpModal } from './TabHelp';
 
 interface Props {
   lang: 'pt-br' | 'en-us';
@@ -55,6 +56,7 @@ export default function BasicEditor({
   onRun, onSaveToDisk, onSaveTextFile, onSaveCasFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
+  const [showHelp, setShowHelp] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   // Posição do cursor a restaurar após uma mudança de valor (uppercase/colar). Sem isto, a
   // textarea CONTROLADA reposiciona o cursor no FIM ao reaplicar o value (bug: pulava p/ última linha).
@@ -306,6 +308,8 @@ export default function BasicEditor({
         <button onClick={() => onRun(buildProgram(true), true)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Reinicia o emulador (boot limpo, sem NEW — o reset já limpa a RAM) e então digita o programa', 'Resets the emulator (clean boot, no NEW — reset already clears RAM) then types the program')}>
           <RotateCcw size={13} /> {t('Rodar com reset', 'Run + reset')}
         </button>
+        {sep}
+        <HelpButton onClick={() => setShowHelp(true)} lang={lang} />
         <div className="flex-1" />
         {/* Badge "EDITANDO": identifica que o conteúdo veio de um arquivo de disco */}
         {sourceLabel && (
@@ -526,6 +530,7 @@ export default function BasicEditor({
         <div className="flex-1" />
         <span className="font-mono">{lineCount} {t('linhas', 'lines')} · {text.length} {t('chars', 'chars')}</span>
       </div>
+      {showHelp && <TabHelpModal topic="basic" lang={lang} onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

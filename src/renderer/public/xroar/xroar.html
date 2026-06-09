@@ -101,7 +101,10 @@
         function buildArgs() {
             var args = [
                 '-rompath', '.',
-                '-no-disk-auto-os9',
+                // AUTO-detecta imagens OS-9 JVC SEM cabeçalho (geometria correta) → necessário p/ BOOTAR
+                // discos OS-9/NitrOS-9 (sem isso o XRoar assume a geometria errada e o comando DOS lê a
+                // trilha 34 no lugar errado → boot volta ao BASIC). É o padrão do XRoar; não afeta RS-DOS.
+                '-disk-auto-os9',
                 '-ao-fragments', '3',
                 '-default-machine', selectedMachine,
                 // Video settings baked in at startup

@@ -10,6 +10,262 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.44 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW — Built-in OS-9 templates (create a bootable disk without hunting for a reference)
+  • The app now ships with BOOTABLE NitrOS-9 seed disks ("templates") for the 360K (40T DS) and 720K
+    (80T DS) geometries. In "New OS9… → Bootable" (or "Bootable + programs"), picking 360K/720K creates
+    the disk AUTOMATICALLY — no reference disk is requested anymore. Those options are flagged
+    "✓ template" in the menu.
+  • The 158K (35T) and 180K (40T single-sided) geometries are flagged "— your reference": there is no
+    free OS-9 system for the CoCo at those geometries (35T exists only as the proprietary Tandy OS-9;
+    40T-SS is a Dragon format), so the app still asks for a reference disk of your own. The OS-9 tab Help
+    explains this and points to where to download (Color Computer Archive and nitros9.sourceforge.io).
+  • FREEDOM OF CHOICE: even for 360K/720K (which have a template), the menu now also offers a
+    "— your reference" variant, in both "Bootable" and "Bootable + programs". So you can use a specific
+    system version (e.g. NitrOS-9 6309/Level 2, or a disk you already configured) instead of the built-in
+    template — you are never locked into the template. (The IPC now takes a "forceRef" flag: when the
+    "your reference" variant is chosen, the app IGNORES the template and opens the file picker.)
+  • CLEARER MESSAGE: when inserting programs into a disk with no room, the message no longer says the
+    generic "no contiguous space" and instead reports the needed size × free sectors, suggesting a larger
+    reference disk or a smaller program (allocation already fragments automatically, so the real cause is
+    lack of total space, not fragmentation).
+  • License: the templates are NitrOS-9 images, freely distributed by the Color Computer community
+    (source under the GPL). Credits in the bundled NOTICE.txt. Packaged via electron-builder
+    "extraResources" (resources/os9seed → <app>/resources/os9seed); the app resolves the path in dev and
+    in production. Seeds validated: bootable, boot track on track 34, clone+parse RBF OK (360K/720K).
+  • OS-9 tab Help (pt-BR and US) updated: built-in templates × your own reference, geometry table and
+    download sources.
+
+--------------------------------------------------------------------------------
+v1.0.43 — 2026-06-08
+--------------------------------------------------------------------------------
+DOCUMENTATION — DSK tab Help expanded (full feature coverage)
+  • The DSK tab manual ("?" button) was rewritten to cover EVERY existing feature, item by item:
+    the two A/B panes and the active pane; the whole toolbar (New, Import, Inject,
+    Copy/Cut/Paste + file clipboard, Delete, Undo/Redo, Sort A-Z on the active disk × Sort All on a
+    container, Copy Pane A→B, Test Pane in XRoar, Write GW, Save/Save As); open/import (.dsk/.vdk/.jvc/
+    DMK/SDF and DriveWire/MiniIDE/CoCoSDC containers); container navigation (◀▶, disk number, "Find disk"
+    by disk OR file name); creating a new disk in CoCo 35T / CoCo 40T / Dragon 40T formats; inject/extract
+    and .CAS interpretation; double-click to run; drag-and-drop between panes (Ctrl=copy, Shift=move) and
+    with Windows Explorer; the disk map with colors, occupancy and fragmentation in the status bar; DEFRAG
+    and DEFRAG FILE; read-only "art" disks; hex editor + 6809 disassembler (origin, flow, code/data/vector
+    marks); save/SDF/write-back into the container; and the OS-9/double-sided disk routing to the OS-9 tab.
+    Both pt-BR and US versions updated together.
+
+--------------------------------------------------------------------------------
+v1.0.42 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW/FIX — .SDF in the DSK tab "Save As" + no more duplicated console logs
+  • The DSK tab now offers the ".sdf" type in "Save As" (for a single RS-DOS disk — raw, single-side,
+    256 B/sector). So you can convert an RS-DOS .dsk to .sdf right from the DSK tab. (Containers and
+    Dragon/.vdk don't offer .sdf yet.)
+  • FIX: the diagnostic console showed the startup messages (welcome, formats, "settings loaded") in
+    DUPLICATE. Cause: React.StrictMode (development mode) runs effects twice, and the welcome message
+    also re-logged on language change. Those startup logs now run ONCE (ref guard) and the welcome no
+    longer repeats when toggling BR/US.
+  • K7 tab: removed the redundant label (waveform icon + "K7") from the right of the toolbar; the Help
+    button now sits there. DSK tab Help: documented drag-and-drop between panes (Ctrl=copy, Shift=move)
+    and between a pane and the Windows Explorer.
+
+
+--------------------------------------------------------------------------------
+v1.0.41 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW — Writing/creating SDF (CoCoSDC) images — SDF is now a full format
+  • Besides READING, the app now WRITES SDF. In the OS-9 tab, "Save As" offers the ".sdf" type; when
+    editing a .sdf, "Save" already re-writes SDF. So you can CREATE a disk from scratch (New → Blank or
+    Bootable) and save it as .sdf, and CONVERT a .os9/.dsk to .sdf.
+  • The encoder builds standard MFM tracks (256 B/sector) with address marks and GAPs like a real SDF,
+    and computes CRCs with the same WD (FDC) algorithm — validated: the CRCs match byte-for-byte those
+    of a real SDF (FHL FLEX 5.0.4), ensuring readability on the real CoCoSDC.
+  • Round-trip validated: rawToSdf→sdfToRaw reproduces the original disk byte-for-byte (a real 360K
+    OS-9 disk and blank 158K/180K/360K/720K geometries). Detection by the SDF1 magic.
+  • Note: GENERATION covers standard-geometry disks (OS-9/RS-DOS/Dragon, MFM 256 B). FM / mixed-density
+    / copy-protected layouts remain READ-only (not regenerated).
+  • `.SDF` added to the supported-formats list in the console welcome message.
+
+
+--------------------------------------------------------------------------------
+v1.0.40 — 2026-06-08
+--------------------------------------------------------------------------------
+IMPROVEMENT — OS-9 tab: no duplicated empty state (one panel until a disk loads)
+  • With the tab EMPTY, two identical "open/create" panels used to show. Now only ONE panel shows (A /
+    Top), full height. When you open or create a disk, the second panel (B / Bottom) appears and the tab
+    switches to the two-explorer view. Panel A is the default target of the first open.
+  • SDF help documented (in the DSK tab manual): the app READS SDF (open/extract/edit contents); it does
+    not create or write .sdf — save as .dsk/.os9; create SDF on the CoCoSDC itself or via dmk2sdf.
+
+
+--------------------------------------------------------------------------------
+v1.0.39 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW — Per-tab Help (manual), bilingual (PT-BR / EN), + "New OS-9…" fix
+  • Each tab got its own manual, reachable via a Help button:
+      - OS-9: a "?" button next to "New OS-9…" (initial state) and in the toolbar.
+      - DSK / K7 / BASIC: a "?" button in the toolbar (compact, avoids a 2nd row).
+      - GW: an inline "Help" button, to the right of the "GREASEWEAZLE…" title.
+      - XRoar (no top toolbar): a "How to use the XRoar tab" button in the right panel, below Controls.
+  • The manuals explain EVERY feature of each tab, in PT-BR and EN (follows the app language). The texts
+    live in .md files (src/renderer/src/help/) and are rendered in a modal.
+  • FIX (OS-9): when choosing "Bootable"/"Bootable + programs" in "New OS-9…", if the template disk is
+    INCOMPATIBLE (different geometry, non-bootable or non-OS-9), the app now REPORTS the reason on the
+    initial screen (it used to fail silently). With a valid template, the disk is created automatically
+    upon selecting the file (there is no "Create" button — none is needed).
+
+
+--------------------------------------------------------------------------------
+v1.0.38 — 2026-06-08
+--------------------------------------------------------------------------------
+IMPROVEMENT — XRoar screen filter (Sharp/Smooth) for 80-column text legibility
+  • New "Screen filter" selector in the XRoAR tab: Sharp (pixel) = exact pixels, good for games; Smooth
+    (linear) = evens out the thin 80-column text strokes (which looked irregular due to non-integer
+    scaling). For OS-9 this fixes the legibility that remained even in RGB/expanded.
+  • Testing OS-9 (Test/Boot button) now auto-enables RGB + SMOOTH filter, plus CoCo 3 — the screen is
+    ready and legible with no manual tweaks. The filter is saved in the settings.
+
+
+--------------------------------------------------------------------------------
+v1.0.37 — 2026-06-08
+--------------------------------------------------------------------------------
+IMPROVEMENT — EXPAND the XRoar screen button (more sharpness)
+  • New expand button (top-right corner of the XRoar screen): hides the side panels AND the bottom
+    diagnostic console, giving the emulator the WHOLE tab area. Since the 4:3 screen is HEIGHT-limited,
+    gaining height enlarges the canvas → much bigger, sharper text (great for OS-9's 80 columns). Click
+    again to collapse and show the panels.
+
+
+--------------------------------------------------------------------------------
+v1.0.36 — 2026-06-08
+--------------------------------------------------------------------------------
+IMPROVEMENT — Testing OS-9 now sets the XRoar up for OS-9 (CoCo 3 + RGB automatically)
+  • Using "Test"/"Boot OS-9" in the OS-9 tab now auto-configures XRoar: CoCo 3 machine and VIDEO OUTPUT =
+    RGB (sharp). NitrOS-9's 80-column hi-res text is legible with no manual changes (composite blurs
+    hi-res text -- true even on real hardware).
+  • Note: the green 32-column banner shown early in the boot is the CoCo's green text mode (green by
+    nature, in RGB and composite) -- NOT an artifact; the 80-column screens (module list, shell) are the
+    ones that become sharp black-on-white in RGB.
+
+
+--------------------------------------------------------------------------------
+v1.0.35 — 2026-06-08
+--------------------------------------------------------------------------------
+FIX — Booting OS-9 disks in the embedded XRoar (the DOS command wouldn't boot)
+  • The embedded XRoar was started with "-no-disk-auto-os9", which DISABLES detection of headerless
+    OS-9 (JVC) disk images. Since we hand the OS-9 disk to XRoar as a raw .dsk, it assumed the WRONG
+    geometry → the DOS command read "track 34" in the wrong place → boot fell back to the BASIC "OK"
+    prompt. We now use "-disk-auto-os9" (XRoar's default): the OS-9 geometry is detected and the disk
+    BOOTS. RS-DOS disks are unaffected (only disks that truly look like OS-9 are detected).
+  • Testing an OS-9 disk (the OS-9 tab Test/Bootable button) now forces the XRoar machine to CoCo 3
+    (NitrOS-9 6809 Level 2 requires CoCo 3 / 512K) — avoids boot failures from a wrong machine.
+  • Reminder: "dir" on an OS-9 disk inside BASIC shows garbage + "FS ERROR" — that's normal (dir is an
+    RS-DOS command; it can't read the OS-9 filesystem). Mount and type "DOS" to boot.
+
+
+--------------------------------------------------------------------------------
+v1.0.34 — 2026-06-08
+--------------------------------------------------------------------------------
+IMPROVEMENT — OS-9 tab: "Close" image button + clearer geometry labels (SS/DS)
+  • New "Close" (X) button in the OS-9 tab toolbar -- discards the current image and returns to the empty
+    state (with a confirm if there are unsaved edits), like the DSK tab's "clear pane".
+  • The "New..." sizes now show tracks and sides: "158K · 35T · 1 side (SS)", "180K · 40T · 1 side (SS)",
+    "360K · 40T · 2 sides (DS)", "720K · 80T · 2 sides (DS)" -- single/double-sided is now obvious.
+  • Note: the dropdown shown in the center (empty screen) and the one in the toolbar are the SAME control,
+    just displayed in two places -- not two different functions.
+
+
+--------------------------------------------------------------------------------
+v1.0.33 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW — OS-9 tab "New..." dropdown: BOOTABLE and BOOTABLE + PROGRAMS disks (35T/40T/DS)
+  • The "New..." menu now has three groups: "Blank" (as before), "Bootable (clone system)" and
+    "Bootable + programs", each in the 35T (158K), 40T (180K), DS (360K) and DS (720K) geometries.
+  • Bootable: clones a reference bootable OS-9/NitrOS-9 SYSTEM disk (you pick the .dsk; geometry is
+    validated) -> produces a bootable AND usable disk (kernel + sysgo/startup/CMDS/SYS), unlike making a
+    blank disk bootable (which only loads the kernel). The boot apparatus is a version/geometry-specific
+    binary, so it is cloned from a reference -- the same approach os9gen/cobbler use.
+  • Bootable + programs: besides cloning the system, you pick one or more programs; they are inserted
+    into CMDS and the "startup" file is PRESERVED and APPENDED with their names -- so they run
+    automatically at boot (without erasing the system's original startup).
+  • Validated by round-trip (tools/os9clone.ts): faithful byte-for-byte clone; program readable in CMDS;
+    startup preserves the original and appends; other files intact; disk stays bootable. 12/12.
+    The real boot/run still needs your confirmation in XRoar (CoCo 3, drive 0, DOS).
+
+
+--------------------------------------------------------------------------------
+v1.0.32 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW — SDF (CoCoSDC) image reading — opens protected / mixed-density (FLEX) disks
+  • SDF is the CoCoSDC format (Darren Atkinson) for non-standard / copy-protected disks -- a "pre-indexed
+    DMK" (each track has a Sector ID Table in its header). The app now DECODES SDF to a raw sector image
+    ON OPEN and proceeds normally (list/extract/edit), just like DMK. Works for RS-DOS, OS-9/RBF and
+    Dragon. '.sdf' added to the "Open image" and "Open OS-9" dialogs.
+  • False-positive-proof detection by the 'SDF1' MAGIC + exact size match (512 + cyl*sides*6656) -- never
+    by extension ('.sdf' clashes with the SAM Coupe "Sam Disk Format"). Handles single density (FM, byte
+    doubling), interleave, and flags protected sectors (bad CRC / deleted data mark).
+  • Validated against a REAL sample (FHL Color FLEX 5.0.4): the .sdf decode matches 100% (630/630 sectors)
+    against the SAME disk in DMK form. Read-only (generating SDF isn't needed for current flows).
+  • The full SDF format spec is documented in docs/OS9_STATUS_EN.txt (section 7), from a technical study.
+
+
+--------------------------------------------------------------------------------
+v1.0.31 — 2026-06-08
+--------------------------------------------------------------------------------
+NEW — Make OS-9 disks BOOTABLE + validation against REAL media/disks
+  • "Bootable" button in the OS-9 tab: clones the boot apparatus from a reference BOOTABLE NitrOS-9 disk
+    (same size) — copies the BOOT TRACK (track 34/KERNELFILE, which the DOS command loads at $2600 and
+    executes) + the OS9Boot file and sets DD.BT/DD.BSZ/DD.FMT. (CoCo OS-9 boot has TWO parts: the boot
+    track ON track 34 and the OS9Boot file — both required; this is what Toolshed's "os9 gen" does.)
+    A "⚡ bootable / ○ non-boot" indicator in the status bar.
+  • The generated disk's STRUCTURE is validated by round-trip AGAINST A REAL DISK (boot track copied
+    verbatim, reserved in the bitmap, OS9Boot contiguous & identical, DD.BT/DD.FMT correct). ⚠️ The boot
+    itself needs confirmation by you in XRoar (CoCo 3, drive 0, DOS command). NOTE: a "made-bootable"
+    disk loads the KERNEL; for a USABLE system (shell) also copy the system files (sysgo/startup/CMDS/
+    SYS) — or clone a full system disk.
+  • VALIDATIONS this round (against REAL disks/media, outside the UI):
+    – FAT write (D12) tested against a COPY of the real RetroRewind card (15.85 GB, FAT32, 32 KB
+      clusters, 4699 disks): write-back of an existing file, insert/grow/shrink/delete + 40 witness
+      files intact at every step = 10/10.
+    – OS-9 write tested against real BOOTABLE NitrOS-9 disks (v3.3.0 6809 L2): insert a file, re-read,
+      and all 99/229 original files byte-identical + bootstrap preserved = 7/7 per disk.
+
+
+--------------------------------------------------------------------------------
+v1.0.30 — 2026-06-07
+--------------------------------------------------------------------------------
+NEW — CoCoSDC (FAT) card writing + OS-9 disks inside FAT images (RetroRewind)
+  • FAT WRITE (D12): you can now write an edited .dsk back into a CoCoSDC / RetroRewind image (FAT12/16/32
+    SD card) — the container "Save" performs a write-back, adjusting the cluster chain and directory.
+    You can also INSERT a new .dsk/.os9 into the card ("Insert disk" button in the container panel). Every
+    write asks for CONFIRMATION (it may be the real media) and is VERIFIED by reading the bytes back.
+    Recommended: always work on a COPY.
+  • Writing never loads the whole image (random access), so it works on multi-GB cards. It updates BOTH
+    FAT copies, generates correct long names (LFN) and grows the directory when full.
+  • OS-9 disks inside FAT images: when opening/browsing a CoCoSDC/RetroRewind container, a .dsk that is
+    OS-9 (RBF) is now recognized and opened EDITABLE in the OS-9 tab (previously it showed as "garbage"
+    in the DSK tab). Works for DMK/JVC too (normalized first).
+  • Validation: a round-trip battery (tools/fatrt.ts) over synthetic FAT12 and FAT32 images — insert
+    (short and long names), replace (grow/shrink the chain), delete, free-space reuse, directory growth
+    (40 files) and neighbor integrity: 28/28 OK.
+
+
+--------------------------------------------------------------------------------
+v1.0.29 — 2026-06-07
+--------------------------------------------------------------------------------
+NEW — Test OS-9 disks in XRoar (bridge from the OS-9 tab to the embedded emulator)
+  • "Test" button in the OS-9 tab toolbar: mounts the disk you created/edited in an XRoar drive without
+    leaving the app — you can now VERIFY in the emulator what was written.
+  • Modal with a drive selector (D0-D3) and three modes:
+      – Boot OS-9: resets and types DOS (CoCo) / BOOT (Dragon) — for a BOOTABLE OS-9 disk in drive 0.
+      – Mount + Reset: mounts with a clean boot (inspect with OS-9 already running: "dir /dX").
+      – Mount (no reset): mounts without restarting whatever is running.
+  • Available for IN-MEMORY OS-9 disks (New / Open .os9 / drag-drop / loose .dsk). Disabled for a
+    container's OS-9 partition (too big for an emulator floppy).
+  • The raw OS-9 disk is sent to XRoar as .dsk (the emulator infers geometry from the size); the XRoar
+    disk picker now also accepts .os9.
+
+
+--------------------------------------------------------------------------------
 v1.0.28 — 2026-06-07
 --------------------------------------------------------------------------------
 NEW — DMK image reading (opens OS-9 / RS-DOS / Dragon disks in track-level format)

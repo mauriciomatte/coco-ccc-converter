@@ -48,7 +48,13 @@ Já temos `decodeWav` (FSK→bytes) e o `basicDetokenize.ts`/editor BASIC.
 ### D. OS-9 para Dragon (CoCoSDC ALPHA)
 - [ ] **D11. Sabor Dragon do OS-9**: o parser RBF é agnóstico → discos OS-9 Dragon já abrem; falta
       detectar e auto-trocar o XRoar p/ máquina Dragon ao testar OS-9 Dragon.
-- [ ] **D12. Escrever/gerar imagens CoCoSDC SD** (já lemos `.VHD`; falta o lado de escrita).
+- [x] **D12. Escrever imagens CoCoSDC SD (FAT) — FEITO (v1.0.30, 2026-06-07).** `fat.ts` ganhou motor
+      de escrita clean-room (`fatAddFile`/`fatReplaceFile`/`fatDeleteFile` + `Writer` de acesso
+      aleatório; atualiza as 2 cópias da FAT, LFN, cresce o diretório; nunca carrega a imagem inteira).
+      Write-back de `.dsk` editado + inserir novo `.dsk/.os9` no cartão, com confirmação e verificação
+      pós-gravação. Validado em FAT12+FAT32 (`tools/fatrt.ts`, 28/28). Discos OS-9 dentro do FAT agora
+      abrem na aba OS-9. (Gerar um cartão FAT do zero / formatar continua não feito — não é necessário:
+      o usuário edita cartões existentes.)
 
 ### E. Conversão CoCo↔Dragon (já temos `cocoToDragonBin`)
 - [ ] **E13. Patcher assistido de ML** (já em roadmap; ver dragon-vdk-support).

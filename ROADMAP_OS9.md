@@ -8,6 +8,64 @@
 > Premissa do usuário: **depois de entender bem o RBF, REANALISAR a MiniIDE** — é
 > provável que a leitura OS-9 revele dados hoje vistos como "lixo"/opacos.
 
+> 📄 **Relato consolidado em inglês (para compartilhar):** `docs/OS9_STATUS_EN.md` (+ `.txt`) —
+> resumo completo do suporte OS-9 (arquitetura, formato on-disk, boot em 2 partes, validações,
+> pendências) com um tópico dedicado ao **SDF** (o que temos × o que falta para implementar).
+
+---
+
+## Status (2026-06-07) — LEITURA + ESCRITA + PONTE XROAR na UI ✅
+
+As Fases 2 e 3 foram ENTREGUES (v1.0.17→v1.0.23; DMK em v1.0.28; ponte XRoar em v1.0.29):
+- **Fase 2 — leitura na UI ✅:** detecção `OS-9(strict)→Dragon→RS-DOS` no offset 0; aba **OS-9**
+  (`src/renderer/src/components/Os9Tab.tsx`) com DOIS explorers empilhados (árvore hierárquica +
+  lista + `Os9MediaPanel` com bitmap de clusters). Navega/extrai a partição OS-9 da MiniIDE/CoCoSDC
+  e `.os9`/`.dsk` avulsos.
+- **Fase 3 / O2–O5 — escrita na UI ✅:** O2 criar disco em branco (4 geometrias), O3 renomear/mkdir,
+  O4 inserir/excluir, defrag (arquivo + disco), cópia recursiva de pasta entre discos (drag-drop),
+  drag-out p/ Windows, e **O5 escrita em partição de container** (grava direto no `.img` com guarda
+  de área de sistema OS9Boot/SYS/CMDS/DEFS + validação `parseOs9` antes de gravar). Motor em
+  `src/main/converter/os9.ts`; IPC `os9-*` em `src/main/index.ts`; preload em `src/preload/index.ts`.
+- **Ponte OS-9 → XRoar ✅ (item 1, v1.0.29):** botão **"Testar"** na toolbar da aba OS-9 (apenas
+  discos EM MEMÓRIA — Novo / Abrir .os9 / drag-drop / .dsk avulso; **desabilitado** p/ partição de
+  container, grande demais p/ um floppy). Modal: seletor de drive (0-3) + **Bootar OS-9** (`DOS` no
+  CoCo / `BOOT` no Dragon, via `runCmd`), **Montar+Reset**, **Montar (sem reset)**. O disco raw OS-9
+  é enviado ao XRoar como `.dsk` (o emulador acerta a geometria pela extensão/tamanho); `'os9'` foi
+  adicionado a `DISK_EXTS` no `XRoarPanel.tsx` (renomeado p/ `.dsk` na VFS). Reusa `setXroarLoad`
+  (mesmo caminho do "Testar Painel" da DSK). Handler `handleTestOs9InXroar` no `App.tsx`.
+
+- **D12 — ESCRITA FAT (CoCoSDC/RetroRewind) ✅ (v1.0.30, 2026-06-07):** motor clean-room em
+  `src/main/converter/fat.ts` (`fatAddFile`/`fatReplaceFile`/`fatDeleteFile` + `Writer` de acesso
+  aleatório — nunca carrega a imagem inteira; atualiza as 2 cópias da FAT, gera LFN, cresce o
+  diretório). IPC `image-fat-writeback`/`image-fat-add[-pick]`/`image-fat-delete` (VERIFICAM relendo).
+  UI: "Salvar" do contêiner CoCoSDC faz write-back + botão "Inserir disco" (modal de confirmação igual
+  à MiniIDE). Harness `tools/fatrt.ts` (FAT12+FAT32: insert/replace±/delete/reuso/cresce-dir/integridade
+  = 28/28).
+- **RetroRewind/FAT — OS-9 dentro da imagem ✅ (v1.0.30):** um `.dsk` OS-9 dentro de um contêiner FAT é
+  detectado (`os9-detect-buffer`) e aberto EDITÁVEL na aba OS-9 (`maybeRouteOs9`), não mais "lixo" na DSK.
+- **(c) Tornar disco BOOTÁVEL ✅ (v1.0.31, 2026-06-08):** o boot do CoCo tem 2 partes — (1) BOOT TRACK
+  no **track 34** (LSN `34*SPT*sides`, `SPT` setores; o comando `DOS` carrega em $2600 e executa) e
+  (2) arquivo **OS9Boot** (DD.BT/DD.BSZ). `os9MakeBootable(raw, refDisk)` CLONA os dois de um disco
+  bootável de referência (mesma geometria): copia o boot track verbatim + reserva no bitmap + insere
+  o OS9Boot + grava DD.BT/DD.BSZ/DD.FMT. `os9BootInfo()` lê bootável. IPC `os9-make-bootable` (escolhe
+  o .dsk de referência) + botão "Bootável" + indicador "⚡/○". Validado `tools/os9mkboot.ts` (13/13,
+  boot track byte-idêntico ao disco real). CAVEAT: carrega o kernel; sistema usável precisa também de
+  sysgo/startup/CMDS/SYS. ⚠️ boot real no XRoar AINDA não confirmado por humano (config no README do corpus).
+- **Disco BOOTÁVEL USÁVEL + boot-com-programas ✅ (v1.0.33, 2026-06-08):** `os9CloneBootable(refDisk,
+  programs[])` clona um disco de SISTEMA de referência (kernel+sysgo+startup+CMDS+SYS → usável) e, com
+  programas, insere-os em CMDS (attr 0x2D) + PRESERVA o startup e ANEXA os nomes (rodam no boot). Dropdown
+  "Novo…" da aba OS-9 = 3 grupos (Em branco/Bootável/Bootável+programas) × 35T/40T/DS(360k)/DS(720k); IPC
+  `os9-new-bootable`. Validado `tools/os9clone.ts` 12/12. (disco de ref. precisa de espaço livre p/ os progs.)
+- **VALIDAÇÕES em mídia/discos REAIS (2026-06-07/08):** D12 FAT vs CÓPIA do RetroRewind real (15,85 GB,
+  FAT32, 4699 discos) = 10/10 (`tools/fatreal.ts`); escrita OS-9 vs discos NitrOS-9 reais bootáveis
+  = 7/7 por disco (`tools/os9real.ts`); SDF vs DMK gêmeo = 630/630 (`tools/sdfprobe.ts`). Corpus
+  (gitignored): `amostras/os9/nitros9-v3.3.0-6809-L2/` e `amostras/sdf/`.
+
+**Pendências OS-9 que SOBRAM:** **confirmar o BOOT real no XRoar** dos discos que escrevemos/tornamos
+bootáveis (único passo que exige humano — `MADE_BOOTABLE_360k.dsk`, `nos9_40d_1_WRITTEN.dsk` prontos no
+corpus); §O6 (harness round-trip de escrita OS-9/RBF com CRC de módulo + Toolshed `os9 dcheck` opcional,
+NÃO instalado); **D11** auto-trocar o XRoar p/ Dragon ao testar OS-9 Dragon; **SDF** (sem amostra; Fase 4).
+
 ---
 
 ## Status (2026-06-02)
@@ -270,26 +328,67 @@ Descoberta: 4 discos OS-9 do corpus estavam em DMK disfarçados de `.DSK` em `am
   decodificados** (630/720/1440/2880), OS-9 RBF válido; o par **720K bate byte-a-byte** com o `.OS9`
   gêmeo (1 byte de metadado). 158K/360K diferem só em metadados de formatação (são blanks distintos).
 
-### SDF — ESTUDADO, DIFERIDO (sem amostra; baixa relevância p/ OS-9)
-SDF é o formato do **CoCoSDC para discos NÃO-PADRÃO / protegidos** (o manual: "anything other than 18
-sectors per track and 256 bytes per sector… copy-protection scheme"). Como o **OS-9/RBF é padrão**
-(18 setores × 256 B), discos OS-9 **não** são distribuídos como SDF — SDF guarda jogos protegidos.
-Spec coletado p/ implementação futura:
-- Header de arquivo 512 B: `'SDF1'` (0-3), cilindros (4, ≤80), lados (5), write-perm (6), nested-sectors
-  (7), resto zero. Track-records de **6656 B** em ordem física (cil/lado): header 256 B (`[0]`=nº
-  entradas usadas, `[1..7]` reservado, `[8..255]` Sector ID Table = 31×8 B) + **6250 B** de dados crus
-  + 150 B de padding (alinha a 512).
-- **PENDENTE p/ implementar:** o layout exato da entrada de 8 B (cil/lado/setor/sz/flags/offset/CRC)
-  não está claro nas páginas do manual; obter de uma **amostra `.sdf`** + firmware/`cocosdc-commander`
-  (`libsdc.c`). **Ação:** pedir/baixar um `.sdf` real antes de codar (regra do projeto: nada de parser
-  não-validado). Refs: CoCo SDC User Guide; `github.com/n6il/cocosdc-commander`.
+### SDF — ✅ IMPLEMENTADO: LEITURA + ESCRITA (2026-06-08) — `src/main/converter/sdf.ts`
+> **ESCRITA (v1.0.41):** `rawToSdf(raw,{sectorsPerTrack,sides})` gera SDF MFM padrão (256B) com address
+> marks + GAPs + CRC-CCITT WD; **CRCs batem byte-a-byte com SDF real** (válido p/ CoCoSDC). Ligado em
+> "Salvar Como .sdf" / "Salvar" (re-grava .sdf). Round-trip `tools/sdfrt.ts` = 9/9. Geração só p/
+> geometria padrão; FM/protegido = só leitura.
+SDF é o formato do **CoCoSDC** (Darren Atkinson) p/ discos NÃO-PADRÃO/protegidos. É **DMK pré-indexado**:
+o ATmega328 do CoCoSDC não tem RAM p/ decodificar fluxo DMK cru em tempo real, então cada trilha leva uma
+**Sector ID Table** no cabeçalho → busca instantânea. **Relevância p/ OS-9 = BAIXA** (OS-9/RBF é padrão
+18×256, circula como `.dsk/.os9/.dmk`; SDF guarda jogos protegidos / FLEX densidade-mista) — NÃO bloqueia
+nada do OS-9. ⚠️ **Detectar pelo magic `SDF1`, NUNCA pela extensão** (`.sdf` colide com "Sam Disk Format"
+do SAM Coupé). O estudo **CONFIRMOU 100% o nosso mecanismo de boot** (boot na Trilha 34 Setor 1 via
+cobbler/os9gen; DOS; OS9Boot; Toolshed injeta o boot na Trilha 34).
+
+**FILE HEADER (512 B):** `0x000` 4B `'SDF1'` · `0x004` 1B cilindros (≤80) · `0x005` 1B lados (1/2) ·
+`0x006` 1B write-perm (0x00=R/W, 0xFF=RO) · `0x007` 1B nested-sectors (0/1) · `0x008..0x1FF` reservado=0.
+**Tamanho total = 512 + (C × S × 6656).**
+
+**TRACK RECORD (6656 B, ordem física por (cilindro,lado)):** `0x0000..0x00FF` Track Header (256) ·
+`0x0100..0x1969` Raw Track Data (6250) · `0x196A..0x19FF` Padding (150, alinha a 512).
+
+**TRACK HEADER (256 B):** `0x00` = nº de entradas ativas; `0x01..0x07` reservado=0; `0x08..0xFF` =
+Sector ID Table (até **31 entradas × 8 B**, empacotadas do início, resto zero).
+
+**SECTOR ID TABLE ENTRY (8 B):**
+- `0x00` u16 LE **ID Field Offset**: bits 0–13 = offset (a partir do início do Track Record) p/ o
+  cabeçalho de ID do setor; **bit14** = densidade simples (FM); **bit15** = erro de CRC no ID.
+- `0x02` u16 LE **Data Field Offset**: bits 0–13 = offset p/ o campo de dados; **bit14** = Deleted Data
+  Mark; **bit15** = erro de CRC nos dados.
+- `0x04` u8 cilindro físico · `0x05` u8 lado físico · `0x06` u8 **nº lógico do setor** (1–18) ·
+  `0x07` u8 **código de tamanho** (0=128, 1=256, 2=512, 3=1024 B).
+
+**FM (densidade simples):** cada byte lógico é DUPLICADO no Raw Track Data (`0x55 0xAA` → `0x55 0x55
+0xAA 0xAA`) — mesmíssimo tratamento do nosso `dmk.ts`.
+
+**Algoritmo de leitura (C/L/setor → bytes):** `TrackIndex = Cyl*S + Side`; `FileOffset = 512 +
+TrackIndex*6656`; ler header 256 B; `count=hdr[0]`; varrer entries de `0x08` passo 8, casar `entry[0x06]`;
+`dataOff = u16LE(entry+0x02) & 0x3FFF`; `size = 128 << entry[0x07]`; ler em `FileOffset+dataOff`
+(de-duplicar se FM). **Escrita:** ao alterar um setor, recalcular/regravar o Data Field Offset (LE) +
+flags no Track Header. **SDF em branco:** header + C×S records; track headers zerados (0 setores);
+Raw+Padding preenchidos com `0xE5`/`0xF6`.
+
+**Status: IMPLEMENTADO ✅ (read-only)** em `src/main/converter/sdf.ts`: `isSdf` (magic `SDF1`+tamanho
+exato) e `sdfToRaw` (decodifica cada Sector ID Table, de-duplica FM como o `dmk.ts`, coloca por
+(cil,lado)+setor normalizando interleave, conta `protectedSectors`). Ligado no `normalizeDiskImage`
+(`dmk.ts`) → todas as leituras que já faziam de-DMK fazem de-SDF de graça; `.sdf` adicionado aos filtros
+de "Abrir imagem"/OS-9. **Validado** (`tools/sdfprobe.ts`) contra a amostra REAL FHL Color FLEX 5.0.4
+(`amostras/sdf/fhl_flex_5_0_4.sdf`, 35cil/1lado, track0=10 setores FM 256B) com **cross-check vs o mesmo
+disco em DMK = 630/630 setores idênticos (100%)**. ESCRITA SDF não feita (read-only, como o DMK; sem
+necessidade nos fluxos atuais). Refs: CoCo SDC User Guide v4 (Atkinson/Lindner); dmk2sdf (ANSI C);
+`n6il/cocosdc-commander`. Estudo arquivado: `amostras/…SDF no Ecossistema OS.docx`.
 
 ## O6 — validação da ESCRITA em emulador/hardware (status 2026-06-07)
 - **XRoar disponível** localmente: `G:\Meu Drive\EmuCoco\ASM_PRG\xroar\xroar.exe` (há também a aba
   XRoar embarcada p/ teste manual). **Toolshed NÃO instalado** (sem `os9`/`decb` no PATH).
-- **Plano:** (a) harness de **round-trip de consistência** (insert/delete/mkdir via `os9.ts` → re-parse
-  → conferir bitmap × segmentos, todos os arquivos legíveis, CRC de módulos inalterado); (b) **boot/dir
-  manual no XRoar** de um disco que escrevemos; (c) opcional: instalar Toolshed p/ cross-check `os9 dir`.
+- **(b) boot/dir manual no XRoar — DESTRAVADO ✅** pela ponte OS-9 → XRoar (botão "Testar" da aba
+  OS-9; ver Status acima). Já dá p/ montar um disco que escrevemos numa drive e bootar/dir no
+  emulador embarcado.
+- **Plano restante:** (a) harness de **round-trip de consistência** (insert/delete/mkdir via `os9.ts`
+  → re-parse → conferir bitmap × segmentos, todos os arquivos legíveis, CRC de módulos inalterado) —
+  candidato a `tools/os9rt.ts` no `tsconfig.tools.json`, ao lado do `os9probe.ts`; (c) opcional:
+  instalar Toolshed p/ cross-check `os9 dir`.
 
 ---
 

@@ -82,6 +82,8 @@ const api = {
   os9ExtractBuffer: (buffer: Uint8Array, fdLsn: number, defaultName: string) => ipcRenderer.invoke('os9-extract-buffer', buffer, fdLsn, defaultName),
   os9SaveBuffer: (buffer: Uint8Array, defaultName: string) => ipcRenderer.invoke('os9-save-buffer', buffer, defaultName),
   os9SaveOverwrite: (filePath: string, buffer: Uint8Array) => ipcRenderer.invoke('os9-save-overwrite', filePath, buffer),
+  os9MakeBootable: (buffer: Uint8Array) => ipcRenderer.invoke('os9-make-bootable', buffer),
+  os9NewBootable: (geomKey: string, withPrograms: boolean, forceRef?: boolean) => ipcRenderer.invoke('os9-new-bootable', geomKey, withPrograms, forceRef),
 
   onImageProgress: (cb: (p: any) => void) => {
     const listener = (_e: any, p: any) => cb(p);
@@ -135,6 +137,19 @@ const api = {
   imageWriteSlot: (filePath: string, offset: number, diskBuffer: Uint8Array) =>
     ipcRenderer.invoke('image-write-slot', filePath, offset, diskBuffer),
 
+  // É um disco OS-9 (RBF)? (decide rota p/ aba OS-9 ao extrair de um contêiner FAT/MiniIDE)
+  os9DetectBuffer: (buffer: Uint8Array) => ipcRenderer.invoke('os9-detect-buffer', buffer),
+
+  // Escrita FAT (D12 — CoCoSDC / RetroRewind): write-back de .dsk editado, inserir e excluir.
+  imageFatWriteback: (filePath: string, innerPath: string, data: Uint8Array) =>
+    ipcRenderer.invoke('image-fat-writeback', filePath, innerPath, data),
+  imageFatAdd: (filePath: string, dirPath: string, name: string, data: Uint8Array) =>
+    ipcRenderer.invoke('image-fat-add', filePath, dirPath, name, data),
+  imageFatAddPick: (filePath: string, dirPath: string) =>
+    ipcRenderer.invoke('image-fat-add-pick', filePath, dirPath),
+  imageFatDelete: (filePath: string, innerPath: string) =>
+    ipcRenderer.invoke('image-fat-delete', filePath, innerPath),
+
   // Drag-OUT nativo: extrai o arquivo para um temp e inicia o arrasto do SO (soltar no Explorer).
   startFileDrag: (dskBuffer: Uint8Array, fileEntry: any, fileName: string) =>
     ipcRenderer.send('start-file-drag', dskBuffer, fileEntry, fileName),
@@ -165,8 +180,8 @@ const api = {
   buildCocoFlashBin: (romImage: Uint8Array) =>
     ipcRenderer.invoke('build-cocoflash-bin', romImage),
 
-  saveCartridgeFile: (romBuffer: Uint8Array, defaultName: string, title?: string, filters?: any[]) =>
-    ipcRenderer.invoke('save-cartridge-file', romBuffer, defaultName, title, filters),
+  saveCartridgeFile: (romBuffer: Uint8Array, defaultName: string, title?: string, filters?: any[], sdfGeom?: { sectorsPerTrack: number; sides: number }) =>
+    ipcRenderer.invoke('save-cartridge-file', romBuffer, defaultName, title, filters, sdfGeom),
 
   saveDskOverwrite: (filePath: string, data: Uint8Array) =>
     ipcRenderer.invoke('save-dsk-overwrite', filePath, data),

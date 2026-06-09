@@ -1,9 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3, Music, ToggleLeft, ToggleRight } from 'lucide-react';
+import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3, Music, ToggleLeft, ToggleRight, Maximize2, Minimize2 } from 'lucide-react';
+import { TabHelpModal } from './TabHelp';
 
 // Discos vão para uma drive via insert_disk; FITA (.cas/.wav) vai pro deck via insert_tape;
-// o resto (bin/rom/sna…) via load_file auto.
-const DISK_EXTS = ['dsk', 'vdk', 'jvc', 'dmk'];
+// o resto (bin/rom/sna…) via load_file auto. OS-9 (.os9) é um dump raw de setores (mesma
+// geometria do .dsk) → montado como disco, mas renomeado p/ .dsk na VFS do XRoar (que detecta
+// a geometria pela extensão/tamanho — ".os9" não é reconhecido).
+const DISK_EXTS = ['dsk', 'vdk', 'jvc', 'dmk', 'os9'];
 const CASSETTE_EXTS = ['cas', 'wav'];
 
 const MACHINES = [
@@ -36,7 +39,7 @@ const JOY_OPTIONS = [
   { v: 5, pt: 'Teclado: QAOP + Espaço', en: 'Keyboard: QAOP + Space' },
 ];
 
-interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; }
+interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string; }
 interface PendingType { text: string; key: number; reset?: boolean; }
 
 // Atraso por tecla na injeção BASIC→XRoar. O xroar.html SEMPRE digita caractere-a-caractere (o envio
@@ -56,13 +59,16 @@ interface Props {
   pendingType?: PendingType | null;
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
   platform?: 'coco' | 'dragon';
+  expanded?: boolean;
+  onToggleExpand?: () => void;
 }
 
-export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onLog, platform }: Props) {
+export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onLog, platform, expanded, onToggleExpand }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [machine, setMachine] = useState('coco3');
   const [tvInput, setTvInput] = useState('cmp-br');
+  const [glFilter, setGlFilter] = useState('nearest'); // 'nearest'=pixel-perfect (jogos) | 'linear'=suave (texto 80col)
   const [rightJoy, setRightJoy] = useState(0); // joystick 0
   const [leftJoy, setLeftJoy] = useState(0);    // joystick 1
   const [colour, setColour] = useState(50);
@@ -81,6 +87,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [loaded, setLoaded] = useState(false); // config carregada? (evita salvar antes da carga)
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
+  const [showHelp, setShowHelp] = useState(false);
   const lastLoadKey = useRef(0);
   const lastTypeKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
@@ -96,7 +103,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // Toda a config visual vai no boot (URL). Trocar máquina ou saída de vídeo reinicia (rápido
   // e mostra a tela corretamente); brilho/contraste/cor são ao vivo (set_float ao arrastar).
   const src = new URL('xroar/xroar.html', window.location.href).href +
-    `?machine=${machine}&tvInput=${tvInput}&tvType=ntsc&ccr=${tvInput.startsWith('cmp') ? 1 : 0}&glFilter=nearest${bootProg ? '&bootfile=1' : ''}`;
+    `?machine=${machine}&tvInput=${tvInput}&tvType=ntsc&ccr=${tvInput.startsWith('cmp') ? 1 : 0}&glFilter=${glFilter}${bootProg ? '&bootfile=1' : ''}`;
 
   const sendCmd = (fn: string, extra: Record<string, any> = {}) => {
     const w = iframeRef.current?.contentWindow;
@@ -114,7 +121,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     const e = ext.toLowerCase();
     // Feedback de carga vai para o LOG (não para o indicador ao lado de "XRoar", que mostra só o estado).
     if (DISK_EXTS.includes(e)) {
-      sendCmd('insert_disk', { drive, fileName: name, fileData: arr });
+      // OS-9 raw → apresenta como .dsk p/ o XRoar acertar a geometria; o nome exibido na drive
+      // mantém o original.
+      const vfsName = e === 'os9' ? name.replace(/\.os9$/i, '') + '.dsk' : name;
+      sendCmd('insert_disk', { drive, fileName: vfsName, fileData: arr });
       setDrives(d => { const n = [...d]; n[drive] = name; return n; });
       onLog?.(`D${drive}: ${name}`, `D${drive}: ${name}`, 'info');
     } else if (CASSETTE_EXTS.includes(e)) {
@@ -216,6 +226,14 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // Carrega o que foi empurrado de fora (ex.: "Testar no XRoar" do painel DSK) → drive 0
   useEffect(() => {
     if (!pendingLoad || pendingLoad.key === lastLoadKey.current || !ready) return;
+    // Setup pedido pelo chamador (ex.: OS-9 quer RGB + filtro Suave p/ as 80 colunas hi-res ficarem
+    // legíveis): ajusta vídeo/filtro PRIMEIRO (num só passo → um remount); o iframe remonta, zera
+    // lastLoadKey, este efeito re-roda já no modo certo e então monta+boota.
+    {
+      const needTv = pendingLoad.tvInput && tvInput !== pendingLoad.tvInput;
+      const needGl = pendingLoad.glFilter && glFilter !== pendingLoad.glFilter;
+      if (needTv || needGl) { if (needTv) setTvInput(pendingLoad.tvInput!); if (needGl) setGlFilter(pendingLoad.glFilter!); return; }
+    }
     lastLoadKey.current = pendingLoad.key;
     loadToDrive(pendingLoad.drive ?? 0, pendingLoad.name, pendingLoad.ext, pendingLoad.data);
     // Auto-roda (duplo-clique): monta o disco, dá HARD RESET (limpa qualquer programa que já
@@ -234,7 +252,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       // (sem auto-digitar; o usuário testa com DIR/RUN/LOADM no prompt).
       setTimeout(() => { sendCmd('hard_reset'); focusEmu(); }, 900);
     }
-  }, [pendingLoad, ready]);
+  }, [pendingLoad, ready, tvInput, glFilter]);
 
   // Injeção de BASIC/texto (aba BASIC) → digita no emulador via type_string.
   //  - reset=true: HARD RESET primeiro (boot limpo, garante o prompt OK mesmo com algo rodando),
@@ -272,7 +290,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     // Remontagem (não a 1ª montagem) limpa as drives → re-aplica o disco/texto pendente no novo boot,
     // senão a imagem some do emulador (mas o nome ficava no D1) e o usuário tinha que testar 2×.
     if (mounted) { setReady(false); lastLoadKey.current = 0; lastTypeKey.current = 0; }
-  }, [machine, tvInput, bootProgKey]);
+  }, [machine, tvInput, glFilter, bootProgKey]);
 
   // Aplica TODAS as configurações ao vivo quando o emulador (re)fica pronto — o boot
   // começa nos defaults, então empurramos o estado atual (vídeo, cor, ccr, joysticks).
@@ -346,6 +364,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         if (x && !done) {
           if (x.machine) setMachine(x.machine);
           if (x.tvInput) setTvInput(x.tvInput);
+          if (x.glFilter) setGlFilter(x.glFilter);
           if (typeof x.rightJoy === 'number') setRightJoy(x.rightJoy);
           if (typeof x.leftJoy === 'number') setLeftJoy(x.leftJoy);
           if (typeof x.colour === 'number') setColour(x.colour);
@@ -362,10 +381,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   useEffect(() => {
     if (!loaded || !window.cocoApi || typeof window.cocoApi.saveConfig !== 'function') return;
     const id = setTimeout(() => {
-      window.cocoApi.saveConfig({ xroar: { machine, tvInput, colour, brightness, contrast, rightJoy, leftJoy } });
+      window.cocoApi.saveConfig({ xroar: { machine, tvInput, glFilter, colour, brightness, contrast, rightJoy, leftJoy } });
     }, 400);
     return () => clearTimeout(id);
-  }, [loaded, machine, tvInput, colour, brightness, contrast, rightJoy, leftJoy]);
+  }, [loaded, machine, tvInput, glFilter, colour, brightness, contrast, rightJoy, leftJoy]);
 
   const togglePause = () => {
     if (paused) { sendCmd('resume'); setPaused(false); }
@@ -387,8 +406,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
 
   return (
     <div className="flex-1 flex flex-row overflow-hidden p-3 gap-3" style={{ minHeight: 0 }}>
-      {/* ESQUERDA: drives + joystick/teclado */}
-      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: SIDEBAR_W }}>
+      {/* ESQUERDA: drives + joystick/teclado (oculta no modo Expandir p/ a tela usar toda a área) */}
+      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: SIDEBAR_W, display: expanded ? 'none' : 'flex' }}>
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
           <div className={sectionTitle}>{t('Drives', 'Drives')}</div>
           {[0, 1, 2, 3].map(d => (
@@ -460,11 +479,20 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       </div>
 
       {/* CENTRO: tela do emulador 4:3 */}
-      <div ref={stageRef} className="flex-1 glass-panel overflow-hidden flex items-center justify-center bg-black" style={{ minHeight: 0, minWidth: 0 }}>
+      <div ref={stageRef} className="flex-1 glass-panel overflow-hidden flex items-center justify-center bg-black" style={{ minHeight: 0, minWidth: 0, position: 'relative' }}>
+        {/* Expandir/recolher: o canvas é 4:3 limitado pela ALTURA → expandir esconde as laterais E o
+            console de diagnóstico (no App), dando muito mais altura → tela maior e mais nítida. */}
+        {onToggleExpand && (
+          <button onClick={onToggleExpand}
+            className="dsk-tool" style={{ position: 'absolute', top: 8, right: 8, zIndex: 20, padding: '4px 8px' }}
+            title={expanded ? t('Recolher (mostrar painéis)', 'Collapse (show panels)') : t('Expandir a tela (esconde painéis)', 'Expand the screen (hide panels)')}>
+            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+          </button>
+        )}
         {mounted ? (
           <iframe
             ref={iframeRef}
-            key={`${machine}|${tvInput}|${bootProgKey}`}
+            key={`${machine}|${tvInput}|${glFilter}|${bootProgKey}`}
             src={src}
             title="XRoar"
             allow="autoplay; gamepad"
@@ -475,8 +503,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         )}
       </div>
 
-      {/* DIREITA: máquina + vídeo + imagem + controles */}
-      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: SIDEBAR_W }}>
+      {/* DIREITA: máquina + vídeo + imagem + controles (oculta no modo Expandir) */}
+      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: SIDEBAR_W, display: expanded ? 'none' : 'flex' }}>
         <div className="flex items-center gap-2">
           <Cpu size={16} className="text-[var(--primary)]" />
           <span className="text-sm font-bold text-white uppercase tracking-wide">XRoar</span>
@@ -501,6 +529,17 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
               {t('Composto = cores de artefato (NTSC). RGB = nítido, sem artefato.', 'Composite = artifact colours (NTSC). RGB = sharp, no artifacts.')}
             </div>
           </div>
+          <div>
+            <div className={sectionTitle}>{t('Filtro de tela', 'Screen filter')}</div>
+            <select value={glFilter} onChange={(e) => { setReady(false); setGlFilter(e.target.value); }} className="input-select text-xs py-1 w-full">
+              <option value="nearest">{t('Nítido (pixel)', 'Sharp (pixel)')}</option>
+              <option value="linear">{t('Suave (texto 80 col)', 'Smooth (80-col text)')}</option>
+            </select>
+            <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">
+              {t('Nítido = pixels exatos (jogos). Suave = uniformiza o texto fino de 80 colunas (OS-9).',
+                 'Sharp = exact pixels (games). Smooth = evens out thin 80-column text (OS-9).')}
+            </div>
+          </div>
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
@@ -522,11 +561,20 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           <button onClick={() => sendCmd('hard_reset')} disabled={!ready} className="dsk-tool justify-center"><Power size={13} /> {t('Reset total', 'Hard reset')}</button>
         </div>
 
+        {/* AJUDA — abaixo de Controles (a aba XRoar não tem barra de ferramentas no topo) */}
+        <div className="glass-panel p-2.5 flex flex-col gap-1.5">
+          <div className={sectionTitle}>{t('Ajuda', 'Help')}</div>
+          <button onClick={() => setShowHelp(true)} className="dsk-tool justify-center">
+            {t('Como usar a aba XRoar', 'How to use the XRoar tab')}
+          </button>
+        </div>
+
         <div className="text-[9px] text-[var(--text-muted)] leading-tight">
           {t('Clique na tela para capturar teclado/áudio. Trocar máquina/vídeo reinicia o emulador.',
              'Click the screen to capture keyboard/audio. Changing machine/video reboots the emulator.')}
         </div>
       </div>
+      {showHelp && <TabHelpModal topic="xroar" lang={lang} onClose={() => setShowHelp(false)} />}
     </div>
   );
 }

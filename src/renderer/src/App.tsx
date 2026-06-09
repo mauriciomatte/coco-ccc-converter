@@ -53,6 +53,7 @@ import DiskMap, { DiskLegend } from './components/DiskMap';
 import FileCompareModal from './components/FileCompareModal';
 import { Os9Tab, Os9Doc } from './components/Os9Tab';
 import { K7Tab } from './components/K7Tab';
+import { HelpButton, TabHelpModal, HelpTopic } from './components/TabHelp';
 // Changelog (histórico de versões) embutido no build a partir dos arquivos da raiz do repo.
 import changelogPt from '../../../VERSOES.TXT?raw';
 import changelogEn from '../../../VERSIONS_EN.TXT?raw';
@@ -485,7 +486,9 @@ export default function App() {
   // Estado de idioma e configurações
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
   const [activeTab, setActiveTab] = useState<'dsk' | 'k7' | 'os9' | 'xroar' | 'gw' | 'basic' | 'eprom'>('dsk');
-  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean } | null>(null);
+  const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string } | null>(null);
+  const [xroarExpanded, setXroarExpanded] = useState(false); // aba XRoar em tela cheia (esconde laterais + console)
+  const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null); // modal de ajuda (DSK/GW renderizados no App)
   // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
   const [xroarType, setXroarType] = useState<{ text: string; key: number; reset?: boolean } | null>(null);
   // Editor BASIC: conteúdo e nome do arquivo persistem mesmo ao trocar de aba.
@@ -534,7 +537,8 @@ export default function App() {
   const [xroarTestConfirm, setXroarTestConfirm] = useState<boolean>(false); // modal: avisar que o XRoar será resetado ao testar o painel
   const [formatConfirm, setFormatConfirm] = useState<{ which: 'A' | 'B' } | null>(null); // modal: formatar a imagem do painel (rápida/completa)
   const [renameDrive, setRenameDrive] = useState<{ which: 'A' | 'B'; current: string; named: boolean } | null>(null); // modal: nomear/renomear drive SIDEKICK (MiniIDE)
-  const [imgWriteConfirm, setImgWriteConfirm] = useState<{ which: 'A' | 'B'; fileName: string; slot: number; pendingSwitch?: number } | null>(null); // modal: confirmar gravação no .img (MiniIDE)
+  const [imgWriteConfirm, setImgWriteConfirm] = useState<{ which: 'A' | 'B'; fileName: string; slot: number; pendingSwitch?: number; kind?: 'miniide' | 'cocosdc' } | null>(null); // modal: confirmar gravação no .img (MiniIDE / CoCoSDC)
+  const [fatInsertWhich, setFatInsertWhich] = useState<'A' | 'B' | null>(null); // modal: confirmar inserção de .dsk no cartão CoCoSDC (D12)
   const [compareData, setCompareData] = useState<{ nameA: string; dataA: Uint8Array; nameB: string; dataB: Uint8Array } | null>(null); // modal comparador de arquivos
   const [convertModal, setConvertModal] = useState<{ srcPane: 'A' | 'B'; name: string; loadAddr: number; execAddr: number; payload: Uint8Array; mode: 'direct' | 'reloc' } | null>(null); // modal conversor CoCo→Dragon
   const [dskNewConfirm, setDskNewConfirm] = useState<'A' | 'B' | null>(null); // modal: confirmar "Novo" sobre painel com conteúdo
@@ -772,8 +776,12 @@ export default function App() {
 
   // Carrega as configurações do app (idioma, GW, etc.) e marca como carregado
   const settingsLoaded = useRef<boolean>(false);
+  const loadCfgRan = useRef<boolean>(false);   // guarda contra dupla execução (React.StrictMode em dev)
+  const welcomeLogged = useRef<boolean>(false);
 
   useEffect(() => {
+    if (loadCfgRan.current) return;            // evita carregar config / logar 2× sob StrictMode
+    loadCfgRan.current = true;
     (async () => {
       try {
         if (window.cocoApi && typeof window.cocoApi.loadConfig === 'function') {
@@ -859,17 +867,19 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (welcomeLogged.current) return;  // uma vez só (evita 2× no StrictMode e ao trocar idioma)
+    welcomeLogged.current = true;
     addLog(
       'Bem-vindo ao CoCo DSK & CCC Utility. Navegue pelas abas para manipular imagens de discos.',
       'Welcome to CoCo DSK & CCC Utility. Browse the tabs to work with disk images.',
       'info'
     );
     addLog(
-      'Formatos suportados — discos: .DSK, .OS9, .VDK, .JVC, .DMK, .IMG, .IMA, .VHD, .RAW; fita/áudio: .CAS, .WAV; programas/cartuchos: .BIN, .ROM, .CCC, .HEX; BASIC/texto: .BAS, .ASC, .TXT; snapshot: .SNA.',
-      'Supported formats — disks: .DSK, .OS9, .VDK, .JVC, .DMK, .IMG, .IMA, .VHD, .RAW; tape/audio: .CAS, .WAV; programs/cartridges: .BIN, .ROM, .CCC, .HEX; BASIC/text: .BAS, .ASC, .TXT; snapshot: .SNA.',
+      'Formatos suportados — discos: .DSK, .OS9, .VDK, .JVC, .DMK, .SDF, .IMG, .IMA, .VHD, .RAW; fita/áudio: .CAS, .WAV; programas/cartuchos: .BIN, .ROM, .CCC, .HEX; BASIC/texto: .BAS, .ASC, .TXT; snapshot: .SNA.',
+      'Supported formats — disks: .DSK, .OS9, .VDK, .JVC, .DMK, .SDF, .IMG, .IMA, .VHD, .RAW; tape/audio: .CAS, .WAV; programs/cartridges: .BIN, .ROM, .CCC, .HEX; BASIC/text: .BAS, .ASC, .TXT; snapshot: .SNA.',
       'info'
     );
-  }, [currentLang]);
+  }, []);
 
   // Assistente Inteligente
   useEffect(() => {
@@ -1384,6 +1394,23 @@ export default function App() {
     setOs9Doc(doc); setActiveTab('os9');
   };
 
+  // Um disco extraído de um contêiner (CoCoSDC/RetroRewind FAT ou MiniIDE) que não é RS-DOS pode ser
+  // OS-9 (RBF). Se for, abre-o EDITÁVEL na aba OS-9 (em vez de mostrar "lixo" na aba DSK). Retorna
+  // true se roteou. `os9DetectBuffer` também normaliza DMK/JVC.
+  const maybeRouteOs9 = async (slice: Uint8Array, label: string): Promise<boolean> => {
+    try {
+      if (typeof window.cocoApi.os9DetectBuffer !== 'function') return false;
+      const det = await window.cocoApi.os9DetectBuffer(slice);
+      if (!det?.os9) return false;
+      const buffer = det.image ? new Uint8Array(det.image) : slice;
+      const fileName = /\.(os9|dsk)$/i.test(label) ? label : `${label.replace(/\.[^.]+$/, '')}.os9`;
+      openOs9Doc({ buffer, fileName, editable: true });
+      addLog(`OS-9: "${label}"${det.volume ? ` (volume "${det.volume}")` : ''} é um disco OS-9 → aberto EDITÁVEL na aba OS-9.`,
+             `OS-9: "${label}"${det.volume ? ` (volume "${det.volume}")` : ''} is an OS-9 disk → opened EDITABLE in the OS-9 tab.`, 'success');
+      return true;
+    } catch { return false; }
+  };
+
   const STD_DISK = 161280; // disco RS-DOS padrão (35 trilhas)
 
   const isDragonPane = (which: 'A' | 'B'): boolean => getPane(which)?.format === 'dragon';
@@ -1487,9 +1514,9 @@ export default function App() {
     const c = pane.container;
     if (index < 0 || index >= c.count) return;
     if (index === c.index) return; // já é o disco atual
-    if (c.source === 'file' && c.kind === 'miniide' && dskDirty[which]) {
+    if (c.source === 'file' && (c.kind === 'miniide' || c.kind === 'cocosdc') && dskDirty[which]) {
       const slot = c.entries?.[c.index]?.slot ?? c.index;
-      setImgWriteConfirm({ which, fileName: c.fileName, slot, pendingSwitch: index });
+      setImgWriteConfirm({ which, fileName: c.fileName, slot, pendingSwitch: index, kind: c.kind });
       return; // espera a decisão do modal; a troca segue depois (ou é descartada/cancelada)
     }
     await doSelectContainerDisk(which, index);
@@ -1520,6 +1547,8 @@ export default function App() {
     const entryState = c.entries?.[index]?.state;
     const emptySlot = entryState === 'empty';
     const unreadable = !res.success || res.rsdos === false;
+    // Disco OS-9 dentro do contêiner → abre na aba OS-9 (e ainda atualiza o índice do contêiner abaixo).
+    if (unreadable && !emptySlot) { await maybeRouteOs9(slice, c.entries?.[index]?.label || label); }
     const readOnly = !unreadable && !!res.hasArt;
     if (selectedDsk?.pane === which) setSelectedDsk(null);
     setPane(which, {
@@ -2054,6 +2083,9 @@ export default function App() {
       if (!dir.success) { addLog(`Imagem: ${dir.error}`, `Image: ${dir.error}`, 'error'); return; }
       if (selectedDsk?.pane === which) setSelectedDsk(null);
       const firstUnreadable = dir.rsdos === false;
+      // Se o 1º disco do contêiner FAT/CoCoSDC for OS-9, abre-o na aba OS-9 (segue montando o contêiner
+      // no painel para navegar os demais).
+      if (firstUnreadable) { await maybeRouteOs9(buf, res.entries[0].label); }
       const firstReadOnly = !firstUnreadable && !!dir.hasArt;
       setPane(which, {
         buffer: buf, fileName: res.entries[0].label, size: buf.length,
@@ -2130,6 +2162,42 @@ export default function App() {
     setActiveTab('xroar');
     addLog(reset ? `XRoar resetado e recebendo "${d.name}" (drive 0).` : `Disco "${d.name}" montado no XRoar SEM reset (drive 0).`,
            reset ? `XRoar reset and loading "${d.name}" (drive 0).` : `Disk "${d.name}" mounted in XRoar WITHOUT reset (drive 0).`, 'info');
+  };
+
+  // Ponte OS-9 → XRoar: monta o disco OS-9 (em memória) numa drive do emulador. `mode`:
+  //  • 'boot'  → reseta e digita DOS (CoCo) / BOOT (Dragon) — boota um disco OS-9 BOOTÁVEL na drive 0.
+  //  • 'reset' → monta + hard reset (boot limpo; inspecionar com OS-9 já rodando: dir /dX).
+  //  • 'mount' → monta sem resetar (mantém o que está rodando).
+  // O disco raw OS-9 vai como ".dsk" (o XRoar acerta a geometria pela extensão/tamanho).
+  const handleTestOs9InXroar = (o: { name?: string; data: Uint8Array; mode: 'boot' | 'reset' | 'mount'; drive: number }) => {
+    if (!o?.data?.length) { addLog('Disco OS-9 vazio.', 'Empty OS-9 disk.', 'warn'); return; }
+    // OS-9/NitrOS-9 (6809 L2) é CoCo 3 (512K) — força a máquina CoCo 3 no XRoar (a máquina segue a
+    // plataforma; sem isso, se estivesse em Dragon/CoCo2 o boot OS-9 falharia).
+    if (platform !== 'coco') { setPlatform('coco'); addLog('Plataforma do XRoar ajustada para CoCo (OS-9 = CoCo 3).', 'XRoar platform set to CoCo (OS-9 = CoCo 3).', 'info'); }
+    const base = (o.name || 'disco')
+      .replace(/\.(os9|dsk|vdk|jvc|dmk)$/i, '')
+      .replace(/[^A-Za-z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 24) || 'disco';
+    const name = `${base}.dsk`;
+    const isDragon = false; // OS-9 aqui = CoCo (comando DOS); máquina forçada p/ CoCo 3 acima
+    // OS-9 L2 usa 80 colunas hi-res → RGB (sem artefato) + filtro Suave (uniformiza as hastes finas em
+    // escala não-inteira) deixam o texto legível. Pede ambos ao XRoar.
+    const load: { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string } =
+      { name, ext: 'dsk', data: new Uint8Array(o.data), key: Date.now(), drive: o.drive ?? 0, tvInput: 'rgb', glFilter: 'linear' };
+    if (o.mode === 'boot') load.runCmd = (isDragon ? 'BOOT\r' : 'DOS\r');
+    else load.reset = o.mode === 'reset';
+    setXroarLoad(load);
+    setActiveTab('xroar');
+    const driveTxt = `D${o.drive ?? 0}`;
+    addLog(
+      o.mode === 'boot' ? `OS-9 → XRoar: "${name}" montado em ${driveTxt}; resetando e bootando (${isDragon ? 'BOOT' : 'DOS'}).`
+        : o.mode === 'reset' ? `OS-9 → XRoar: "${name}" montado em ${driveTxt} com reset (boot limpo).`
+        : `OS-9 → XRoar: "${name}" montado em ${driveTxt} sem reset.`,
+      o.mode === 'boot' ? `OS-9 → XRoar: "${name}" mounted in ${driveTxt}; resetting and booting (${isDragon ? 'BOOT' : 'DOS'}).`
+        : o.mode === 'reset' ? `OS-9 → XRoar: "${name}" mounted in ${driveTxt} with reset (clean boot).`
+        : `OS-9 → XRoar: "${name}" mounted in ${driveTxt} without reset.`,
+      'info');
   };
 
   // Duplo-clique num arquivo: monta o disco do painel no XRoar (drive 0) e AUTO-RODA o arquivo
@@ -2699,13 +2767,19 @@ export default function App() {
       // Disco Dragon → sugere .VDK (formato nativo, com o header que o XRoar lê); CoCo → .DSK.
       const isDragon = pane.format === 'dragon';
       const defName = pane.fileName || (isDragon ? 'disco.vdk' : 'disk.dsk');
+      // .SDF (CoCoSDC) é oferecido só p/ um disco RS-DOS único (raw, single-side, 18×256) — não p/
+      // contêiner nem Dragon (.vdk tem cabeçalho). Nesses casos passamos a geometria p/ codificar.
+      const sdfOk = !isDragon && !pane.container;
       const filters = isDragon
         ? [{ name: 'Dragon Disk Image (.vdk)', extensions: ['vdk'] }, { name: 'Raw Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]
+        : sdfOk
+        ? [{ name: 'RS-DOS Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'Imagem CoCoSDC (.sdf)', extensions: ['sdf'] }, { name: 'All Files', extensions: ['*'] }]
         : [{ name: 'RS-DOS Disk Image (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }];
       const r = await window.cocoApi.saveCartridgeFile(
         saveBuf, defName,
         currentLang === 'pt-br' ? `Salvar imagem como… (painel ${activePane})` : `Save image as… (pane ${activePane})`,
-        filters
+        filters,
+        sdfOk ? { sectorsPerTrack: 18, sides: 1 } : undefined
       );
       if (r.success) {
         clearDirty(activePane);
@@ -2745,14 +2819,50 @@ export default function App() {
     return true;
   };
 
+  // D12 — grava o disco ATUAL de volta dentro da imagem CoCoSDC/RetroRewind (FAT), pelo caminho
+  // interno do .dsk (write-back FAT: reaproveita/estende a cadeia de clusters + atualiza o diretório).
+  // Retorna true se foi tratado aqui (painel é um contêiner-arquivo CoCoSDC).
+  const saveCocoSdcBack = async (which: 'A' | 'B'): Promise<boolean> => {
+    const pane = getPane(which);
+    const c = pane?.container;
+    if (!(c && c.source === 'file' && c.kind === 'cocosdc')) return false;
+    if (typeof window.cocoApi.imageFatWriteback !== 'function') { addLog('Reinicie o app: a escrita FAT (preload) não está carregada.', 'Restart the app: FAT write (preload) is not loaded.', 'error'); return true; }
+    const innerPath = c.entries?.[c.index]?.locator?.path;
+    if (!innerPath) { addLog('CoCoSDC: caminho interno do disco não encontrado.', 'CoCoSDC: disk inner path not found.', 'error'); return true; }
+    try {
+      const r = await window.cocoApi.imageFatWriteback(c.filePath, innerPath, pane!.buffer);
+      if (r.success) { clearDirty(which); addLog(`Disco "${innerPath}" gravado de volta no cartão CoCoSDC (${c.fileName}).`, `Disk "${innerPath}" written back to the CoCoSDC card (${c.fileName}).`, 'success'); }
+      else addLog(`CoCoSDC salvar: ${r.error}`, `CoCoSDC save: ${r.error}`, 'error');
+    } catch (err: any) { addLog(`CoCoSDC salvar: ${err.message}`, `CoCoSDC save: ${err.message}`, 'error'); }
+    return true;
+  };
+
+  // D12 — insere um NOVO .dsk no cartão CoCoSDC (FAT). Confirma antes (grava no arquivo, pode ser
+  // a mídia real). Após inserir, anexa a entry ao contêiner em memória (sem re-escanear o cartão).
+  const doInsertIntoCocoSdc = async (which: 'A' | 'B') => {
+    const pane = getPane(which);
+    const c = pane?.container;
+    if (!(c && c.source === 'file' && c.kind === 'cocosdc')) return;
+    try {
+      const r = await window.cocoApi.imageFatAddPick(c.filePath, '');
+      if (r?.cancelled) return;
+      if (!r.success) { addLog(`CoCoSDC inserir: ${r.error}`, `CoCoSDC insert: ${r.error}`, 'error'); return; }
+      const newEntry = { id: c.entries.length, label: r.name, info: `${(r.size / 1024).toFixed(0)} KB`, sub: r.path, locator: { kind: 'fat', cluster: r.firstCluster, size: r.size, path: r.path } };
+      const entries = [...c.entries, newEntry];
+      setPane(which, { ...getPane(which)!, container: { ...c, entries, count: entries.length } });
+      addLog(`Inserido "${r.name}" no cartão CoCoSDC (${c.fileName}). Navegue até o último disco para vê-lo.`,
+             `Inserted "${r.name}" into the CoCoSDC card (${c.fileName}). Navigate to the last disk to see it.`, 'success');
+    } catch (err: any) { addLog(`CoCoSDC inserir: ${err.message}`, `CoCoSDC insert: ${err.message}`, 'error'); }
+  };
+
   const handleDskSaveOverwrite = async () => {
     const pane = getPane(activePane);
     if (!pane) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
     const c = pane.container;
-    if (c?.source === 'file' && c.kind === 'miniide') {
+    if (c?.source === 'file' && (c.kind === 'miniide' || c.kind === 'cocosdc')) {
       // Gravar no .img → SEMPRE pede confirmação (pode ser o cartão real). Modal oferece Salvar Como.
       const slot = c.entries?.[c.index]?.slot ?? c.index;
-      setImgWriteConfirm({ which: activePane, fileName: c.fileName, slot });
+      setImgWriteConfirm({ which: activePane, fileName: c.fileName, slot, kind: c.kind });
       return;
     }
     if (!pane.sourcePath || pane.container) { handleDskSaveAs(); return; }
@@ -3427,6 +3537,7 @@ export default function App() {
         <section className="glass-panel p-4 flex flex-col gap-3 animate-slideup" style={{ width: '100%', maxWidth: 820 }}>
           <h2 className="text-sm font-bold text-white border-b border-[var(--border)] pb-2 tracking-wide uppercase flex items-center gap-2">
             <HardDrive className="text-[var(--primary)]" size={16} /> {t('gwTitle')}
+            <span className="ml-auto"><HelpButton onClick={() => setHelpTopic('gw')} lang={currentLang} /></span>
           </h2>
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <label className={labelCls} style={{ gridColumn: '1 / span 2' }}>
@@ -3703,6 +3814,15 @@ export default function App() {
                           style={{ padding: '3px 6px', color: '#c4b5fd', borderColor: '#a78bfa55' }}
                           title={currentLang === 'pt-br' ? 'Navegar a partição OS-9 desta imagem (somente-leitura)' : 'Browse this image\'s OS-9 partition (read-only)'}
                         >OS-9{pane.container.os9Volume ? ` · ${pane.container.os9Volume}` : ''}</button>
+                      )}
+                      {pane.container.kind === 'cocosdc' && (
+                        <button
+                          onClick={() => { setActivePane(which); setFatInsertWhich(which); }}
+                          disabled={imageBusy}
+                          className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1"
+                          style={{ padding: '3px 6px', color: '#34d399', borderColor: '#34d39955' }}
+                          title={currentLang === 'pt-br' ? 'Inserir um .dsk/.os9 do PC no cartão CoCoSDC (grava no arquivo)' : 'Insert a .dsk/.os9 from the PC into the CoCoSDC card (writes to the file)'}
+                        ><FileInput size={11} /> {currentLang === 'pt-br' ? 'Inserir disco' : 'Insert disk'}</button>
                       )}
                     </div>
                   )}
@@ -4682,6 +4802,7 @@ export default function App() {
               <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /></button>
               <button onClick={handleDskWriteToGw} disabled={!getPane(activePane)} title={t('dskToolGw')} aria-label={t('dskToolGw')} className="dsk-tool"><HardDrive size={15} /></button>
               {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)] ml-2">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
+              <span className="ml-auto"><HelpButton onClick={() => setHelpTopic('dsk')} lang={currentLang} /></span>
             </div>
             {/* Região dos painéis: ocupa só o espaço que sobra abaixo da toolbar (que tem altura
                 natural garantida por flex-shrink-0), evitando que a toolbar seja cortada. */}
@@ -4709,21 +4830,21 @@ export default function App() {
 
         {/* Aba OS-9 — sempre montada (display toggle) para NÃO perder a edição em memória ao trocar de aba */}
         <div style={{ display: activeTab === 'os9' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <Os9Tab doc={os9Doc} lang={currentLang} onDirtyChange={setOs9Dirty} />
+          <Os9Tab doc={os9Doc} lang={currentLang} onDirtyChange={setOs9Dirty} onTestInXroar={handleTestOs9InXroar} platform={platform} />
         </div>
 
         {/* XRoar emulator — always mounted (hidden unless active) so it never reboots on tab switch */}
         <div style={{ display: activeTab === 'xroar' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} pendingType={xroarType} onLog={addLog} platform={platform} />
+          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} pendingType={xroarType} onLog={addLog} platform={platform} expanded={xroarExpanded} onToggleExpand={() => setXroarExpanded(v => !v)} />
         </div>
 
-        {/* SPLITTER 3 (Horizontal) */}
-        <div className="splitter-h" onMouseDown={startResizingConsole} />
+        {/* SPLITTER 3 (Horizontal) — escondido quando o XRoar está expandido (tela cheia) */}
+        <div className="splitter-h" onMouseDown={startResizingConsole} style={{ display: activeTab === 'xroar' && xroarExpanded ? 'none' : undefined }} />
 
-        {/* BOTTOM PANEL: Diagnostic Console */}
+        {/* BOTTOM PANEL: Diagnostic Console — escondido no XRoar expandido p/ dar toda a altura à tela */}
         <div
           className={`w-full flex flex-col overflow-hidden px-4 bg-slate-950/20 ${consoleMax ? 'console-max' : ''}`}
-          style={{ height: consoleHeight, minHeight: 0, marginBottom: 24 }}
+          style={{ height: consoleHeight, minHeight: 0, marginBottom: 24, display: activeTab === 'xroar' && xroarExpanded ? 'none' : undefined }}
         >
           {/* Action Log Console */}
           <section className="glass-panel h-full w-full flex flex-col overflow-hidden bg-slate-950/40">
@@ -5062,17 +5183,21 @@ export default function App() {
       )}
 
       {/* Testar Painel no XRoar: avisa que o emulador será RESETADO (boot limpo) antes de montar o disco */}
+      {/* Ajuda das abas renderizadas no App (DSK / GW) */}
+      {helpTopic && <TabHelpModal topic={helpTopic} lang={currentLang} onClose={() => setHelpTopic(null)} />}
+
       {imgWriteConfirm && (
         <div className="glass-modal-overlay" onClick={() => setImgWriteConfirm(null)}>
           <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 520, maxWidth: '93%' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-full bg-rose-950/30 text-rose-400 flex-shrink-0"><AlertTriangle size={20} /></div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Gravar no arquivo .img?' : 'Write to the .img file?'}</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Gravar no arquivo da imagem?' : 'Write to the image file?'}</h3>
             </div>
             <p className="text-xs text-rose-300 leading-relaxed font-bold">
-              {currentLang === 'pt-br'
-                ? `⚠ Isto grava o disco (slot ${imgWriteConfirm.slot}) DENTRO do arquivo "${imgWriteConfirm.fileName}". Se esse .img for sua mídia REAL (cartão CF), ele será alterado. Para testar com segurança, CANCELE e troque para uma CÓPIA de testes — ou use "Salvar Como" para gerar um .dsk avulso sem tocar o .img.`
-                : `⚠ This writes the disk (slot ${imgWriteConfirm.slot}) INTO the file "${imgWriteConfirm.fileName}". If that .img is your REAL media (CF card), it will be modified. To test safely, CANCEL and switch to a test COPY — or use "Save As" to make a standalone .dsk without touching the .img.`}
+              {(() => { const sdc = imgWriteConfirm.kind === 'cocosdc'; const what = sdc ? (currentLang === 'pt-br' ? 'este disco' : 'this disk') : (currentLang === 'pt-br' ? `o disco (slot ${imgWriteConfirm.slot})` : `the disk (slot ${imgWriteConfirm.slot})`); const media = sdc ? (currentLang === 'pt-br' ? 'cartão SD do CoCoSDC' : 'CoCoSDC SD card') : (currentLang === 'pt-br' ? 'cartão CF' : 'CF card');
+                return currentLang === 'pt-br'
+                ? `⚠ Isto grava ${what} DENTRO do arquivo "${imgWriteConfirm.fileName}". Se esse arquivo for sua mídia REAL (${media}), ele será alterado. Para testar com segurança, CANCELE e troque para uma CÓPIA de testes — ou use "Salvar Como" para gerar um .dsk avulso sem tocar a imagem.`
+                : `⚠ This writes ${what} INTO the file "${imgWriteConfirm.fileName}". If that file is your REAL media (${media}), it will be modified. To test safely, CANCEL and switch to a test COPY — or use "Save As" to make a standalone .dsk without touching the image.`; })()}
             </p>
             <div className="flex justify-end gap-2 pt-1 flex-wrap">
               <button onClick={() => setImgWriteConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
@@ -5080,11 +5205,32 @@ export default function App() {
                 <button onClick={async () => { const c = imgWriteConfirm; clearDirty(c.which); setImgWriteConfirm(null); await doSelectContainerDisk(c.which, c.pendingSwitch!); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase" title={currentLang === 'pt-br' ? 'Descartar a edição e ir para o outro disco' : 'Discard the edit and go to the other disk'}>{currentLang === 'pt-br' ? 'Descartar e trocar' : 'Discard & switch'}</button>
               )}
               <button onClick={async () => { const c = imgWriteConfirm; setImgWriteConfirm(null); handleDskSaveAs(); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"><SaveAll size={13} /> {currentLang === 'pt-br' ? 'Salvar Como (.dsk)' : 'Save As (.dsk)'}</button>
-              <button onClick={async () => { const c = imgWriteConfirm; setImgWriteConfirm(null); await saveMiniIdeBack(c.which); if (c.pendingSwitch != null) await doSelectContainerDisk(c.which, c.pendingSwitch); }} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"><Save size={13} /> {currentLang === 'pt-br' ? 'Gravar no .img' : 'Write to .img'}</button>
+              <button onClick={async () => { const c = imgWriteConfirm; setImgWriteConfirm(null); if (c.kind === 'cocosdc') await saveCocoSdcBack(c.which); else await saveMiniIdeBack(c.which); if (c.pendingSwitch != null) await doSelectContainerDisk(c.which, c.pendingSwitch); }} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"><Save size={13} /> {currentLang === 'pt-br' ? 'Gravar na imagem' : 'Write to image'}</button>
             </div>
           </div>
         </div>
       )}
+
+      {/* D12 — confirmar inserção de um .dsk no cartão CoCoSDC (grava no arquivo FAT) */}
+      {fatInsertWhich && (() => { const c = getPane(fatInsertWhich)?.container; return (
+        <div className="glass-modal-overlay" onClick={() => setFatInsertWhich(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 520, maxWidth: '93%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-rose-950/30 text-rose-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Inserir disco no cartão CoCoSDC?' : 'Insert disk into the CoCoSDC card?'}</h3>
+            </div>
+            <p className="text-xs text-rose-300 leading-relaxed font-bold">
+              {currentLang === 'pt-br'
+                ? `⚠ Isto grava um novo arquivo DENTRO de "${c?.fileName}". Se esse arquivo for o cartão SD REAL, ele será alterado. Recomendado: trabalhe numa CÓPIA de testes. Você vai escolher o .dsk/.os9 a inserir no próximo passo.`
+                : `⚠ This writes a new file INTO "${c?.fileName}". If that file is the REAL SD card, it will be modified. Recommended: work on a test COPY. You'll pick the .dsk/.os9 to insert next.`}
+            </p>
+            <div className="flex justify-end gap-2 pt-1">
+              <button onClick={() => setFatInsertWhich(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={async () => { const w = fatInsertWhich; setFatInsertWhich(null); await doInsertIntoCocoSdc(w); }} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"><FileInput size={13} /> {currentLang === 'pt-br' ? 'Escolher e inserir' : 'Pick & insert'}</button>
+            </div>
+          </div>
+        </div>
+      ); })()}
 
       {renameDrive && (
         <div className="glass-modal-overlay" onClick={() => setRenameDrive(null)}>
