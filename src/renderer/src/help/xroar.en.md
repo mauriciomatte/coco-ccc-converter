@@ -50,6 +50,17 @@ Changing video **restarts** the emulator. Rule: **artifact-color games → Compo
 When testing OS-9, the app already forces **RGB + Smooth** for you. Changing the filter also **restarts** the
 emulator.
 
+## Columns (80/32) — real lowercase on the CoCo 3
+
+When the machine is **CoCo 3**, a **"Columns"** block appears with an **80 ↔ 32** toggle. It types
+`WIDTH 80` / `WIDTH 32` at the BASIC **`OK` prompt**:
+- **80 columns** → the GIME hi-res screen, with **real lowercase**.
+- **32 columns** → the legacy VDG mode, where lowercase shows as **inverse uppercase** (the real hardware
+  behavior).
+
+It does not change RGB/Composite — only the text mode. You must be at the BASIC `OK` prompt. (In OS-9, the
+80-column window already shows lowercase, so the toggle isn't needed there.)
+
 ---
 
 ## 5. Live picture: Colour / Brightness / Contrast

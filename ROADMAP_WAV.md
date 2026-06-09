@@ -1,5 +1,10 @@
 # ROADMAP — Exportação de áudio .WAV (fita de cassete)
 
+> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46): CONCLUÍDO
+> A exportação de `.WAV` foi entregue na aba **K7**: **→ WAV (limpo)** (FSK numa taxa escolhida 8/11/22/44 kHz)
+> e **→ Fita completa** (áudio original inteiro: header + tela + loader + jogo turbo). Também há **→ CAS**.
+> Este roadmap pode ser considerado **realizado**; mantido como referência de design.
+
 Recurso **futuro**: gerar um arquivo `.WAV` (áudio FSK de fita) a partir de programas do CoCo,
 para tocar num gravador real ou no FujiNet/emulador como se fosse uma fita.
 

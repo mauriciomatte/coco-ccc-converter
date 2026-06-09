@@ -1,6 +1,20 @@
 # ESTUDO DE IMPLEMENTAÇÃO — Aba K7 (fita cassete) com waveform, captura real e preservação
 
-Status: **ESTUDO para avaliação** (nada implementado). Posição da aba: **entre DSK e OS-9**.
+> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> **A aba K7 está IMPLEMENTADA** (o "nada implementado" abaixo é histórico). Entrega: abrir WAV/CAS/C10/VOC,
+> waveform (estilos linha/barras/pico/RMS, zoom, seleção), player com cassete animada + velocidade **Época**,
+> decodificação FSK + lista de programas, painel **Ajustes de som** + **Recuperar** (Otsu adaptativo),
+> painéis ao vivo **BASIC/HEX/mini-XRoar** com revelação sincronizada, **edição da onda** (cortar/colar/
+> crop/normalizar/pausa + desfazer), **REC** (line-in), e as conversões **→CAS, →WAV, →Fita completa,
+> →Sem loader, Reverter, →DSK, →XRoar, Abrir no BASIC**.
+>
+> **PENDENTE (K7):**
+> - **Detecção UNIVERSAL de loaders** — hoje só **SoftKristian** (Família A). Família B (PLAN-SOFT/GAMEPACK,
+>   ex.: SAILOR) já foi analisada; a **conversão para disco** de jogos multi-parte/all-RAM é projeto futuro
+>   (liga-se ao trabalho de EPROM/cartucho).
+> - **Transport real na aba XRoar principal** (play/rewind/contador) — exige recompilar o `xroar.wasm`.
+> - **Recuperação R3–R6** (ver ROADMAP_RECUPERACAO): diagnósticos, merge multi-captura, estéreo, medidor REC.
+
 Absorve e amplia `ROADMAP_CASWAV.md` e `ROADMAP_WAV.md`. CoCo e Dragon compartilham o MESMO FSK de
 fita (~1200 baud, 6809) → um pipeline serve aos dois.
 

@@ -163,6 +163,13 @@ body {
   background: var(--bg-app);
 }
 
+/* Reset: um <button> sem classe de tema NÃO deve herdar o fundo branco padrão do navegador.
+   As classes temáticas (.btn, .btn-primary/secondary, .dsk-tool, .tab-btn…) são seletores de classe
+   (especificidade maior que o seletor de elemento "button") e continuam prevalecendo. */
+button {
+  background-color: transparent;
+}
+
 /* DSK toolbar buttons */
 .dsk-tool {
   display: inline-flex;

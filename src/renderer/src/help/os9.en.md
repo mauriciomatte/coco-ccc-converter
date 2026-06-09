@@ -124,7 +124,10 @@ Dragon format). **Where to get** a reference disk: the **Color Computer Archive*
 - **Delete** — removes the selected file (or **empty** folder) and frees its clusters (asks first).
 - **Test** — mounts the disk in **XRoar** (in-memory disks only — section 7).
 - **Bootable** — makes the **already-open disk** bootable (advanced; injects only the boot apparatus — **not**
-  the system files). For a **usable** disk, prefer **New… → Bootable**.
+  the system files). For a **usable** disk, prefer **New… → Bootable**. ⚠️ If the current disk **has no
+  system** (no CMDS/"shell"), the app **warns** and offers, right there, to create a **"Bootable WITH
+  system"** (clones the template of the same geometry) — so you fix it on the spot instead of hitting
+  "BOOT FAILED".
 - **Close** — discards the on-screen image (asks if there are unsaved edits).
 - **?** — this Help.
 

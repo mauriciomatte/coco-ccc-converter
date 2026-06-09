@@ -125,7 +125,9 @@ um disco **bootável** da geometria desejada e aponte-o quando o app pedir.
 - **Excluir** — remove o arquivo (ou pasta **vazia**) selecionado e libera os clusters (pede confirmação).
 - **Testar** — monta o disco no **XRoar** (só discos em memória — seção 7).
 - **Bootável** — torna **bootável o disco já aberto** (avançado; injeta só o aparato de boot — **não** os
-  arquivos de sistema). Para um disco **usável**, prefira **Novo… → Bootável**.
+  arquivos de sistema). Para um disco **usável**, prefira **Novo… → Bootável**. ⚠️ Se o disco atual **não
+  tem o sistema** (sem CMDS/"shell"), o app **avisa** e oferece, ali mesmo, criar um **"Bootável COM
+  sistema"** (clona o gabarito da mesma geometria) — assim você corrige na hora sem cair em "BOOT FAILED".
 - **Fechar** — descarta a imagem da tela (confirma se houver edição não salva).
 - **?** — esta Ajuda.
 

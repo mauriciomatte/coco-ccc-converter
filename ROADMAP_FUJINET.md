@@ -3,6 +3,11 @@
 > Status: **implementação futura** — registrado com os achados da pesquisa e o escopo
 > que isolamos. Não bloqueia o roadmap OS-9.
 
+> ## STATUS ATUAL — 2026-06-09 (v1.0.46): NADA implementado ainda (futuro)
+> Continua 100% pendente. Pendências: **M1** cliente TNFS (baixar imagens dos hubs tnfs.fujinet.online),
+> **M2** "enviar para dispositivo" (CoCoSDC/disquete-GW/MiniIDE), **M3** servidor TNFS (o PC serve discos
+> ao vivo p/ a FujiNet do usuário), **M4** servidor DriveWire serial. É a maior área ainda não iniciada.
+
 ---
 
 ## Contexto isolado da pesquisa (o que descobrimos)

@@ -1,5 +1,22 @@
 # Roadmap 1 — Suporte a OS-9 / NitrOS-9 (sistema de arquivos RBF)
 
+> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> **A maior parte deste roadmap está CONCLUÍDA.** A aba **OS-9** entrega leitura + escrita completas:
+> navegar (árvore/lista/prato de clusters), criar disco em branco (4 geometrias), nova pasta, renomear,
+> inserir, excluir, defrag (arquivo + disco); **tornar bootável** e **clonar disco de sistema** com
+> **gabaritos NitrOS-9 embutidos** (360K/720K) + opção "referência sua" (158K/180K e demais); **SDF**
+> (CoCoSDC) leitura+escrita; ponte **"Testar" → XRoar** (força CoCo3+RGB+Suave); **partições OS-9 em
+> container** (MiniIDE/CoCoSDC) com leitura + edição-no-arquivo travada na área de sistema; leitura de DMK.
+>
+> **PENDENTE (OS-9):**
+> - **D11** — auto-trocar o XRoar para máquina **Dragon** ao testar um disco OS-9 Dragon (hoje força CoCo3).
+> - **Harness de round-trip da escrita RBF** com CRC de módulo (verificação automatizada — §O6).
+> - **BOOT real CONFIRMADO (2026-06-09):** "Novo → Bootável → 360K ✓ gabarito" (clone) boota até o shell no
+>   XRoar. Adicionada **proteção** (v1.0.47): o botão "Bootável" (só-boot) avisa em disco sem sistema e
+>   oferece criar um "Bootável COM sistema" na hora. Falta só validar o make-bootable "só boot" sobre um
+>   disco que JÁ tem o sistema (uso estreito).
+> - Formatar/criar um **cartão FAT do zero** — marcado como NÃO necessário (os discos já abrem/editam).
+
 > Objetivo: ler (e depois editar) discos **OS-9/NitrOS-9** no CoCoDCU. Hoje só
 > identificamos a presença de OS-9 (string "NitrOS-9/6809 Level…", `DD.TOT` no LSN0);
 > não lemos o conteúdo. As imagens **MiniIDE** e **CoCoSDC RetroRewind** têm partições

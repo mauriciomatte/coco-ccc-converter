@@ -1,5 +1,14 @@
 # ROADMAP — Recuperação de Fitas Degradadas (CoCo K7)
 
+> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> **R1+R2 IMPLEMENTADOS e validados:** o botão **"Recuperar"** (Sparkles) na K7 liga o limiar adaptativo por
+> segmento (**Otsu** + varredura), ficando com o resultado de mais blocos válidos. No corpus de 102 fitas:
+> **51 → 94 decodificadas, 0 regressões**.
+>
+> **PENDENTE:** **R3** diagnósticos (histograma de períodos, mapa de blocos bons/ruins, re-decode de região),
+> **R4** merge de múltiplas capturas do mesmo programa, **R5** estéreo (tentar os dois canais) + pré-filtros,
+> **R6** medidor de qualidade no REC ao vivo.
+
 Objetivo: **salvar um pedaço da história** — recuperar programas de fitas de 40+ anos e de
 capturas de áudio imperfeitas, que hoje falham (NO-SYNC) ou decodificam só em parte. Cobre os
 dois cenários: (A) **arquivos `.wav` já salvos** que precisam de ajuste, e (B) **captura física

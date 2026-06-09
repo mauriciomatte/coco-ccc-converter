@@ -10,6 +10,47 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.49 — 2026-06-09
+--------------------------------------------------------------------------------
+CORREÇÃO CSS — fim dos botões com fundo branco + Ajuda do XRoar reposicionada
+  • Causa: alguns botões usavam classes utilitárias estilo Tailwind que NÃO existem no index.css (o app
+    não tem Tailwind, só um conjunto parcial feito à mão). Sem classe de fundo válida, o <button> herdava
+    o fundo BRANCO padrão do navegador. Afetava: o botão "?" (changelog), o botão "Sair", o "Limpar" e o
+    maximizar do console — e o badge de Ajuda que eu havia criado no XRoar.
+  • Correção definitiva: reset global "button { background-color: transparent; }" no index.css (as classes
+    temáticas .btn/.dsk-tool/.tab-btn têm especificidade maior e continuam prevalecendo). Além disso, o "?"
+    e o "Sair" tiveram as classes mortas trocadas pelo padrão que funciona (bg-transparent + hover real;
+    borda/realce via style inline). Padroniza e evita o problema no futuro.
+  • Aba XRoar: o painel do toggle de colunas ficou só com o toggle (sem o texto explicativo) e o botão
+    AJUDA passou para BAIXO do toggle, no padrão .dsk-tool do app.
+
+--------------------------------------------------------------------------------
+v1.0.48 — 2026-06-09
+--------------------------------------------------------------------------------
+NOVO — Aba XRoar: toggle "80/32 Colunas" (minúsculas reais no CoCo 3) + Ajuda em badge
+  • O painel "Ajuda" do canto direito (com o botão "Como usar a aba XRoar") foi removido. No lugar entrou
+    um toggle **"Colunas" 80 ↔ 32**, visível só quando a máquina é CoCo 3. Ele digita WIDTH 80 / WIDTH 32
+    no prompt OK do BASIC: 80 colunas = tela hi-res do GIME com MINÚSCULAS REAIS; 32 colunas = modo VDG
+    legado (minúscula aparece como maiúscula invertida — comportamento real do hardware).
+  • A Ajuda virou um pequeno botão "AJUDA" em badge, ao lado do título "XRoar".
+  • NÃO altera RGB/Composto — o toggle só muda o modo de texto. (No OS-9 a janela de 80 colunas já mostra
+    minúsculas, sem precisar do toggle.) Ajuda da aba XRoar (pt-BR e US) atualizada.
+
+--------------------------------------------------------------------------------
+v1.0.47 — 2026-06-09
+--------------------------------------------------------------------------------
+PROTEÇÃO — botão "Bootável" (OS-9) avisa quando o disco não tem sistema, e corrige na hora
+  • Causa de um "NITROS9 BOOT FAILED" relatado: o usuário usou o botão "Bootável" (que só injeta o
+    APARATO DE BOOT) num disco em branco e com uma referência também "pelada" — o kernel carregava os
+    módulos e falhava por faltar sysgo/startup/shell. Comportamento esperado, mas a armadilha era fácil.
+  • Agora, ao clicar "Bootável" num disco SEM sistema OS-9 (sem CMDS/"shell"), aparece um modal que
+    EXPLICA o problema e oferece TRÊS ações: (a) "Bootável COM sistema" — substitui o disco por um
+    NitrOS-9 completo clonando o gabarito da MESMA geometria (recomendado, conserta o engano na hora);
+    (b) "Só boot (avançado)" — injeta apenas o aparato de boot (uso antigo, p/ disco que JÁ tem sistema);
+    (c) Cancelar. Assim quem se enganou troca direto no modal, sem navegar o menu.
+  • Ajuda da aba OS-9 (pt-BR e US) atualizada. (Diagnóstico em tools/os9bootdiag.ts.)
+
+--------------------------------------------------------------------------------
 v1.0.46 — 2026-06-09
 --------------------------------------------------------------------------------
 DOCUMENTAÇÃO — Ajuda de TODAS as abas reescrita como guia prático completo

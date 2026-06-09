@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3, Music, ToggleLeft, ToggleRight, Maximize2, Minimize2 } from 'lucide-react';
+import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3, Music, ToggleLeft, ToggleRight, Maximize2, Minimize2, HelpCircle } from 'lucide-react';
 import { TabHelpModal } from './TabHelp';
 
 // Discos vão para uma drive via insert_disk; FITA (.cas/.wav) vai pro deck via insert_tape;
@@ -88,6 +88,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [loaded, setLoaded] = useState(false); // config carregada? (evita salvar antes da carga)
   const [mounted, setMounted] = useState(false); // iframe montado? (só após a aba ficar visível)
   const [showHelp, setShowHelp] = useState(false);
+  const [wide80, setWide80] = useState(false); // toggle 80/32 colunas (CoCo 3) — true = WIDTH 80 (minúsculas)
   const lastLoadKey = useRef(0);
   const lastTypeKey = useRef(0);
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
@@ -390,6 +391,13 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     if (paused) { sendCmd('resume'); setPaused(false); }
     else { sendCmd('pause'); setPaused(true); }
   };
+  // Toggle 80/32 colunas (só CoCo 3): digita WIDTH 80/32 no BASIC. 80 col = minúsculas reais do GIME;
+  // 32 col = modo VDG (minúscula invertida). NÃO mexe em RGB/Composto — só mostra texto diferente.
+  const toggleWidth = () => {
+    const next = !wide80; setWide80(next);
+    sendCmd('type_string', { text: next ? 'WIDTH 80\r' : 'WIDTH 32\r', delayMs: getTypeDelay() });
+    focusEmu();
+  };
 
   const sectionTitle = 'text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1.5';
 
@@ -516,7 +524,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         <div className="glass-panel p-2.5 flex flex-col gap-2">
           <div>
             <div className={sectionTitle}>{t('Máquina', 'Machine')}</div>
-            <select value={machine} onChange={(e) => { setReady(false); setMachine(e.target.value); }} className="input-select text-xs py-1 w-full">
+            <select value={machine} onChange={(e) => { setReady(false); setWide80(false); setMachine(e.target.value); }} className="input-select text-xs py-1 w-full">
               {MACHINES.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
             </select>
           </div>
@@ -561,13 +569,21 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           <button onClick={() => sendCmd('hard_reset')} disabled={!ready} className="dsk-tool justify-center"><Power size={13} /> {t('Reset total', 'Hard reset')}</button>
         </div>
 
-        {/* AJUDA — abaixo de Controles (a aba XRoar não tem barra de ferramentas no topo) */}
-        <div className="glass-panel p-2.5 flex flex-col gap-1.5">
-          <div className={sectionTitle}>{t('Ajuda', 'Help')}</div>
-          <button onClick={() => setShowHelp(true)} className="dsk-tool justify-center">
-            {t('Como usar a aba XRoar', 'How to use the XRoar tab')}
-          </button>
-        </div>
+        {/* TEXTO — toggle 80/32 colunas (só CoCo 3): WIDTH 80 mostra as minúsculas reais do GIME */}
+        {machine.startsWith('coco3') && (
+          <div className="glass-panel p-2.5 flex flex-col gap-1.5">
+            <div className={sectionTitle}>{t('Colunas', 'Columns')}</div>
+            <button onClick={toggleWidth} disabled={!ready} className="dsk-tool justify-center" style={{ color: wide80 ? '#34d399' : undefined }}
+              title={t('Digita WIDTH 80/32 no BASIC. 80 col = minúsculas reais do GIME; 32 col = modo VDG (minúscula invertida). Precisa do prompt OK.',
+                       'Types WIDTH 80/32 in BASIC. 80 col = real GIME lowercase; 32 col = VDG mode (inverse lowercase). Needs the OK prompt.')}>
+              {wide80 ? <ToggleRight size={15} /> : <ToggleLeft size={15} />} {wide80 ? t('80 colunas (minúsculas)', '80 columns (lowercase)') : t('32 colunas (VDG)', '32 columns (VDG)')}
+            </button>
+          </div>
+        )}
+
+        <button onClick={() => setShowHelp(true)} className="dsk-tool justify-center" title={t('Como usar a aba XRoar', 'How to use the XRoar tab')}>
+          <HelpCircle size={13} /> {t('Ajuda', 'Help')}
+        </button>
 
         <div className="text-[9px] text-[var(--text-muted)] leading-tight">
           {t('Clique na tela para capturar teclado/áudio. Trocar máquina/vídeo reinicia o emulador.',

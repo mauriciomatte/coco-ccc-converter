@@ -84,6 +84,7 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
   const containerMode = !!(src?.filePath && !buf);
   const [containerEdit, setContainerEdit] = useState(false); // edição de container habilitada (após aviso)
   const [containerWarn, setContainerWarn] = useState(false);  // modal de aviso "grava no arquivo"
+  const [bootWarn, setBootWarn] = useState(false);   // aviso: tornar bootável um disco SEM sistema (não chega ao shell)
   const canEdit = editable || (containerMode && containerEdit);
   const [hoverFd, setHoverFd] = useState<number | null>(null); // item sob o mouse (lista/árvore) → realça clusters
 
@@ -503,10 +504,36 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
     if (!buf || !onTestInXroar) return;
     onTestInXroar({ name: src?.fileName, data: new Uint8Array(buf), mode, drive: testDrive });
   };
+  // Heurística: o disco atual tem o SISTEMA OS-9 (chega ao shell)? Um disco bootável usável precisa de
+  // um CMDS/ com o "shell". Sem isso, "tornar bootável" só injeta o boot → o NitrOS-9 lista os módulos e
+  // dá "BOOT FAILED" (faltam sysgo/startup/shell). Detecta a armadilha que leva ao os9fail.
+  const diskHasOs9System = (): boolean => {
+    const cmds = root?.children?.find(c => c.isDir && c.name.toLowerCase() === 'cmds');
+    return !!cmds?.children?.some(c => c.name.toLowerCase().startsWith('shell'));
+  };
+  // Geometria do disco atual → chave de gabarito (158k/180k/360k/720k), p/ oferecer "criar bootável com
+  // sistema" da MESMA geometria direto no modal de aviso.
+  const curGeomKey = (): string | null => {
+    if (!ident) return null;
+    const ts = ident.totalSectors, sd = ident.sides;
+    if (ts === 630 && sd === 1) return '158k';
+    if (ts === 720 && sd === 1) return '180k';
+    if (ts === 1440 && sd === 2) return '360k';
+    if (ts === 2880 && sd === 2) return '720k';
+    return null;
+  };
+  // Clique no botão "Bootável": se o disco NÃO tem sistema, avisa antes (o resultado não chega ao shell)
+  // e oferece criar um bootável COM sistema na hora.
+  const requestMakeBootable = () => {
+    if (!buf || !src?.editable) return;
+    if (!diskHasOs9System()) { setBootWarn(true); return; }
+    doMakeBootable();
+  };
   // (c) Tornar o disco BOOTÁVEL: escolhe um módulo OS9Boot (de um disco NitrOS-9) e grava DD.BT/DD.BSZ.
   // A ESTRUTURA é validada por round-trip (tools/os9mkboot.ts); o BOOT real deve ser confirmado no XRoar.
   const doMakeBootable = async () => {
     if (!buf || !src?.editable) return;
+    setBootWarn(false);
     setBusy(true);
     try {
       const r = await window.cocoApi.os9MakeBootable(buf);
@@ -599,7 +626,7 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
         <button onClick={() => { setTestDrive(0); setTestModal(true); }} disabled={!buf || busy} className="dsk-tool flex items-center gap-1" style={{ color: buf ? '#60a5fa' : undefined }}
           title={buf ? (pt ? 'Montar este disco no XRoar e testar/bootar' : 'Mount this disk in XRoar to test/boot')
                      : (pt ? 'Disponível para discos OS-9 em memória (Novo / Abrir .os9 / avulso) — não para partição de container' : 'Available for in-memory OS-9 disks (New / Open .os9 / loose) — not for a container partition')}><MonitorPlay size={14} /> {pt ? 'Testar' : 'Test'}</button>
-        <button onClick={doMakeBootable} disabled={!editable || busy} className="dsk-tool flex items-center gap-1" style={{ color: editable ? '#fbbf24' : undefined }}
+        <button onClick={requestMakeBootable} disabled={!editable || busy} className="dsk-tool flex items-center gap-1" style={{ color: editable ? '#fbbf24' : undefined }}
           title={pt ? 'Tornar o disco BOOTÁVEL: grava um módulo OS9Boot (de um disco NitrOS-9) + DD.BT/DD.BSZ. Estrutura validada; confirme o boot no XRoar (DOS).' : 'Make the disk BOOTABLE: writes an OS9Boot module (from a NitrOS-9 disk) + DD.BT/DD.BSZ. Structure validated; confirm the boot in XRoar (DOS).'}><Power size={14} /> {pt ? 'Bootável' : 'Bootable'}</button>
         {containerMode && !containerEdit && (
           <button onClick={() => setContainerWarn(true)} disabled={busy} className="dsk-tool flex items-center gap-1" style={{ marginLeft: 'auto', color: '#fbbf24', borderColor: '#fbbf2455' }} title={pt ? 'Habilitar edição da partição (grava DIRETO no arquivo do container)' : 'Enable partition editing (writes DIRECTLY to the container file)'}><Unlock size={14} /> {pt ? 'Habilitar edição' : 'Enable editing'}</button>
@@ -753,6 +780,33 @@ const Os9Explorer = forwardRef<Os9ExplorerHandle, { doc: Os9Doc | null; lang: st
           </div>
         </div>
       )}
+
+      {/* aviso: "Bootável" num disco SEM sistema → oferece criar um bootável COM sistema na hora */}
+      {bootWarn && (() => {
+        const gk = curGeomKey();
+        const gkLabel = GEOMS.find(g => g.key === gk);
+        const gkText = gkLabel ? (pt ? gkLabel.labelPt : gkLabel.labelEn) : (gk ?? '');
+        return (
+        <div className="glass-modal-overlay" onClick={() => setBootWarn(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 520, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2"><AlertTriangle size={18} style={{ color: '#fbbf24' }} /><h3 className="text-sm font-bold text-white uppercase tracking-wide">{pt ? 'Este disco não tem sistema OS-9' : 'This disk has no OS-9 system'}</h3></div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {pt ? 'O disco atual NÃO tem o sistema OS-9 (sem CMDS/"shell" nem sysgo/startup). Só "tornar bootável" injeta o APARATO DE BOOT (OS9Boot + trilha 34) — ao bootar, o NitrOS-9 lista os módulos e termina em "BOOT FAILED", pois faltam sysgo/startup/shell. Escolha o que fazer:'
+                  : 'The current disk has NO OS-9 system (no CMDS/"shell", no sysgo/startup). Just "make bootable" injects the BOOT APPARATUS (OS9Boot + track 34) — at boot, NitrOS-9 lists the modules and ends in "BOOT FAILED", because sysgo/startup/shell are missing. Choose what to do:'}
+            </p>
+            <ul className="text-[11px] text-[var(--text-secondary)] leading-relaxed list-disc pl-5 flex flex-col gap-1">
+              <li><b style={{ color: '#34d399' }}>{pt ? 'Bootável COM sistema' : 'Bootable WITH system'}</b> {pt ? '— substitui este disco por um NitrOS-9 completo (clona o gabarito da mesma geometria). RECOMENDADO.' : '— replaces this disk with a full NitrOS-9 (clones the template of the same geometry). RECOMMENDED.'}</li>
+              <li><b style={{ color: '#fbbf24' }}>{pt ? 'Só boot (avançado)' : 'Boot only (advanced)'}</b> {pt ? '— só injeta o aparato de boot. Útil apenas se o disco JÁ tivesse o sistema.' : '— only injects the boot apparatus. Useful only if the disk ALREADY had the system.'}</li>
+            </ul>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button onClick={() => setBootWarn(false)} className="btn btn-secondary py-2 px-3 text-[11px] font-bold uppercase">{pt ? 'Cancelar' : 'Cancel'}</button>
+              <button onClick={() => doMakeBootable()} className="btn btn-secondary py-2 px-3 text-[11px] font-bold uppercase" style={{ color: '#fbbf24' }} title={pt ? 'Injeta só o aparato de boot (não chega ao shell sem sistema)' : 'Injects only the boot apparatus (won\'t reach a shell without a system)'}><Power size={13} /> {pt ? 'Só boot (avançado)' : 'Boot only (advanced)'}</button>
+              <button onClick={() => { setBootWarn(false); if (gk) createBootable(gk, false, false); }} disabled={!gk} className="btn btn-primary py-2 px-3 text-[11px] font-bold uppercase flex items-center gap-1" style={{ background: '#059669' }} title={pt ? `Cria um NitrOS-9 bootável completo (${gkText})` : `Creates a full bootable NitrOS-9 (${gkText})`}><Power size={13} /> {pt ? 'Bootável COM sistema' : 'Bootable WITH system'}</button>
+            </div>
+          </div>
+        </div>
+        );
+      })()}
 
       {delConfirm && (
         <div className="glass-modal-overlay" onClick={() => setDelConfirm(null)}>

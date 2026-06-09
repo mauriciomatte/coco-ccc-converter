@@ -49,6 +49,17 @@ Trocar o vídeo **reinicia** o emulador. Regra: **jogos com cor de artefato → 
 
 Ao testar OS-9, o app já força **RGB + Suave** para você. Trocar o filtro também **reinicia** o emulador.
 
+## Colunas (80/32) — minúsculas reais no CoCo 3
+
+Quando a máquina é **CoCo 3**, aparece um bloco **"Colunas"** com um toggle **80 ↔ 32**. Ele digita
+`WIDTH 80` / `WIDTH 32` no **prompt `OK` do BASIC**:
+- **80 colunas** → tela hi-res do GIME, com **minúsculas de verdade**.
+- **32 colunas** → modo VDG legado, onde minúscula aparece como **maiúscula invertida** (comportamento real
+  do hardware).
+
+Não altera RGB/Composto — só muda o modo de texto. Precisa estar no prompt `OK` do BASIC. (No OS-9, a janela
+de 80 colunas já mostra minúsculas, sem precisar do toggle.)
+
 ---
 
 ## 5. Imagem ao vivo: Cor / Brilho / Contraste

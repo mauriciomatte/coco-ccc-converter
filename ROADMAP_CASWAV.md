@@ -1,5 +1,14 @@
 # ROADMAP — Aba CAS/WAV/VOC (preservação de fita) + suíte de áudio CoCo/Dragon
 
+> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> **Implementado na aba K7:** decode FSK, **→CAS (limpo)**, **→WAV (limpo)**, **→Fita completa** (áudio
+> original inteiro), leitura de **VOC**, **REC** line-in, preview de tamanhos. O núcleo deste roadmap foi
+> entregue.
+>
+> **PENDENTE:** **A4 — "FIXCAS"** (validar/reparar `.CAS`: inserir SYNC faltante, recalcular checksums,
+> refazer leader); **D11 — sabor Dragon** (auto-switch da máquina XRoar p/ Dragon ao testar); famílias de
+> loader além de SoftKristian.
+
 Recurso **futuro**. Origem: análise do material de preservação do worldofdragon.org, PyDragon32/PyDC,
 cas2bas e tlindner (2026-06-03). Estende e absorve o `ROADMAP_WAV.md` (que cobria só `encodeWav`).
 

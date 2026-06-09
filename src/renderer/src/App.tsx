@@ -4149,7 +4149,8 @@ export default function App() {
           {/* "?" — novidades / histórico de versões (changelog) */}
           <button
             onClick={() => setShowChangelog(true)}
-            className="px-2.5 py-1 text-xs font-bold text-[var(--primary)] hover:text-white border border-[var(--primary)]/30 hover:border-[var(--primary)]/60 bg-[var(--primary-glow)] rounded-lg transition-all flex items-center cursor-pointer"
+            className="px-2.5 py-1 text-xs font-bold rounded-lg transition-all flex items-center cursor-pointer bg-transparent text-[var(--primary)] hover:text-white hover:bg-slate-800/50"
+            style={{ border: '1px solid var(--border)' }}
             title={currentLang === 'pt-br' ? 'Novidades / histórico de versões' : "What's new / version history"}
             aria-label={currentLang === 'pt-br' ? 'Histórico de versões' : 'Version history'}
           >
@@ -4159,7 +4160,8 @@ export default function App() {
           {/* Exit Button */}
           <button
             onClick={() => setIsExitModalOpen(true)}
-            className="px-3 py-1 text-xs font-bold text-rose-400 hover:text-white border border-rose-950/40 hover:border-rose-700/60 bg-rose-950/10 hover:bg-rose-950/50 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer bg-transparent hover:text-white hover:bg-slate-800/50"
+            style={{ color: '#fb7185', border: '1px solid rgba(244,63,94,0.35)' }}
             title={t('exitButton')}
           >
             <LogOut size={12} />

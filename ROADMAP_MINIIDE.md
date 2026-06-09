@@ -4,6 +4,15 @@
 > sólida (ver "Concluído"). Tudo que ESCREVE no `.img` que vai para o cartão CF segue o protocolo de
 > segurança: **sempre em CÓPIA + validação no hardware real** antes de confiar.
 
+> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> **Leitura sólida + escrita RS-DOS implementadas:** navegar os 256 discos, inserir `.dsk` em slot vazio,
+> editar e gravar de volta (write-back), nomear/renomear drive (catálogo SIDEKICK). Partições **OS-9** no
+> container abrem e editam (com trava de área de sistema). Escrita **FAT** (CoCoSDC/RetroRewind) também
+> entregue.
+>
+> **PENDENTE:** **Fase F — formatador de imagem MiniIDE do zero** (marcado como NÃO essencial: os cartões
+> existentes já são lidos/editados); **estudo profundo do catálogo** (setor 322: nome + cache de granules).
+
 ## ✅ Concluído (leitura)
 - **Layout descoberto e documentado** (ver `miniide.txt`).
 - **Navegação 000–255 completa** (Fase 1): uma entry por slot físico (ocupado / vazio / não-RS-DOS);
