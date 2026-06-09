@@ -10,6 +10,33 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.46 — 2026-06-09
+--------------------------------------------------------------------------------
+DOCUMENTAÇÃO — Ajuda de TODAS as abas reescrita como guia prático completo
+  • Análise componente a componente das 6 abas (DSK, K7, OS-9, XRoar, GW, BASIC) e reescrita dos 12
+    arquivos de ajuda (pt-BR + US) para que deixem de ser uma "visão geral" e virem um GUIA DE USO: cada
+    recurso explica o que entrega, como usar, o passo a passo e o resultado obtido — sem deixar nenhuma
+    ferramenta de fora.
+  • DSK: dois painéis e painel ativo; toda a barra (Injetar, Copiar/Recortar/Colar, Renomear, Excluir,
+    Visualização rápida .BAS, Editar .BAS, Extrair, Comparar [diff hex], Converter p/ Dragon, Ordenar A-Z/
+    Todos, Copiar A→B, Desfazer/Refazer, Salvar/Salvar Como/.sdf, Testar, Gravar GW); contêineres e Buscar
+    disco; mapa do disco + DEFRAG/DEFRAG ARQ.; editor hex + desassemblador 6809 (origem, fluxo, marcas);
+    discos de arte; atalhos de teclado; fluxos.
+  • K7: estilos de onda, zoom/seleção, player + velocidade Época, decodificação e lista de programas,
+    Ajustes de som × Recuperar (Otsu), painéis ao vivo BASIC/HEX/mini-XRoar, tabela completa de conversões
+    (→CAS/→WAV/→Fita completa/→Sem loader/Reverter/→DSK/→XRoar/Abrir no BASIC), edição da onda, REC, fluxos.
+  • OS-9: dois exploradores, estado-vazio, Novo… (Em branco/Bootável/Bootável+programas × geometrias),
+    gabaritos embutidos × referência sua, Testar (modos/drive), painel de mídia (prato/clusters), Defrag,
+    partições em container (Habilitar edição + trava), drag-and-drop, barra de status, fluxos.
+  • XRoar: máquina, Composto×RGB, filtro Nítido×Suave (por que importa nas 80 colunas), imagem ao vivo,
+    controles/Ctrl+Enter, drives D0-D3, fita + CLOAD auto, programa + AutoRun, joystick, como o conteúdo
+    chega das outras abas, expandir.
+  • GW: tabela de formatos, configuração da placa, Painel A/B, ler/gravar, mapa de trilhas, diagnósticos
+    (seek/delays/step), DD×HD (furo de densidade), fluxos.
+  • BASIC: origens do programa, três telas (Normal/VDG/VDG 6847 autêntica), edição/procurar, rodar no XRoar,
+    salvar/exportar (.BAS/.CAS/Novo DSK/in-place), detokenizador e o limite ASCII, fluxos.
+
+--------------------------------------------------------------------------------
 v1.0.45 — 2026-06-09
 --------------------------------------------------------------------------------
 CORREÇÃO — "lado/lados" não traduzido no menu "Novo OS9…" (en-US)

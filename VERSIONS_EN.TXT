@@ -10,6 +10,31 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.46 — 2026-06-09
+--------------------------------------------------------------------------------
+DOCUMENTATION — Help for EVERY tab rewritten as a complete, practical guide
+  • Component-by-component analysis of the 6 tabs (DSK, K7, OS-9, XRoar, GW, BASIC) and a rewrite of all 12
+    help files (pt-BR + US) so they stop being an "overview" and become a USAGE GUIDE: each feature explains
+    what it delivers, how to use it, the step-by-step and the result obtained — leaving no tool out.
+  • DSK: two panes and active pane; the whole toolbar (Inject, Copy/Cut/Paste, Rename, Delete, Quick .BAS
+    view, Edit .BAS, Extract, Compare [hex diff], Convert to Dragon, Sort A-Z/All, Copy A→B, Undo/Redo,
+    Save/Save As/.sdf, Test, Write GW); containers and Find disk; disk map + DEFRAG/DEFRAG FILE; hex editor
+    + 6809 disassembler (origin, flow, marks); art disks; keyboard shortcuts; workflows.
+  • K7: waveform styles, zoom/selection, player + Epoch speed, decode and program list, Sound adjustments vs
+    Recover (Otsu), live BASIC/HEX/mini-XRoar panels, full conversion table (→CAS/→WAV/→Full tape/→No loader/
+    Revert/→DSK/→XRoar/Open in BASIC), waveform editing, REC, workflows.
+  • OS-9: two explorers, empty state, New… (Blank/Bootable/Bootable+programs × geometries), built-in
+    templates vs your reference, Test (modes/drive), media panel (platter/clusters), Defrag, container
+    partitions (Enable editing + lock), drag-and-drop, status bar, workflows.
+  • XRoar: machine, Composite vs RGB, Sharp vs Smooth filter (why it matters for 80 columns), live picture,
+    controls/Ctrl+Enter, drives D0-D3, tape + CLOAD auto, program + AutoRun, joystick, how content arrives
+    from the other tabs, expand.
+  • GW: format table, board setup, Pane A/B, read/write, track map, diagnostics (seek/delays/step), DD vs
+    HD (density hole), workflows.
+  • BASIC: program sources, three screens (Normal/VDG/VDG 6847 authentic), editing/find, run in XRoar,
+    save/export (.BAS/.CAS/New DSK/in-place), the detokenizer and the ASCII limit, workflows.
+
+--------------------------------------------------------------------------------
 v1.0.45 — 2026-06-09
 --------------------------------------------------------------------------------
 FIX — "lado/lados" not translated in the "New OS9…" menu (en-US)

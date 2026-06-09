@@ -1,44 +1,53 @@
 # Aba OS-9 / NitrOS-9 (sistema de arquivos RBF)
 
-Esta aba é um **gerenciador de discos OS-9/NitrOS-9** (o sistema de arquivos **RBF**, com
-subpastas, datas e permissões — diferente do RS-DOS da aba DSK). Aqui você **abre, navega, edita,
-extrai, cria e torna bootáveis** discos OS-9.
+Esta aba é um **gerenciador de discos OS-9/NitrOS-9** — o sistema de arquivos **RBF**, com subpastas de
+verdade, datas, atributos e permissões (diferente do RS-DOS da aba DSK). Aqui você **abre, navega, edita,
+extrai, cria, torna bootável, desfragmenta e testa** discos OS-9, e ainda navega **partições OS-9 dentro de
+cartões** (MiniIDE/CoCoSDC). Ao terminar este guia você saberá montar um disco OS-9 bootável e usável do
+zero, mover arquivos entre discos e gravar de volta num cartão com segurança.
 
-## Visão geral da tela
+---
 
-Quando a aba está **vazia** (nenhum disco carregado), aparece **um único painel** com as opções de
-abrir/criar — para não duplicar a informação. Esse primeiro painel é o **A (Topo)**. Assim que você
-**abre ou cria** um disco, surge o **segundo painel (B / Base)**, e a tela passa a mostrar **dois
-exploradores empilhados** (Topo e Base), no estilo do Explorer do Windows:
+## 1. A tela: dois exploradores (Topo e Base)
 
-- **Árvore (esquerda):** as pastas do disco (OS-9 tem subpastas de verdade).
-- **Lista (centro):** os arquivos da pasta selecionada — nome, atributos, tamanho e data.
-- **Painel de mídia (direita):** o "prato" do disco mostrando o mapa de alocação (quais blocos estão
-  ocupados); ao passar o mouse num arquivo, os blocos dele acendem.
+A aba empilha **dois exploradores independentes** — **Topo** e **Base** — separados por uma divisória
+arrastável. Enquanto **nenhum** disco está aberto, só o Topo aparece (em tela cheia). Ao abrir/criar um
+disco, o segundo explorador surge, e você pode **arrastar arquivos/pastas de um para o outro** (copia).
 
-Cada explorador trabalha com **um disco independente**. Você pode **arrastar arquivos/pastas de um
-para o outro** (copia), arrastar de fora (Windows) para abrir, e arrastar para fora (Explorer) para
-extrair.
+Cada explorador tem três áreas:
+- **Árvore (esquerda):** as pastas do disco (OS-9 tem subpastas reais).
+- **Lista (centro):** os arquivos da pasta selecionada — **Nome, Atributos, Tamanho, Modificado**.
+- **Painel de mídia (direita):** o "prato" do disco com o mapa de ocupação por cluster (seção 8).
 
-## Quando a aba abre (estado vazio)
+Cada explorador trabalha em **um de três modos**: **EDITÁVEL** (disco em memória — Novo/Abrir/arrastado:
+todas as operações + Salvar); **LEITURA** (partição de container, só ver/extrair); **EDIÇÃO DE CONTAINER**
+(grava direto no arquivo do cartão — seção 9).
 
-Aparece a tela inicial com duas ações:
+---
 
-1. **Abrir OS-9** — escolhe um arquivo de disco OS-9 já existente (`.os9`, `.dsk`, `.dmk`, `.sdf`).
-2. **Novo OS-9…** (lista suspensa) — cria um disco novo (veja abaixo).
+## 2. Estado-vazio: como começar
 
-Ao lado dessas opções há o botão **? (Ajuda)**, que abre este manual.
+Quando a aba está sem disco, aparecem:
+1. **Abrir OS-9** — escolhe um disco existente (`.os9`, `.dsk`, `.dmk`, `.sdf`).
+2. **Novo OS-9…** (lista) — cria um disco novo (seção 4).
+3. **? (Ajuda)** — este manual.
 
-## Abrir um disco OS-9
+Ao criar/abrir, qualquer erro (ex.: gabarito incompatível) é mostrado ali mesmo, em vermelho; "Processando…"
+indica que o app está trabalhando.
 
-Use **Abrir** (ou arraste o arquivo para o explorador). O app detecta automaticamente que é um disco
-OS-9 e o abre **editável**. Formatos aceitos: imagem crua (`.os9`/`.dsk`), imagem de trilha **DMK** e
-**SDF** (CoCoSDC) — todas convertidas para setores na leitura. Discos OS-9 dentro de imagens grandes
-(MiniIDE, CoCoSDC) também abrem por esta aba (veja "Partições de container").
+---
 
-## Criar um disco novo — o menu "Novo…"
+## 3. Abrir um disco OS-9
 
-O menu **Novo…** tem **três grupos**, e cada um oferece as quatro geometrias:
+Use **Abrir** (ou **arraste** o arquivo do Windows para o explorador). O app detecta o formato, converte
+DMK/SDF na leitura e abre **editável**. Discos OS-9 que aparecem como "ilegíveis" na aba DSK (dupla-face,
+JVC) são **roteados automaticamente para cá**. Se já houver edição não salva, o app pergunta antes de trocar.
+
+---
+
+## 4. Criar um disco novo — o menu "Novo…"
+
+O menu **Novo…** tem **três grupos**, cada um com as quatro geometrias:
 
 | Geometria | Trilhas | Lados | Tamanho |
 |---|---|---|---|
@@ -47,36 +56,37 @@ O menu **Novo…** tem **três grupos**, e cada um oferece as quatro geometrias:
 | `360K` | 40 | 2 (DS) | 360 KB |
 | `720K` | 80 | 2 (DS) | 720 KB |
 
-> **SS** = single-side (um lado). **DS** = double-side (dois lados).
+> **SS** = um lado (single-side). **DS** = dois lados (double-side).
 
 ### 1) Em branco
-Cria um disco OS-9 vazio e formatado, **do zero**. Não precisa de gabarito. Pronto para você inserir
-arquivos. Não é bootável (é um disco de dados).
+Cria um disco OS-9 vazio e formatado, **na hora**. Não precisa de gabarito. Pronto para receber arquivos.
+**Não é bootável** (é um disco de dados).
 
 ### 2) Bootável (gabarito NitrOS-9)
-Cria um disco **que dá boot** no CoCo. Como o "aparato de boot" do OS-9 (a trilha de boot na Trilha 34
-+ o arquivo `OS9Boot` + os arquivos de sistema) é um conteúdo binário específico de versão e
-geometria — **não dá para gerar do nada** —, o app **clona um disco de sistema NitrOS-9**. O resultado
-é um disco bootável e **usável** (com kernel, `sysgo`, `startup`, `CMDS`, `SYS`).
-
-**O app já vem com gabaritos NitrOS-9 embutidos** para as geometrias **360K** e **720K** (marcadas com
-**"✓ gabarito"** no menu). Para essas, o disco é criado **automaticamente**, sem pedir nada. Para
-**158K** e **180K** (marcadas **"— referência sua"**) **não** existe sistema OS-9 livre para CoCo nessa
-geometria, então o app pede que você indique um **disco de referência seu** (veja a próxima seção).
+Cria um disco **que dá boot** e é **usável** (com kernel, `sysgo`, `startup`, `CMDS`, `SYS`). Como o aparato
+de boot do OS-9 (trilha de boot na Trilha 34 + o arquivo `OS9Boot` + arquivos de sistema) é binário e
+específico de versão/geometria — **não dá para gerar do nada** —, o app **clona um disco de sistema**.
+- **360K e 720K** trazem um **gabarito NitrOS-9 embutido** (opções **"✓ gabarito"**): o disco é criado
+  **automaticamente**, sem pedir nada.
+- **158K e 180K** (opções **"— referência sua"**): não há sistema OS-9 livre para CoCo nessas geometrias, então
+  o app pede um **disco de referência seu** (veja a seção 5).
 
 ### 3) Bootável + programas
-Igual ao anterior, mas além de clonar o sistema você escolhe **um ou mais programas**. Eles são
-inseridos na pasta **CMDS** e o app **preserva o `startup` original e anexa** os nomes dos programas —
-assim eles **rodam automaticamente no boot**, sem apagar a inicialização do sistema.
+Igual ao anterior, mas além de clonar o sistema você escolhe **um ou mais programas**: eles vão para a pasta
+**CMDS** e o app **preserva o `startup` original e anexa** os nomes — assim **rodam no boot**. Os programas
+devem ser **módulos OS-9 executáveis** e o disco precisa ter espaço livre suficiente (se faltar, o app avisa
+o tamanho necessário × livre).
 
-> Os programas devem ser **módulos OS-9 executáveis**. E o disco de referência precisa ter **espaço
-> livre** suficiente para eles.
+> Após criar um bootável, o disco abre editável e **não salvo**: teste o boot no XRoar (seção 7) e use
+> **"Salvar Como"**.
 
-## O que é o "gabarito" (disco-semente do sistema)
+---
 
-Um **gabarito** é um disco OS-9/NitrOS-9 **bootável de verdade** usado como semente: o app clona dele
-o aparato de boot + os arquivos de sistema para o seu disco novo. Ele precisa ser **da MESMA geometria**
-escolhida (o app valida e avisa se não bater).
+## 5. O "gabarito" (disco-semente do sistema)
+
+Um **gabarito** é um disco OS-9/NitrOS-9 **bootável de verdade** usado como semente: o app clona dele o
+aparato de boot + os arquivos de sistema. Ele precisa ser **da MESMA geometria** escolhida (o app valida e
+recusa se não bater ou se não for bootável).
 
 **Gabaritos embutidos (não precisa fazer nada):**
 
@@ -85,93 +95,115 @@ escolhida (o app valida e avisa se não bater).
 | **360K** (40T DS) | ✅ NitrOS-9 6809 Level 1 (CoCo) — incluído no app |
 | **720K** (80T DS) | ✅ NitrOS-9 6809 Level 1 (CoCo) — incluído no app |
 
-> Os gabaritos embutidos são imagens do **NitrOS-9**, distribuído livremente pela comunidade Color
-> Computer (código sob GPL). Créditos no arquivo `NOTICE.txt` que acompanha os gabaritos.
+> Os gabaritos embutidos são imagens do **NitrOS-9**, distribuído livremente pela comunidade Color Computer
+> (código sob GPL). Créditos no `NOTICE.txt` que acompanha os gabaritos.
 
-> **Quer usar a SUA referência mesmo em 360K/720K?** Para cada uma dessas geometrias o menu também traz
-> a variante **"— referência sua"** (tanto em *Bootável* quanto em *Bootável + programas*). Escolha-a
-> quando quiser uma versão específica do sistema (ex.: NitrOS-9 6309, Level 2, ou um disco que você já
-> configurou) em vez do gabarito embutido. Você nunca fica preso ao gabarito.
+> **Quer usar a SUA referência mesmo em 360K/720K?** Cada uma dessas geometrias também tem a variante
+> **"— referência sua"** (em *Bootável* e em *Bootável + programas*). Use-a quando quiser uma versão específica
+> (ex.: NitrOS-9 6309, Level 2, ou um disco já configurado) em vez do gabarito embutido. Você nunca fica preso
+> ao gabarito.
 
-**Geometrias sem gabarito embutido (você indica um disco seu):**
+**Geometrias sem gabarito embutido (você indica um disco seu):** **158K** (35T) — só existe o OS-9 Tandy
+original, **proprietário**; **180K** (40T um lado) — o NitrOS-9 CoCo só vem em dois lados (40T-SS é formato de
+Dragon). **Onde conseguir** um disco de referência: o **Color Computer Archive** (`colorcomputerarchive.com`,
+seção *Disks → Operating Systems*) e a distribuição oficial do **NitrOS-9** (`nitros9.sourceforge.io`). Baixe
+um disco **bootável** da geometria desejada e aponte-o quando o app pedir.
 
-| Geometria | Por quê | O que fazer |
-|---|---|---|
-| **158K** (35T SS) | O NitrOS-9 não é construído para 35 trilhas; só existe o **OS-9 Tandy** original, que é **proprietário** (não pode ser embutido) | Indique um disco OS-9 35T bootável **seu** |
-| **180K** (40T SS) | O NitrOS-9 para CoCo só vem em 40T/80T **dois lados**; 40T um lado é formato de Dragon | Indique um disco OS-9 40T-SS bootável **seu** |
+---
 
-**Onde conseguir um disco de referência** (para 158K/180K, ou outras versões de sistema): o
-**Color Computer Archive** mantém um acervo enorme de discos OS-9/NitrOS-9 e jogos —
-`https://colorcomputerarchive.com` (seção *Disks → Operating Systems*). A distribuição oficial do
-NitrOS-9 também está em `https://nitros9.sourceforge.io`. Baixe um disco **bootável** da geometria
-desejada e aponte-o quando o app pedir.
-
-> O gabarito precisa ser **bootável de verdade** (campo de bootstrap preenchido). Um disco só de
-> utilitários (sem boot) é recusado.
-
-## Barra de ferramentas (com um disco aberto)
+## 6. Barra de ferramentas (disco aberto)
 
 - **Abrir / Novo…** — como acima.
-- **Salvar** — grava no arquivo de origem (sobrescreve). Em disco recém-criado, abre "Salvar Como".
-- **Salvar Como** — grava como um novo `.os9`/`.dsk` **ou como `.sdf` (CoCoSDC)** — escolha o tipo no
-  diálogo. Ao editar um `.sdf`, o **Salvar** já regrava em SDF.
-- **Nova pasta** — cria uma subpasta na pasta atual.
+- **Salvar** — sobrescreve o arquivo de origem (fica verde quando há alterações). Disco recém-criado abre
+  "Salvar Como" na 1ª vez.
+- **Salvar Como** — grava como novo `.os9`/`.dsk` **ou `.sdf` (CoCoSDC)** — escolha o tipo no diálogo. Ao
+  editar um `.sdf`, o Salvar já regrava em SDF.
+- **Nova pasta** — cria uma subpasta na pasta atual (até 28 caracteres).
 - **Renomear** — renomeia o item selecionado.
-- **Extrair** — salva o arquivo selecionado para o seu PC.
+- **Extrair** — salva o arquivo selecionado para o PC (também por **duplo-clique**).
 - **Inserir** — adiciona um arquivo do PC na pasta atual.
-- **Excluir** — remove o arquivo (ou pasta **vazia**) selecionado; libera os blocos.
-- **Testar** — monta o disco no emulador **XRoar** (veja abaixo).
-- **Bootável** — torna o disco **já aberto** bootável (avançado; só injeta o aparato de boot a partir
-  de um gabarito — não adiciona os arquivos de sistema). Para um disco **usável**, prefira o
-  **Novo… → Bootável** (que clona o sistema completo).
-- **Fechar** — descarta a imagem da tela e volta ao estado vazio (pede confirmação se houver edição
-  não salva).
+- **Excluir** — remove o arquivo (ou pasta **vazia**) selecionado e libera os clusters (pede confirmação).
+- **Testar** — monta o disco no **XRoar** (só discos em memória — seção 7).
+- **Bootável** — torna **bootável o disco já aberto** (avançado; injeta só o aparato de boot — **não** os
+  arquivos de sistema). Para um disco **usável**, prefira **Novo… → Bootável**.
+- **Fechar** — descarta a imagem da tela (confirma se houver edição não salva).
 - **?** — esta Ajuda.
 
-> ⚠️ Cuidado para não confundir **dois "Bootável"**: o **do menu Novo…** cria um disco novo, completo e
-> usável; o **botão da barra** apenas injeta o boot num disco já aberto.
+> ⚠️ Não confunda os dois "Bootável": o **do menu Novo…** cria um disco novo, completo e usável; o **botão da
+> barra** apenas injeta o boot num disco já aberto.
 
-## Barra de status
+---
 
-Mostra o nome do volume, tamanho, nº de arquivos/pastas, espaço livre e um indicador
-**⚡ bootável / ○ não-bootável** (lido dos campos de bootstrap do disco).
+## 7. Testar / bootar no XRoar
 
-## Testar / bootar no XRoar
+O botão **Testar** abre um diálogo com a **drive de destino (D0–D3)** e três modos:
+- **Bootar OS-9 (DOS)** — reseta e digita `DOS` (o comando do Disk BASIC que carrega o OS-9). Use com um
+  disco **bootável** na **drive 0**.
+- **Montar + Reset** — monta e reinicia limpo (você inspeciona com o OS-9 já rodando).
+- **Montar (sem reset)** — só monta.
 
-O botão **Testar** abre um diálogo com a drive de destino (D0–D3) e três modos:
+Ao testar, o app **já prepara o XRoar para OS-9**: máquina **CoCo 3** (o NitrOS-9 Level 2 exige), **vídeo
+RGB** e **filtro Suave** (deixa as 80 colunas legíveis). Depois use **Expandir** na tela do XRoar para a
+imagem ficar grande e nítida.
 
-- **Bootar OS-9** — reseta e digita `DOS` (o comando do Disk BASIC que carrega o OS-9). Use com um
-  disco **bootável** na drive 0.
-- **Montar + Reset** — monta o disco e reinicia limpo (você inspeciona com o OS-9 já rodando).
-- **Montar (sem reset)** — só monta, sem reiniciar.
+> O **Testar** só funciona com discos **em memória** (Novo / Abrir / avulso) — não com partição de container
+> (o floppy do emulador é pequeno demais). E lembre: o comando `dir` do BASIC **não** lê um disco OS-9 (mostra
+> lixo + FS ERROR) — isso é normal; para ver o disco é preciso **bootar** o OS-9 e usar os comandos do OS-9.
 
-Ao testar OS-9, o app **já configura o XRoar para OS-9 automaticamente**: máquina **CoCo 3** (o
-NitrOS-9 Level 2 exige), **vídeo RGB** e **filtro Suave** (deixa o texto de 80 colunas legível). Em
-seguida, use o botão **Expandir** na tela do XRoar para a imagem ficar grande e nítida.
+---
 
-> Dica: o comando `dir` do BASIC **não** lê um disco OS-9 (mostra "lixo" + FS ERROR) — isso é normal.
-> Para ver o disco, é preciso **bootar** o OS-9 (`DOS`) e usar os comandos do próprio OS-9.
+## 8. Painel de mídia (o "prato" do disco)
 
-## Partições OS-9 dentro de imagens de container (MiniIDE / CoCoSDC)
+À direita, um disco circular mostra a **ocupação por cluster**:
+- Cores: **USO** (verde-água, cluster cheio) · **PARCIAL** (âmbar) · **LIVRE** (cinza); o cluster sob o mouse
+  acende em branco, e o arquivo selecionado/sob o cursor fica **magenta**. O hub central mostra o **% cheio**.
+- Passe o mouse sobre a árvore/lista e o painel **acende os clusters** daquele arquivo/pasta. **Clique numa
+  célula** do prato para **selecionar o arquivo** que a ocupa (a árvore navega até ele).
+- **Estatísticas** embaixo: KB usado/livre, clusters usados/total e o tamanho do cluster.
+- **Defrag** (com contador de fragmentados) e **Defrag arquivo**: compactam os dados em clusters contíguos.
+  Disponíveis só em disco **editável** (não em container). "Defrag arquivo" precisa de um arquivo selecionado
+  com mais de um segmento.
 
-Imagens grandes (cartões CF/SD) podem conter uma **partição OS-9** inteira. Ao abrir a imagem pela aba
-DSK/navegador, clique no botão **OS-9** para navegá-la aqui. Por segurança, ela abre **somente-leitura**;
-para editar, use **Habilitar edição** — então as alterações gravam **direto no arquivo** do container,
-com uma **trava que protege a área de sistema** (OS9Boot/SYS/CMDS/DEFS). Recomenda-se trabalhar numa
-**cópia** do container.
+---
 
-## Desfragmentar
+## 9. Partições OS-9 dentro de cartões (MiniIDE / CoCoSDC)
 
-Quando um arquivo fica espalhado em vários trechos (fragmentado), o painel de mídia o marca. Há ações
-de **defrag** (por arquivo e do disco todo) que reorganizam os blocos para ficarem contíguos,
-preservando o conteúdo.
+Cartões grandes podem conter uma **partição OS-9** inteira. Abra o cartão pela aba DSK e clique no botão
+**OS-9** — a partição abre aqui em **somente-leitura** (por segurança).
 
-## Resumo rápido
+Para editar, clique em **Habilitar edição**: a partir daí as operações (nova pasta, renomear, inserir,
+excluir) gravam **direto no arquivo do cartão** — **não há "Salvar/Desfazer"**. A **área de sistema**
+(OS9Boot/SYS/CMDS/DEFS) fica **protegida** (só pastas de usuário podem mudar) e cada gravação é validada
+antes de escrever. Aparece o selo **"⚠ edição grava no arquivo"**. **Recomendado: trabalhe numa CÓPIA do
+cartão.** (Testar e Defrag ficam indisponíveis em partição de container.)
 
-- **Só quero um disco vazio:** Novo… → Em branco → tamanho.
-- **Quero um disco que boota (360K/720K):** Novo… → Bootável → `360K`/`720K` — pronto, usa o gabarito
-  embutido **automaticamente**.
-- **Quero um bootável 158K/180K:** Novo… → Bootável → tamanho → indique um disco de sistema **seu**
-  (veja "O que é o gabarito" → Color Computer Archive).
-- **Quero que boote e rode meus programas:** Novo… → Bootável + programas → (gabarito) + programas.
-- **Quero testar no emulador:** Testar → Bootar OS-9 → Expandir.
+---
+
+## 10. Mover/copiar arquivos e arrastar para o Windows
+
+- **Entre os dois exploradores:** arraste um arquivo ou pasta de um para o outro — ele é **copiado** (pasta =
+  cópia recursiva). Um aviso confirma "✓ copiado. Lembre de Salvar." Destino somente-leitura é recusado.
+- **Do Windows para o explorador:** arraste um disco para **abrir**.
+- **Do explorador para o Windows:** use a alça **⠿** num arquivo para arrastá-lo direto ao Explorer (extrai).
+
+---
+
+## 11. Barra de status
+
+Mostra: nome do volume · tamanho · lados (1/2) · nº de arquivos/pastas · espaço livre · um indicador
+**⚡ bootável** (com o LSN/tamanho do OS9Boot) ou **○ não-bootável**, a legenda do prato e um cartão com o
+estado (**não salvo / salvo / leitura**) + barra de ocupação.
+
+---
+
+## 12. Fluxos práticos
+- **Disco de dados vazio:** Novo… → Em branco → tamanho → Inserir arquivos → Salvar Como.
+- **Disco que boota (360K/720K):** Novo… → Bootável → `360K`/`720K` (✓ gabarito) → Salvar Como → Testar →
+  Bootar OS-9.
+- **Bootável com versão específica do sistema:** Novo… → Bootável → "— referência sua" → indique seu disco
+  NitrOS-9 da mesma geometria.
+- **Bootável que já roda meus programas:** Novo… → Bootável + programas → (gabarito/referência) + escolha os
+  módulos → Salvar Como → Testar.
+- **Copiar um utilitário de um disco para outro:** abra os dois → arraste o arquivo do Topo para a Base →
+  Salvar.
+- **Editar um cartão CoCoSDC:** (faça uma cópia) → DSK abre o cartão → botão OS-9 → Habilitar edição → editar.

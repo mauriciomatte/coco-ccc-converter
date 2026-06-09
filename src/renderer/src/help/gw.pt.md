@@ -1,61 +1,116 @@
 # Aba GW — Greaseweazle (ler/gravar disquetes reais)
 
-A aba **GW** usa a placa **Greaseweazle** para **ler** e **gravar** disquetes **físicos** de verdade,
-fazendo a ponte entre a mídia real e as imagens `.dsk` do app.
+A aba **GW** é a ponte entre o app e a placa **Greaseweazle**: ela **lê disquetes físicos** para dentro do
+app e **grava imagens em disquetes físicos**. É como você preserva discos reais de CoCo/Dragon e como leva
+seus discos editados de volta para a mídia. Ao terminar este guia você saberá configurar a placa, escolher o
+formato certo, ler/gravar com segurança e diagnosticar um drive problemático.
 
-## Pré-requisitos
+> **Pré-requisitos:** (1) a placa **Greaseweazle** conectada via USB; (2) as **host tools `gw`** instaladas
+> (no PATH, ou informe o caminho no campo "Caminho do gw"); (3) um **drive de disquete** ligado ao cabo.
 
-- A **placa Greaseweazle** conectada por USB.
-- O programa **`gw`** (Greaseweazle host tools) instalado. Se ele não estiver no PATH do sistema,
-  informe o **caminho do executável** no campo correspondente (ex.: `C:\gw\gw.exe`). Esse valor fica
-  salvo.
-- Um **drive de disquete** ligado ao cabo da Greaseweazle.
+Cada campo tem um pequeno **"?"** que mostra a dica logo abaixo. O botão **Ajuda** (canto do título) abre
+este manual.
 
-## Botões e campos principais
+---
 
-- **Testar (gw info)** — roda `gw info` para conferir se a placa está respondendo. Faça isso primeiro.
-- **Dispositivo / porta** — deixe vazio para detecção automática; informe (ex.: `COM3` no Windows,
-  `/dev/ttyACM0` no Linux) se houver mais de uma placa.
-- **Drive** — qual drive no cabo (Padrão deixa o `gw` decidir; use A/B ou 0/1 quando há dois drives).
-- **Painel-alvo (A/B)** — define qual painel da aba DSK recebe a leitura **e** de qual painel sai a
-  gravação. Os botões mudam de rótulo conforme o painel ("Ler → Painel X" / "Gravar Painel X").
+## 1. Formato (CoCo / Dragon)
 
-## Ler um disquete físico
+O **Formato** define a geometria que o `gw` vai usar (e o tamanho do mapa de trilhas). Escolha o que
+corresponde ao disco físico:
 
-1. Coloque o disquete no drive.
-2. Escolha o **painel-alvo** (A ou B).
-3. Clique em **Ler**. A imagem é carregada no painel escolhido da aba **DSK** (se o painel já tiver
-   conteúdo, aparece um aviso de sobrescrever — cancele para salvar antes).
-4. O **mapa de trilhas** mostra o progresso por trilha/lado.
+| Formato | Geometria | Para que serve |
+|---|---|---|
+| **coco.decb** | 35 trilhas, 1 lado | Disco RS-DOS/Disk BASIC padrão do CoCo (160K) |
+| **coco.decb.40t** | 40 trilhas, 1 lado | RS-DOS de 40 trilhas (180K) |
+| **coco.os9.40ss / .40ds** | 40T, 1 ou 2 lados | OS-9/NitrOS-9 40 trilhas |
+| **coco.os9.80ss / .80ds** | 80T, 1 ou 2 lados | OS-9 80 trilhas |
+| **dragon.40ss / .40ds** | 40T, 1 ou 2 lados | Dragon DOS 40 trilhas |
+| **dragon.80ss / .80ds** | 80T, 1 ou 2 lados | Dragon DOS 80 trilhas |
 
-## Gravar num disquete físico
+> Ao gravar a partir de um painel da DSK, o app **deduz e ajusta o formato** automaticamente pelo conteúdo
+> do disco.
 
-1. Tenha a imagem no painel (A ou B), ou escolha **Gravar .dsk…** para pegar um arquivo.
-2. Insira um disquete **gravável** no drive.
-3. Clique em **Gravar Painel X → Disco**. O mapa mostra o progresso.
+---
 
-> Você também pode acionar a gravação direto da aba **DSK** pelo botão **Gravar GW**, que abre esta
-> aba já apontando para o painel ativo.
+## 2. Configuração da placa
 
-## Diagnóstico do drive
+- **Dispositivo / Porta** — deixe vazio para **detecção automática**; informe (ex.: `COM3` no Windows,
+  `/dev/ttyACM0` no Linux) só se houver mais de uma placa.
+- **Drive** — qual drive no cabo da Greaseweazle: **Padrão (auto)**, ou **A/B** (ou **0/1**) quando há dois
+  drives no mesmo cabo.
+- **Caminho do gw** — deixe `gw` se já está no PATH; senão use **Procurar…** para apontar o executável
+  (ex.: `C:\gw\gw.exe`). Este valor é **salvo**.
+- **Argumentos extras** — opções avançadas separadas por espaço, ex.: `--no-verify` (pula a verificação),
+  `--retries=3`, `--revs=2` (mais voltas na leitura). Na leitura, as opções que só valem para gravação são
+  ignoradas automaticamente.
+- **Comando direto (opcional)** — para usuários avançados: quando preenchido, o app **ignora** formato/
+  dispositivo/drive/extras e usa **somente** esta linha como argumentos do `gw` (o caminho do arquivo
+  temporário é acrescentado no fim). Não é salvo.
 
-Para drives problemáticos:
+---
 
-- **Testar seek** — roda `gw seek 0` para exercitar/recalibrar a cabeça (ajuda contra erros de
-  seek/Track 0).
-- **Ver tempos** — roda `gw delays` e mostra os tempos atuais.
-- **Step (µs) + Aplicar step** — roda `gw delays --step` para **alargar o atraso entre passos** da
-  cabeça (aumente para ~8000–12000 em drives lentos). O valor fica salvo no dispositivo.
+## 3. Use o Painel (A / B)
 
-## Mídia (dica importante)
+Define **em qual painel** (A/B da aba DSK) a imagem lida será carregada — e **de qual painel** a imagem será
+gravada. Se o painel já tiver conteúdo, o app pede confirmação antes de sobrescrever.
 
-O formato CoCo (`coco.decb`) grava em **densidade dupla 720K (DD)**. Disquetes **HD 1.44 MB**
-funcionam **se você tapar o furo do sensor de densidade** (assim o drive os trata como DD). Um erro
-**"Verify Failure Track 0.0"** normalmente indica um disquete **fisicamente ruim**, não um problema de
-HD vs DD.
+---
 
-## Fluxo típico
+## 4. As ações principais
 
-1. **Testar (gw info)** → confirma a placa.
-2. **Ler** um disquete → edita na aba DSK → **Gravar** de volta (ou em outro disquete).
-3. Se houver erros de leitura/gravação: **Testar seek**, e se preciso aumente o **Step**.
+- **Testar (gw info)** — executa `gw info`: confirma que a placa está conectada e respondendo. **Faça isto
+  primeiro.** A saída aparece no console.
+- **Ler → Painel A/B** — lê o disquete físico e carrega a imagem no painel escolhido. Se o painel tiver
+  conteúdo, confirma antes. Ao terminar, o app **salta para a aba DSK** com a imagem carregada (marcada como
+  não salva) — revise e salve.
+- **Gravar Painel A/B → Disco** — grava o disco do painel no disquete físico (o formato é auto-ajustado ao
+  conteúdo do painel).
+- **Gravar .dsk… → disco** — escolhe um arquivo `.dsk` do PC e o grava direto no disquete (usa o formato
+  selecionado no momento).
+
+> Você também pode iniciar a gravação a partir da aba **DSK** (botão "Gravar GW"): o app aponta o painel
+> ativo, vem para esta aba e grava.
+
+---
+
+## 5. Mapa de Trilhas + progresso
+
+A segunda seção mostra uma **grade**: uma linha por **lado** (L0/L1) e uma coluna por **trilha**. Cada
+quadradinho **acende em verde** conforme o `gw` lê/grava aquela trilha; ao lado há o contador
+**concluídas/total (%)**. É o seu retorno visual em tempo real. Erros não aparecem como cor — vão para o
+**console** no rodapé (que mostra toda a saída do `gw`).
+
+---
+
+## 6. Diagnóstico do drive
+
+Quando a leitura/gravação falha (erros de seek, "Verify Failure"), use:
+- **Testar seek** — `gw seek 0`: move/recalibra a cabeça contra a trilha 0.
+- **Ver tempos** — `gw delays`: mostra os tempos atuais do drive.
+- **Step (µs) + Aplicar step** — ajusta o atraso entre passos da cabeça (`gw delays --step`). Aumente (ex.:
+  8000–12000) para **drives lentos**. O valor fica gravado na própria placa e é **salvo** no app.
+
+---
+
+## 7. Mídia DD × HD (importante)
+
+O `coco.decb` grava bem em **disquetes HD 1.44** se o **furo do sensor de densidade for tapado** com fita —
+aí a mídia se comporta como **720K DD**, que é o que o CoCo espera. Um **"Verify Failure Track 0.0"** quase
+sempre indica um **disco fisicamente ruim**, e não incompatibilidade HD×DD. Para pular a verificação na
+gravação, use `--no-verify` em "Argumentos extras".
+
+---
+
+## 8. Fluxos práticos
+
+**Preservar um disquete real no PC:**
+1. Conectar a placa → **Testar (gw info)**.
+2. Escolher o **Formato** do disco (ex.: `coco.decb`) e o **Painel** alvo.
+3. **Ler → Painel A** → acompanhar o mapa de trilhas → o app abre na aba DSK → **Salvar** como `.dsk`.
+
+**Gravar uma imagem num disquete:**
+- *Do painel:* **Use o Painel** → **Gravar Painel A → Disco** (formato auto).
+- *De arquivo:* **Gravar .dsk… → disco** → escolher o `.dsk`.
+- *Pela aba DSK:* botão **Gravar GW** no painel ativo → confirmar → grava aqui.
+
+**Drive teimoso:** **Testar seek** → **Ver tempos** → aumentar **Step (µs)** → tentar de novo.
