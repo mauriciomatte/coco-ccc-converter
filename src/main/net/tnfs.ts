@@ -12,7 +12,7 @@ const EOF = 0x21;           // código TNFS de fim-de-diretório / fim-de-arquiv
 const MAX_ENTRIES = 600;    // teto de itens por pasta (segurança)
 const READ_CHUNK = 512;     // bytes por READ (cabe num datagrama)
 
-interface Session { sock: dgram.Socket; host: string; port: number; connId: number; seq: number }
+interface Session { sock: dgram.Socket; host: string; port: number; connId: number; seq: number; aborted?: boolean; abortHook?: (() => void) | null }
 export interface TnfsEntry { name: string; isDir: boolean; size: number }
 export interface CommunityServer { host: string; tcpUp: boolean; udpUp: boolean }
 
@@ -38,8 +38,10 @@ const u16le = (n: number) => { const b = Buffer.alloc(2); b.writeUInt16LE(n & 0x
 const cstr = (s: string) => Buffer.concat([Buffer.from(s, 'latin1'), Buffer.from([0])]);
 
 // Envia UMA requisição e aguarda a resposta (casa por seq+cmd), com retransmissão.
+// Cancelável: se a sessão for abortada (abortSession), rejeita NA HORA e larga as retransmissões.
 function transact(sess: Session, cmd: number, payload: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
+    if (sess.aborted) { reject(new Error('TNFS: cancelado.')); return; }
     const seq = sess.seq & 0xff;
     sess.seq = (sess.seq + 1) & 0xff;
     const pkt = Buffer.concat([u16le(sess.connId), Buffer.from([seq, cmd]), payload]);
@@ -48,9 +50,12 @@ function transact(sess: Session, cmd: number, payload: Buffer): Promise<Buffer> 
       if (msg.length < 4 || msg[2] !== seq || msg[3] !== cmd) return; // não é a nossa resposta
       cleanup(); resolve(msg);
     };
-    const cleanup = () => { clearTimeout(timer); sess.sock.removeListener('message', onMsg); };
+    const cleanup = () => { clearTimeout(timer); sess.sock.removeListener('message', onMsg); sess.abortHook = null; };
+    // gancho de cancelamento: o abortSession() chama isto p/ interromper esta espera imediatamente
+    sess.abortHook = () => { cleanup(); reject(new Error('TNFS: cancelado.')); };
     const send = () => {
-      sess.sock.send(pkt, sess.port, sess.host, (err) => { if (err) { cleanup(); reject(err); } });
+      if (sess.aborted) { cleanup(); reject(new Error('TNFS: cancelado.')); return; }
+      sess.sock.send(pkt, sess.port, sess.host, (err) => { if (err && !sess.aborted) { cleanup(); reject(err); } });
       timer = setTimeout(() => {
         if (++tries >= RETRIES) { cleanup(); reject(new Error('TNFS: tempo esgotado (servidor não respondeu).')); return; }
         send();
@@ -61,14 +66,30 @@ function transact(sess: Session, cmd: number, payload: Buffer): Promise<Buffer> 
   });
 }
 
-async function mount(host: string, port = TNFS_PORT, mountpoint = '/'): Promise<Session> {
+// Aborta uma sessão: interrompe a espera pendente (abortHook) e fecha o socket.
+function abortSession(sess: Session) {
+  sess.aborted = true;
+  try { sess.abortHook?.(); } catch { /* */ }
+  try { sess.sock.close(); } catch { /* */ }
+}
+
+// Abre só o socket UDP (sem MOUNT) — permite registrar o abort ANTES da etapa de rede.
+async function openSocket(host: string, port = TNFS_PORT): Promise<Session> {
   const sock = dgram.createSocket('udp4');
   await new Promise<void>((res, rej) => { sock.once('error', rej); sock.bind(() => { sock.removeListener('error', rej); res(); }); });
-  const sess: Session = { sock, host, port, connId: 0, seq: 0 };
+  return { sock, host, port, connId: 0, seq: 0 };
+}
+
+async function mountSess(sess: Session, mountpoint = '/'): Promise<void> {
   // MOUNT: version(u16 LE = 0x0102 → v1.2) + mountpoint\0 + user\0 + password\0
   const reply = await transact(sess, 0x00, Buffer.concat([u16le(0x0102), cstr(mountpoint), cstr(''), cstr('')]));
-  if (reply[4] !== 0) { sock.close(); throw new Error(`TNFS: MOUNT falhou (status 0x${reply[4].toString(16)}).`); }
+  if (reply[4] !== 0) { try { sess.sock.close(); } catch { /* */ } throw new Error(`TNFS: MOUNT falhou (status 0x${reply[4].toString(16)}).`); }
   sess.connId = reply.readUInt16LE(0); // o servidor devolve o connId da sessão no cabeçalho
+}
+
+async function mount(host: string, port = TNFS_PORT, mountpoint = '/'): Promise<Session> {
+  const sess = await openSocket(host, port);
+  await mountSess(sess, mountpoint);
   return sess;
 }
 
@@ -87,11 +108,14 @@ async function statPath(sess: Session, path: string): Promise<{ isDir: boolean; 
   return { isDir: (mode & 0xf000) === 0x4000, size };
 }
 
-/** Lista uma pasta (nome + dir? + tamanho). Faz mount→opendir→readdir(loop)→stat(cada)→closedir→umount. */
-export async function tnfsList(host: string, path = '/'): Promise<TnfsEntry[]> {
+/** Lista uma pasta (nome + dir? + tamanho). Faz mount→opendir→readdir(loop)→stat(cada)→closedir→umount.
+ *  opts.onAbort recebe uma função de cancelamento REAL (fecha o socket e interrompe a espera/MOUNT). */
+export async function tnfsList(host: string, path = '/', opts?: { onAbort?: (cancel: () => void) => void }): Promise<TnfsEntry[]> {
   const p = path && path.startsWith('/') ? path : '/' + (path || '');
-  const sess = await mount(host);
+  const sess = await openSocket(host);
+  opts?.onAbort?.(() => abortSession(sess)); // arma o cancelamento ANTES do MOUNT (onde servidor-fora-do-ar trava)
   try {
+    await mountSess(sess);
     const od = await transact(sess, 0x10, cstr(p));
     if (od[4] !== 0) throw new Error(`TNFS: OPENDIR falhou em "${p}" (status 0x${od[4].toString(16)}).`);
     const handle = od[5];

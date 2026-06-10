@@ -2180,20 +2180,23 @@ export default function App() {
   // O disco raw OS-9 vai como ".dsk" (o XRoar acerta a geometria pela extensão/tamanho).
   const handleTestOs9InXroar = (o: { name?: string; data: Uint8Array; mode: 'boot' | 'reset' | 'mount'; drive: number }) => {
     if (!o?.data?.length) { addLog('Disco OS-9 vazio.', 'Empty OS-9 disk.', 'warn'); return; }
-    // OS-9/NitrOS-9 (6809 L2) é CoCo 3 (512K) — força a máquina CoCo 3 no XRoar (a máquina segue a
-    // plataforma; sem isso, se estivesse em Dragon/CoCo2 o boot OS-9 falharia).
-    if (platform !== 'coco') { setPlatform('coco'); addLog('Plataforma do XRoar ajustada para CoCo (OS-9 = CoCo 3).', 'XRoar platform set to CoCo (OS-9 = CoCo 3).', 'info'); }
+    // O RBF do OS-9 é idêntico em CoCo e Dragon (não dá p/ distinguir por bytes), então a MÁQUINA segue
+    // o TOGGLE DE PLATAFORMA (o mesmo critério que o modal "Testar no XRoar" da aba OS-9 usa p/ o comando):
+    //  • CoCo   → NitrOS-9 6809 L2 = CoCo 3 (512K); boota com DOS; 80 col hi-res → RGB + filtro Suave.
+    //  • Dragon → OS-9 do Dragon (Dragon 64); boota com BOOT; vídeo padrão (não é 80 col hi-res do GIME).
+    // D11: ao testar com a plataforma em Dragon, NÃO forçamos CoCo — usamos a máquina Dragon.
+    const isDragon = platform === 'dragon';
+    if (!isDragon && platform !== 'coco') { setPlatform('coco'); addLog('Plataforma do XRoar ajustada para CoCo (OS-9 = CoCo 3).', 'XRoar platform set to CoCo (OS-9 = CoCo 3).', 'info'); }
     const base = (o.name || 'disco')
       .replace(/\.(os9|dsk|vdk|jvc|dmk)$/i, '')
       .replace(/[^A-Za-z0-9._-]+/g, '_')
       .replace(/^_+|_+$/g, '')
       .slice(0, 24) || 'disco';
     const name = `${base}.dsk`;
-    const isDragon = false; // OS-9 aqui = CoCo (comando DOS); máquina forçada p/ CoCo 3 acima
-    // OS-9 L2 usa 80 colunas hi-res → RGB (sem artefato) + filtro Suave (uniformiza as hastes finas em
-    // escala não-inteira) deixam o texto legível. Pede ambos ao XRoar.
+    // OS-9 L2 (CoCo) usa 80 colunas hi-res → RGB (sem artefato) + filtro Suave (uniformiza as hastes finas
+    // em escala não-inteira) deixam o texto legível. No Dragon não há 80 col hi-res do GIME → vídeo padrão.
     const load: { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string } =
-      { name, ext: 'dsk', data: new Uint8Array(o.data), key: Date.now(), drive: o.drive ?? 0, tvInput: 'rgb', glFilter: 'linear' };
+      { name, ext: 'dsk', data: new Uint8Array(o.data), key: Date.now(), drive: o.drive ?? 0, ...(isDragon ? {} : { tvInput: 'rgb', glFilter: 'linear' }) };
     if (o.mode === 'boot') load.runCmd = (isDragon ? 'BOOT\r' : 'DOS\r');
     else load.reset = o.mode === 'reset';
     setXroarLoad(load);

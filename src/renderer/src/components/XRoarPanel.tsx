@@ -171,10 +171,12 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     setDrives(d => { const n = [...d]; n[drive] = ''; return n; });
   };
 
-  // ─── Programa (.bin/.rom/.ccc/.hex/.sna) ───
+  // ─── Programa (.bin/.rom/.ccc/.pak/.hex/.sna) ───
   //  • .bin/.hex (código de máquina): só roda automático via PARÂMETRO DE BOOT (xroar arquivo.bin).
   //    Com ".bin AutoRun" ON, REMONTA o iframe bootando com o arquivo. OFF: só carrega na memória.
   //  • .ccc/.rom (cartucho) / .sna (snapshot): o load_file em runtime (autorun) já mapeia e roda.
+  //  • .pak (Program Pak do VCC) = ROM de cartucho crua, idêntica a .rom/.ccc. O XRoar reconhece
+  //    cartucho pela EXTENSÃO, então o apresentamos como ".rom" (o nome de tela continua o original).
   const openProgram = async () => {
     try {
       const res = await window.cocoApi.xroarPickFile('program');
@@ -184,13 +186,14 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
       const isBin = e === 'bin' || e === 'hex';
       const arr = Array.from(new Uint8Array(res.data));
       setProgName(res.name);
+      const xName = e === 'pak' ? res.name.replace(/\.pak$/i, '.rom') : res.name; // .pak → .rom p/ o XRoar mapear no cartucho
       if (isBin && binAutorun) {
         bootProgRef.current = { name: res.name, data: arr };
         setBootProg({ name: res.name, data: arr });
         setBootProgKey(k => k + 1);                                       // remonta o iframe (bootfile=1) → boot com o programa
         onLog?.(`Programa (boot): ${res.name}`, `Program (boot): ${res.name}`, 'info');
       } else {
-        sendCmd('load_file', { fileName: res.name, fileData: arr, loadType: (isBin && !binAutorun) ? 0 : 1, drive: 0 });
+        sendCmd('load_file', { fileName: xName, fileData: arr, loadType: (isBin && !binAutorun) ? 0 : 1, drive: 0 });
         onLog?.(binAutorun ? `Programa: ${res.name}` : `Programa anexado: ${res.name}`, binAutorun ? `Program: ${res.name}` : `Program attached: ${res.name}`, 'info');
         setTimeout(focusEmu, 60);
       }
@@ -469,7 +472,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           )}
           <div className="flex gap-1.5">
             <button onClick={openProgram} disabled={!ready} className="dsk-tool flex-1 flex items-center gap-1.5 justify-center" style={{ padding: '3px 7px' }}
-              title={t('Abrir e RODAR um programa (.bin/.rom/.ccc/.hex/.sna) — o XRoar detecta o formato e executa (LOADM/EXEC automático).', 'Open and RUN a program (.bin/.rom/.ccc/.hex/.sna) — XRoar detects the format and executes it (LOADM/EXEC auto).')}>
+              title={t('Abrir e RODAR um programa (.bin/.rom/.ccc/.pak/.hex/.sna) — o XRoar detecta o formato e executa (LOADM/EXEC automático). .pak = cartucho do VCC.', 'Open and RUN a program (.bin/.rom/.ccc/.pak/.hex/.sna) — XRoar detects the format and executes it (LOADM/EXEC auto). .pak = VCC cartridge.')}>
               <FolderOpen size={13} /><span className="text-[10px] font-bold">{t('Abrir', 'Open')}</span>
             </button>
             <button onClick={() => setBinAutorun(v => !v)} className="dsk-tool flex-1 flex items-center gap-1.5 justify-center" style={{ padding: '3px 7px', color: binAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
@@ -478,7 +481,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
               <span className="text-[10px] font-bold">{t('AutoRun', 'AutoRun')}</span>
             </button>
           </div>
-          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM (cartucho) e .SNA rodam direto. .BIN de máquina precisa do AutoRun p/ executar.', '.CCC/.ROM (cartridge) and .SNA run directly. Machine .BIN needs AutoRun to execute.')}</div>
+          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM/.PAK (cartucho) e .SNA rodam direto. .BIN de máquina precisa do AutoRun p/ executar.', '.CCC/.ROM/.PAK (cartridge) and .SNA run directly. Machine .BIN needs AutoRun to execute.')}</div>
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">

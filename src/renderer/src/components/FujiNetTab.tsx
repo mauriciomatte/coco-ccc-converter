@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw } from 'lucide-react';
+import { Globe, Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw, Copy, Check, Lock, Pencil, EyeOff } from 'lucide-react';
 import { HelpButton, TabHelpModal } from './TabHelp';
 
 interface FavServer { host: string; label?: string; path?: string }
 interface CommunityServer { host: string; tcpUp: boolean; udpUp: boolean }
+interface RecentServed { mode: 'folder' | 'container'; path: string } // pastas/containers servidos recentemente
+const RECENT_MAX = 8;
 
 // Extensões que sabemos abrir/injetar (p/ filtrar o conteúdo de um .zip baixado).
 const OPENABLE = ['dsk', 'vdk', 'sdf', 'os9', 'dmk', 'jvc', 'img', 'vhd', 'ccc', 'cas', 'c10', 'bin', 'bas', 'rom', 'hex', 'sna'];
@@ -28,6 +30,9 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   const t = (p: string, e: string) => (pt ? p : e);
   const [showHelp, setShowHelp] = useState(false);
   const [busy, setBusy] = useState(false);
+  // QUAL operação está em curso — separa as animações/cores por botão (connect ≠ url ≠ download).
+  const [busyKind, setBusyKind] = useState<'connect' | 'url' | 'download' | ''>('');
+  const connectGen = useRef(0); // "geração" da conexão: permite ABANDONAR um connect em andamento (Desconectar)
   const [zipPick, setZipPick] = useState<null | { data: Uint8Array; entries: { name: string; size: number }[] }>(null);
 
   // extrai uma entrada do zip (no main) e manda abrir
@@ -62,7 +67,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   const doOpenUrl = async () => {
     const u = url.trim();
     if (!u || busy) return;
-    setBusy(true);
+    setBusy(true); setBusyKind('url');
     onLog(`FujiNet: baixando ${u}…`, `FujiNet: downloading ${u}…`, 'info');
     try {
       const r = await window.cocoApi.netDownloadUrl(u);
@@ -70,7 +75,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
       onLog(`FujiNet: ${r.name} (${r.bytes} bytes) baixado.`, `FujiNet: ${r.name} (${r.bytes} bytes) downloaded.`, 'success');
       await processFetched(r);
     } catch (e: any) { onLog(`FujiNet: erro — ${e?.message}`, `FujiNet: error — ${e?.message}`, 'error'); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setBusyKind(''); }
   };
 
   // --- Cliente TNFS (navegar hubs FujiNet) ---
@@ -86,15 +91,17 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
 
   const tnfsGo = async (path: string, hostOverride?: string) => {
     const h = (hostOverride ?? host).trim(); if (!h || busy) return;
-    setBusy(true);
+    const myGen = ++connectGen.current;            // marca esta tentativa
+    setBusy(true); setBusyKind('connect');
     onLog(`FujiNet TNFS: listando ${h}:${path}…`, `FujiNet TNFS: listing ${h}:${path}…`, 'info');
     try {
       const r = await window.cocoApi.tnfsList(h, path);
+      if (myGen !== connectGen.current) return;     // usuário clicou Desconectar/abandonou: ignora o resultado
       if (!r?.success) { onLog(`FujiNet TNFS: ${r?.error}`, `FujiNet TNFS: ${r?.error}`, 'error'); return; }
       setTnfsPath(path); setTnfsEntries(r.entries || []);
       onLog(`FujiNet TNFS: ${r.entries?.length ?? 0} itens em ${path}.`, `FujiNet TNFS: ${r.entries?.length ?? 0} items in ${path}.`, 'success');
-    } catch (e: any) { onLog(`FujiNet TNFS: erro — ${e?.message}`, `FujiNet TNFS: error — ${e?.message}`, 'error'); }
-    finally { setBusy(false); }
+    } catch (e: any) { if (myGen === connectGen.current) onLog(`FujiNet TNFS: erro — ${e?.message}`, `FujiNet TNFS: error — ${e?.message}`, 'error'); }
+    finally { if (myGen === connectGen.current) { setBusy(false); setBusyKind(''); } }
   };
 
   // TNFS é 512 bytes por ida-e-volta → arquivos grandes (ex.: imagem de cartão SDC de 30 MB) demoram
@@ -106,7 +113,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   };
   const doTnfsRead = async (name: string, size: number) => {
     const h = host.trim(); const p = jp(tnfsPath, name);
-    setBigDl(null); setBusy(true); setDlGot(0); setDlTotal(size || 0); setDlName(name);
+    setBigDl(null); setBusy(true); setBusyKind('download'); setDlGot(0); setDlTotal(size || 0); setDlName(name);
     onLog(`FujiNet TNFS: baixando ${p}…`, `FujiNet TNFS: downloading ${p}…`, 'info');
     try {
       const r = await window.cocoApi.tnfsRead(h, p);
@@ -114,39 +121,67 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
       onLog(`FujiNet TNFS: ${r.name} (${r.bytes} bytes) baixado.`, `FujiNet TNFS: ${r.name} (${r.bytes} bytes) downloaded.`, 'success');
       await processFetched(r);
     } catch (e: any) { onLog(`FujiNet TNFS: erro — ${e?.message}`, `FujiNet TNFS: error — ${e?.message}`, 'error'); }
-    finally { setBusy(false); setDlGot(0); setDlName(''); }
+    finally { setBusy(false); setBusyKind(''); setDlGot(0); setDlName(''); }
   };
 
   // --- Servidor WiFi (TNFS): serve uma PASTA ou um CONTAINER (discos internos viram .dsk) ---
   const [serverMode, setServerMode] = useState<'folder' | 'container'>('folder');
   const [serverPath, setServerPath] = useState('');
+  const [serverWritable, setServerWritable] = useState(false); // gravação (só modo Pasta)
   const [serverRunning, setServerRunning] = useState(false);
-  const [serverInfo, setServerInfo] = useState<{ ip: string; port: number; describe: string } | null>(null);
+  const [serverInfo, setServerInfo] = useState<{ ip: string; port: number; describe: string; ips?: { ip: string; iface: string; isWifi?: boolean; routable?: boolean }[] } | null>(null);
+  const [recentServed, setRecentServed] = useState<RecentServed[]>([]); // pastas/containers recentes (combobox)
+  // Filtro de arquivos ocultos (não enviados à FujiNet): padrões do usuário + exceções, sobre o hardcoded.
+  const [hideExtra, setHideExtra] = useState<string[]>([]);
+  const [hideAllow, setHideAllow] = useState<string[]>([]);
+  const [hiddenDefaults, setHiddenDefaults] = useState<string[]>([]);
+  const [hideModal, setHideModal] = useState(false);
+  const [newHide, setNewHide] = useState('');   // novo padrão "também ocultar"
+  const [newAllow, setNewAllow] = useState(''); // nova exceção "nunca ocultar"
   const [sharedFiles, setSharedFiles] = useState<null | { name: string; isDir: boolean; size: number }[]>(null);
   const [serverBusy, setServerBusy] = useState(false);
+  const [copiedIp, setCopiedIp] = useState(false);
+  const copyIp = (ip: string) => { try { navigator.clipboard?.writeText(ip); setCopiedIp(true); setTimeout(() => setCopiedIp(false), 1500); } catch { /* */ } };
 
   // lista o que SERÁ servido (sem iniciar) — alimenta o painel "Arquivos compartilhados" (item 3)
   const previewServer = async (p: string, mode: 'folder' | 'container') => {
     if (!p) { setSharedFiles(null); return; }
     try {
-      const r = await window.cocoApi.tnfsServerPreview({ mode, path: p });
+      const r = await window.cocoApi.tnfsServerPreview({ mode, path: p, hideExtra, hideAllow });
       if (r?.success) setSharedFiles(r.entries || []);
       else { setSharedFiles([]); onLog(`Servidor: ${r?.error}`, `Server: ${r?.error}`, 'warn'); }
     } catch { setSharedFiles([]); }
   };
+  // Registra uma pasta/container no histórico de "servidos recentemente" (mais recente primeiro, sem
+  // duplicatas por mode+path, teto RECENT_MAX). Persistido em cfg.fujinet.recentServed.
+  const pushRecent = (mode: 'folder' | 'container', path: string) => {
+    if (!path) return;
+    setRecentServed(list => [{ mode, path }, ...list.filter(r => !(r.mode === mode && r.path === path))].slice(0, RECENT_MAX));
+  };
+  // Filtro de ocultos: adiciona/remove padrões (case-insensitive, sem duplicar). Reaplica a prévia.
+  const addHide = (term: string) => { const v = term.trim().toLowerCase(); if (!v) return; setHideExtra(l => l.some(x => x.toLowerCase() === v) ? l : [...l, v]); setNewHide(''); };
+  const addAllow = (term: string) => { const v = term.trim().toLowerCase(); if (!v) return; setHideAllow(l => l.some(x => x.toLowerCase() === v) ? l : [...l, v]); setNewAllow(''); };
+  const removeHide = (term: string) => setHideExtra(l => l.filter(x => x !== term));
+  const removeAllow = (term: string) => setHideAllow(l => l.filter(x => x !== term));
+  // Ao mudar as regras, reaplica a prévia da pasta atual (se houver e o servidor estiver desligado).
+  useEffect(() => { if (loaded.current && !serverRunning && serverMode === 'folder' && serverPath) previewServer(serverPath, 'folder'); }, [hideExtra, hideAllow]);
+
   const pickServerPath = async () => {
     const r = serverMode === 'container' ? await window.cocoApi.pickFile?.() : await window.cocoApi.pickDirectory?.();
-    if (r?.path) { setServerPath(r.path); previewServer(r.path, serverMode); }
+    if (r?.path) { setServerPath(r.path); previewServer(r.path, serverMode); pushRecent(serverMode, r.path); }
   };
   const startServer = async () => {           // item 1
     if (!serverPath || serverBusy) return;
     setServerBusy(true);
     try {
-      const r = await window.cocoApi.tnfsServerStart({ mode: serverMode, path: serverPath });
+      const writable = serverMode === 'folder' && serverWritable;
+      const r = await window.cocoApi.tnfsServerStart({ mode: serverMode, path: serverPath, writable, hideExtra, hideAllow });
       if (!r?.success) { onLog(`Servidor TNFS: ${r?.error}`, `TNFS server: ${r?.error}`, 'error'); return; }
-      setServerRunning(true); setServerInfo({ ip: r.ip, port: r.port, describe: r.describe });
-      onLog(`Servidor TNFS LIGADO em ${r.ip}:${r.port} (${r.describe}). Na FujiNet, ponha "${r.ip}" num host slot.`,
-            `TNFS server STARTED at ${r.ip}:${r.port} (${r.describe}). On the FujiNet, put "${r.ip}" in a host slot.`, 'success');
+      setServerRunning(true); setServerInfo({ ip: r.ip, port: r.port, describe: r.describe, ips: r.ips });
+      pushRecent(serverMode, serverPath);
+      const rw = r.writable ? (pt ? 'LEITURA-ESCRITA' : 'READ-WRITE') : (pt ? 'somente leitura' : 'read-only');
+      onLog(`Servidor TNFS LIGADO em ${r.ip}:${r.port} (${r.describe}) — ${rw}. Na FujiNet, ponha "${r.ip}" num host slot.`,
+            `TNFS server STARTED at ${r.ip}:${r.port} (${r.describe}) — ${rw}. On the FujiNet, put "${r.ip}" in a host slot.`, 'success');
     } catch (e: any) { onLog(`Servidor TNFS: erro — ${e?.message}`, `TNFS server: error — ${e?.message}`, 'error'); }
     finally { setServerBusy(false); }
   };
@@ -176,12 +211,17 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
         if (Array.isArray(fn.servers)) setServers(fn.servers);
         if (fn.lastHost) setHost(fn.lastHost);
         if (fn.serverMode === 'container' || fn.serverMode === 'folder') setServerMode(fn.serverMode);
+        if (typeof fn.serverWritable === 'boolean') setServerWritable(fn.serverWritable);
+        if (Array.isArray(fn.recentServed)) setRecentServed(fn.recentServed.filter((r: any) => r && (r.mode === 'folder' || r.mode === 'container') && typeof r.path === 'string').slice(0, RECENT_MAX));
+        if (Array.isArray(fn.hideExtra)) setHideExtra(fn.hideExtra.filter((s: any) => typeof s === 'string'));
+        if (Array.isArray(fn.hideAllow)) setHideAllow(fn.hideAllow.filter((s: any) => typeof s === 'string'));
         const sp = typeof fn.serverPath === 'string' ? fn.serverPath : (typeof fn.shareFolder === 'string' ? fn.shareFolder : '');
         if (sp) { setServerPath(sp); previewServer(sp, fn.serverMode === 'container' ? 'container' : 'folder'); }
       } catch { /* ignore */ }
       loaded.current = true;
       fetchCommunity();
-      try { const st = await window.cocoApi.tnfsServerStatus?.(); if (st?.running) { setServerRunning(true); setServerInfo({ ip: st.ip, port: st.port, describe: st.describe }); } } catch { /* */ }
+      try { const hd = await window.cocoApi.tnfsHiddenDefaults?.(); if (hd?.names) setHiddenDefaults(hd.names); } catch { /* */ }
+      try { const st = await window.cocoApi.tnfsServerStatus?.(); if (st?.running) { setServerRunning(true); setServerInfo({ ip: st.ip, port: st.port, describe: st.describe, ips: st.ips }); } } catch { /* */ }
     })();
     // log de conexões do servidor → console (item 5) + progresso de download TNFS
     const off = window.cocoApi.onNetLog?.((m: any) => onLog(m?.pt || '', m?.en || m?.pt || '', m?.type || 'info'));
@@ -192,9 +232,9 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   // Persiste no config (debounce) quando favoritos/host/servidor mudam.
   useEffect(() => {
     if (!loaded.current) return;
-    const id = setTimeout(() => { window.cocoApi.saveConfig({ fujinet: { servers, lastHost: host, serverMode, serverPath } }); }, 400);
+    const id = setTimeout(() => { window.cocoApi.saveConfig({ fujinet: { servers, lastHost: host, serverMode, serverPath, serverWritable, recentServed, hideExtra, hideAllow } }); }, 400);
     return () => clearTimeout(id);
-  }, [servers, host, serverMode, serverPath]);
+  }, [servers, host, serverMode, serverPath, serverWritable, recentServed, hideExtra, hideAllow]);
 
   const addFavorite = (fav: FavServer) => {
     const h = fav.host.trim(); if (!h) return;
@@ -203,8 +243,17 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   const removeFavorite = (h: string) => setServers(s => s.filter(x => x.host !== h));
   const isFavorite = (h: string) => servers.some(x => x.host === h);
   const connectTo = (h: string, path = '/') => { setHost(h); tnfsGo(path, h); };
-  // "Desconectar": o TNFS é por-operação (mount/umount), então isto limpa a sessão/listagem da tela.
-  const tnfsDisconnect = () => { setTnfsEntries(null); setTnfsPath('/'); onLog('FujiNet TNFS: desconectado.', 'FujiNet TNFS: disconnected.', 'info'); };
+  // "Desconectar": o TNFS é por-operação (mount/umount). Aqui (a) ABANDONA um connect em curso
+  // — incrementar a geração faz o tnfsGo pendente ignorar o resultado e liberar o busy — e (b) limpa a tela.
+  const tnfsDisconnect = () => {
+    const wasConnecting = busyKind === 'connect';
+    connectGen.current++;                    // invalida qualquer tnfsGo em voo (UI)
+    if (wasConnecting) window.cocoApi.tnfsListCancel?.(); // cancelamento REAL no main (fecha socket, larga retransmissões)
+    setBusy(false); setBusyKind('');
+    setTnfsEntries(null); setTnfsPath('/');
+    onLog(wasConnecting ? 'FujiNet TNFS: conexão interrompida.' : 'FujiNet TNFS: desconectado.',
+          wasConnecting ? 'FujiNet TNFS: connection aborted.' : 'FujiNet TNFS: disconnected.', 'info');
+  };
 
   const sectionTitle = 'text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1.5';
   const soon = (
@@ -218,7 +267,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
       {/* Título + Ajuda */}
       <div className="flex items-center gap-2 mb-3 flex-shrink-0">
         <Globe size={16} className="text-[var(--primary)]" />
-        <span className="text-sm font-bold text-white uppercase tracking-wide">{t('FujiNet / Online', 'FujiNet / Online')}</span>
+        <span className="text-sm font-bold text-white uppercase tracking-wide">{t('FujiNet / Acesso Direto Online', 'FujiNet / Direct Online Access')}</span>
         <span className="ml-auto"><HelpButton onClick={() => setShowHelp(true)} lang={lang} /></span>
       </div>
 
@@ -227,15 +276,12 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
 
         {/* ESQUERDA — CLIENTE */}
         <div className="flex-1 flex flex-col gap-3 overflow-y-auto" style={{ minWidth: 0 }}>
-          <div className="flex items-center gap-2">
-            <Download size={14} className="text-[var(--primary)]" />
-            <span className="text-xs font-bold text-white uppercase tracking-wide">{t('Acessar servidores', 'Access servers')}</span>
-          </div>
-
           {/* PRIMÁRIO — Cliente TNFS (hubs FujiNet): navegar e baixar */}
           <div className="glass-panel p-3 flex flex-col gap-2 flex-1" style={{ minHeight: 160 }}>
             <div className="flex items-center justify-between">
-              <span className={sectionTitle} style={{ margin: 0 }}>{t('Servidores TNFS (hubs FujiNet)', 'TNFS servers (FujiNet hubs)')}</span>
+              <span className={sectionTitle + ' flex items-center gap-1.5'} style={{ margin: 0, color: 'hsl(120, 35%, 72%)' }}>
+                <Download size={12} className="text-[var(--primary)] flex-shrink-0" /> {t('FujiNet — Acessar Servidores TNFS (hubs FujiNet)', 'FujiNet — Access TNFS Servers (FujiNet hubs)')}
+              </span>
               <button onClick={() => setManageOpen(true)} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Gerenciar servidores favoritos', 'Manage favorite servers')}><Star size={12} /> {t('Gerenciar', 'Manage')}</button>
             </div>
             {/* dropdown: favoritos do usuário + comunidade (status UDP). value = host. */}
@@ -258,11 +304,14 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
                 title={isFavorite(host.trim()) ? t('Já está nos favoritos', 'Already a favorite') : t('Salvar host atual nos favoritos', 'Save current host to favorites')}>
                 <Star size={13} style={{ color: isFavorite(host.trim()) ? '#fbbf24' : undefined }} />
               </button>
-              <button onClick={() => tnfsGo('/')} disabled={busy || !host.trim()} className="dsk-tool flex items-center gap-1.5">
-                {busy ? <Loader size={13} className="spin" /> : <Wifi size={13} />} {t('Conectar', 'Connect')}
+              <button onClick={() => tnfsGo('/')} disabled={busy || !host.trim()} className="dsk-tool flex items-center gap-1.5"
+                style={{ color: busyKind === 'connect' ? '#fbbf24' : (tnfsEntries !== null ? '#34d399' : undefined), opacity: busyKind === 'connect' ? 1 : undefined }}>
+                {busyKind === 'connect' ? <Loader size={13} className="spin" /> : <Wifi size={13} />} {t('Conectar', 'Connect')}
               </button>
-              <button onClick={tnfsDisconnect} disabled={busy || tnfsEntries === null} className="dsk-tool flex items-center gap-1.5" title={t('Limpar a sessão/listagem TNFS', 'Clear the TNFS session/listing')}>
-                <WifiOff size={13} /> {t('Desconectar', 'Disconnect')}
+              <button onClick={tnfsDisconnect} disabled={busyKind === 'connect' ? false : (busy || tnfsEntries === null)} className="dsk-tool flex items-center gap-1.5"
+                style={{ color: busyKind === 'connect' ? '#fbbf24' : undefined }}
+                title={busyKind === 'connect' ? t('Interromper a conexão', 'Abort the connection') : t('Limpar a sessão/listagem TNFS', 'Clear the TNFS session/listing')}>
+                <WifiOff size={13} /> {busyKind === 'connect' ? t('Interromper', 'Abort') : t('Desconectar', 'Disconnect')}
               </button>
             </div>
             {tnfsEntries !== null && (
@@ -315,12 +364,12 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
 
           {/* SECUNDÁRIO — Abrir por URL (manual) */}
           <div className="glass-panel p-3 flex flex-col gap-2">
-            <div className={sectionTitle}>{t('Abrir por URL (HTTP/HTTPS) — manual', 'Open by URL (HTTP/HTTPS) — manual')}</div>
+            <div className={sectionTitle} style={{ color: 'hsl(120, 35%, 72%)' }}>{t('Acesso Direto — Abrir Imagem por URL (HTTP/HTTPS)', 'Direct Access — Open Image by URL (HTTP/HTTPS)')}</div>
             <div className="flex gap-2">
               <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') doOpenUrl(); }}
                 placeholder="https://…/jogo.dsk (.zip ok)" className="input-text text-xs flex-1" style={{ padding: '6px 10px', minWidth: 0 }} />
               <button onClick={doOpenUrl} disabled={busy || !url.trim()} className="dsk-tool flex items-center gap-1.5">
-                {busy ? <Loader size={13} className="spin" /> : <Link2 size={13} />} {t('Abrir', 'Open')}
+                {busyKind === 'url' ? <Loader size={13} className="spin" /> : <Link2 size={13} />} {t('Abrir', 'Open')}
               </button>
             </div>
             <div className="text-[9px] text-[var(--text-muted)] leading-tight">
@@ -350,19 +399,84 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
               <button onClick={() => { if (!serverRunning) { setServerMode('container'); setServerPath(''); setSharedFiles(null); } }} disabled={serverRunning}
                 className="dsk-tool flex-1 justify-center" style={{ color: serverMode === 'container' ? 'var(--primary)' : undefined }}><Server size={13} /> {t('Container', 'Container')}</button>
             </div>
+            {/* Campo ÚNICO de caminho = combobox digitável (campo + dropdown de recentes via <datalist>).
+                Escolher um recente troca o modo se preciso; digitar livre faz a prévia no blur/Enter. O botão
+                de pasta abre o seletor do sistema. (Some quando o servidor está ligado — nada a trocar.) */}
             <div className="flex gap-2">
-              <input value={serverPath} readOnly placeholder={serverMode === 'container' ? t('(escolha um .img/.vhd/.dsk)', '(choose a .img/.vhd/.dsk)') : t('(escolha uma pasta)', '(choose a folder)')} className="input-text text-xs flex-1" style={{ padding: '6px 10px', minWidth: 0 }} title={serverPath} />
-              <button onClick={pickServerPath} disabled={serverRunning} className="dsk-tool flex items-center gap-1"><FolderOpen size={13} /></button>
+              <input list="fujinet-recent-paths" value={serverPath} disabled={serverRunning}
+                onChange={e => { const v = e.target.value; const rec = recentServed.find(r => r.path === v);
+                  if (rec) { if (rec.mode !== serverMode) setServerMode(rec.mode); setServerPath(v); setSharedFiles(null); previewServer(v, rec.mode); }
+                  else { setServerPath(v); setSharedFiles(null); } }}
+                onBlur={() => { if (serverPath) previewServer(serverPath, serverMode); }}
+                onKeyDown={e => { if (e.key === 'Enter' && serverPath) { e.currentTarget.blur(); previewServer(serverPath, serverMode); } }}
+                placeholder={serverMode === 'container' ? t('escolha ou cole um .img/.vhd/.dsk', 'pick or paste a .img/.vhd/.dsk') : t('escolha ou cole uma pasta', 'pick or paste a folder')}
+                className="input-text text-xs flex-1" style={{ padding: '6px 10px', minWidth: 0 }} title={serverPath} />
+              <datalist id="fujinet-recent-paths">
+                {recentServed.map(r => <option key={r.mode + r.path} value={r.path}>{r.mode === 'folder' ? t('Pasta', 'Folder') : 'Container'}</option>)}
+              </datalist>
+              <button onClick={pickServerPath} disabled={serverRunning} className="dsk-tool flex items-center gap-1" title={t('Procurar no sistema', 'Browse the system')}><FolderOpen size={13} /></button>
+            </div>
+            {/* acesso: somente-leitura ou leitura-escrita — gravação SÓ no modo Pasta (container é sempre RO) */}
+            <div className="flex gap-1.5">
+              <button onClick={() => { if (!serverRunning) setServerWritable(false); }} disabled={serverRunning}
+                className="dsk-tool flex-1 justify-center" style={{ color: !(serverMode === 'folder' && serverWritable) ? 'var(--primary)' : undefined }}>
+                <Lock size={12} /> {t('Só leitura', 'Read-only')}
+              </button>
+              <button onClick={() => { if (!serverRunning && serverMode === 'folder') setServerWritable(true); }} disabled={serverRunning || serverMode === 'container'}
+                className="dsk-tool flex-1 justify-center" style={{ color: (serverMode === 'folder' && serverWritable) ? '#34d399' : undefined }}
+                title={serverMode === 'container' ? t('Gravação disponível só no modo Pasta', 'Writing available only in Folder mode') : t('CoCo pode gravar/criar arquivos na pasta', 'CoCo can write/create files in the folder')}>
+                <Pencil size={12} /> {t('Ler-escrever', 'Read-write')}
+              </button>
             </div>
             <div className="flex items-center justify-between text-[10px] text-[var(--text-secondary)]">
-              <span>{t('Porta', 'Port')}</span><span className="font-mono">16384 (UDP) · {t('somente leitura', 'read-only')}</span>
+              <span>{t('Porta', 'Port')}</span><span className="font-mono">16384 (UDP) · {(serverMode === 'folder' && serverWritable) ? t('leitura-escrita', 'read-write') : t('somente leitura', 'read-only')}</span>
             </div>
-            {serverRunning && serverInfo && (
-              <div className="text-[10px] flex items-center justify-between" style={{ color: '#34d399' }}>
-                <span>{t('Endereço (host slot):', 'Address (host slot):')}</span>
-                <span className="font-mono font-bold">{serverInfo.ip}</span>
-              </div>
+            {/* gerenciar arquivos ocultos (só faz sentido no modo Pasta; container já filtra por extensão) */}
+            {serverMode === 'folder' && (
+              <button onClick={() => setHideModal(true)} className="dsk-tool flex items-center gap-1.5 justify-start" style={{ padding: '3px 7px' }}
+                title={t('Quais arquivos NÃO são enviados à FujiNet (desktop.ini, Thumbs.db…) — adicionar/excluir', 'Which files are NOT sent to the FujiNet (desktop.ini, Thumbs.db…) — add/remove')}>
+                <EyeOff size={12} /> <span className="text-[10px]">{t('Ocultar arquivos da FujiNet', 'Hide files from FujiNet')}</span>
+                {(hideExtra.length + hideAllow.length) > 0 && <span className="text-[9px] text-[var(--text-muted)]">(+{hideExtra.length}/−{hideAllow.length})</span>}
+              </button>
             )}
+            {serverRunning && serverInfo && (() => {
+              const ips = (serverInfo.ips && serverInfo.ips.length > 0) ? serverInfo.ips : [{ ip: serverInfo.ip, iface: '', isWifi: false, routable: true }];
+              const multi = ips.length > 1;
+              const hasRoutable = ips.some(x => x.routable);
+              // O IP RECOMENDADO é o ROTEÁVEL (interface com rota default = a única que a FujiNet alcança).
+              // Se o main não marcou nenhum (versão antiga), cai p/ o 1º. Os demais ficam esmaecidos.
+              const recIp = ips.find(x => x.routable)?.ip || ips[0]?.ip;
+              return (
+                <div className="flex flex-col gap-1.5 rounded p-2" style={{ background: '#34d39915', border: '1px solid #34d39940' }}>
+                  <span className="text-[9px] uppercase tracking-wider" style={{ color: '#34d399' }}>
+                    {multi ? t('Na FujiNet, use o IP destacado abaixo:', 'On the FujiNet, use the highlighted IP below:') : t('Na FujiNet, use este host:', 'On the FujiNet, use this host:')}
+                  </span>
+                  {ips.map((x, i) => {
+                    const rec = x.ip === recIp;                       // este é o recomendado?
+                    const tag = x.routable ? t('rede ✓', 'network ✓') : x.isWifi ? 'WiFi' : t('cabo', 'wired');
+                    return (
+                      <div key={x.ip + i} className="flex items-center gap-2" style={{ opacity: (multi && hasRoutable && !rec) ? 0.5 : 1 }}>
+                        <span className="font-mono font-bold text-sm" style={{ color: rec ? '#34d399' : 'var(--text-secondary)' }}>{x.ip}</span>
+                        <span className="font-mono text-[10px] text-[var(--text-muted)]">:{serverInfo.port}</span>
+                        <span className="text-[8px] font-bold uppercase px-1 rounded flex-shrink-0" style={{ color: rec ? '#34d399' : (x.isWifi ? '#60a5fa' : 'var(--text-muted)'), border: `1px solid ${rec ? '#34d39955' : 'var(--border)'}` }}>
+                          {tag}
+                        </span>
+                        {x.iface && <span className="text-[9px] text-[var(--text-muted)] truncate flex-1" title={x.iface}>{x.iface}</span>}
+                        <button onClick={() => copyIp(x.ip)} className="dsk-tool" style={{ padding: '3px 7px', marginLeft: x.iface ? 0 : 'auto' }} title={t('Copiar IP', 'Copy IP')}>
+                          {copiedIp ? <Check size={12} style={{ color: '#34d399' }} /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    );
+                  })}
+                  {multi && (
+                    <span className="text-[9px] leading-tight" style={{ color: '#fbbf24' }}>
+                      {t('⚠ Várias redes ativas. Use o IP marcado "rede ✓" (a interface com saída p/ a rede — a que a FujiNet alcança). Garanta que a placa está na MESMA rede do PC e libere a UDP 16384 no firewall (perfil Pública e Privada).',
+                         '⚠ Multiple networks active. Use the IP marked "network ✓" (the interface with a default route — the one the FujiNet can reach). Make sure the board is on the SAME network as the PC and allow UDP 16384 through the firewall (both Public and Private profiles).')}
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
             {serverRunning
               ? <button onClick={stopServer} disabled={serverBusy} className="dsk-tool flex items-center justify-center gap-1.5" style={{ color: '#f87171' }}>{serverBusy ? <Loader size={13} className="spin" /> : <Power size={13} />} {t('Desligar servidor', 'Stop server')}</button>
               : <button onClick={startServer} disabled={serverBusy || !serverPath} className="dsk-tool flex items-center justify-center gap-1.5" style={{ color: serverPath ? '#34d399' : undefined }}>{serverBusy ? <Loader size={13} className="spin" /> : <Power size={13} />} {t('Ligar servidor', 'Start server')}</button>}
@@ -370,6 +484,12 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
               {t('Serve via TNFS (UDP 16384). Na FujiNet, ponha o IP do PC acima num host slot. Container = cada disco interno vira um .dsk.',
                  'Serves via TNFS (UDP 16384). On the FujiNet, put the PC IP above in a host slot. Container = each inner disk becomes a .dsk.')}
             </div>
+            {serverMode === 'folder' && serverWritable && (
+              <div className="text-[9px] leading-tight" style={{ color: '#fbbf24' }}>
+                {t('⚠ Leitura-escrita: o CoCo pode CRIAR e SOBRESCREVER arquivos reais nesta pasta. Um cliente por vez. Gravação é lenta (512 B por bloco).',
+                   '⚠ Read-write: the CoCo can CREATE and OVERWRITE real files in this folder. One client at a time. Writing is slow (512 B per block).')}
+              </div>
+            )}
           </div>
 
           {/* item 3: lista do que será/está sendo servido */}
@@ -484,6 +604,75 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
                   <span className="text-[9px] text-[var(--text-muted)] flex-shrink-0">{Math.max(1, Math.round(e.size / 1024))} KB</span>
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: gerenciar arquivos ocultos (não enviados à FujiNet) */}
+      {hideModal && (
+        <div className="glass-modal-overlay" onClick={() => setHideModal(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 560, maxWidth: '94%', maxHeight: '86%' }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <EyeOff size={18} className="text-[var(--primary)]" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{t('Arquivos ocultos (não enviados à FujiNet)', 'Hidden files (not sent to the FujiNet)')}</h3>
+              <button onClick={() => setHideModal(false)} className="ml-auto dsk-tool" style={{ padding: '3px 6px' }}><X size={14} /></button>
+            </div>
+            <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+              {t('Estes arquivos NÃO aparecem para a FujiNet (a placa às vezes auto-seleciona o desktop.ini em vez do disco). Os padrões abaixo são fixos; você pode ADICIONAR mais e abrir EXCEÇÕES. Use curingas * e ? (ex.: ',
+                 'These files are NOT shown to the FujiNet (the board sometimes auto-selects desktop.ini instead of the disk). The defaults below are built-in; you can ADD more and make EXCEPTIONS. Use wildcards * and ? (e.g. ')}
+              <span className="font-mono">*.tmp</span>{t('). Mudanças valem ao (re)ligar o servidor.', '). Changes apply when you (re)start the server.')}
+            </p>
+
+            {/* padrões fixos (hardcoded) */}
+            <div className="flex flex-col gap-1">
+              <span className={sectionTitle} style={{ margin: 0 }}>{t('Padrões fixos (Windows · macOS · Linux)', 'Built-in defaults (Windows · macOS · Linux)')}</span>
+              <div className="flex flex-wrap gap-1 overflow-y-auto" style={{ maxHeight: 90 }}>
+                {hiddenDefaults.map(n => (
+                  <span key={n} className="text-[10px] font-mono px-1.5 py-0.5 rounded normal-case" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>{n}</span>
+                ))}
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>{t('+ tudo que começa com "."', '+ anything starting with "."')}</span>
+              </div>
+            </div>
+
+            {/* também ocultar (extra) */}
+            <div className="flex flex-col gap-1.5">
+              <span className={sectionTitle} style={{ margin: 0 }}>{t('Também ocultar (seus padrões)', 'Also hide (your patterns)')}</span>
+              <div className="flex gap-2">
+                <input value={newHide} onChange={e => setNewHide(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addHide(newHide); }}
+                  placeholder={t('ex.: *.tmp, ~$*, leiame.txt', 'e.g. *.tmp, ~$*, readme.txt')} className="input-text text-xs flex-1" style={{ padding: '5px 9px', minWidth: 0 }} />
+                <button onClick={() => addHide(newHide)} disabled={!newHide.trim()} className="dsk-tool flex items-center gap-1"><Plus size={13} /> {t('Adicionar', 'Add')}</button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {hideExtra.length === 0 && <span className="text-[10px] text-[var(--text-muted)]">{t('(nenhum)', '(none)')}</span>}
+                {hideExtra.map(term => (
+                  <span key={term} className="text-[10px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1 normal-case" style={{ background: '#f8717115', border: '1px solid #f8717140', color: '#fca5a5' }}>
+                    {term}<button onClick={() => removeHide(term)} className="hover:text-white" title={t('Remover', 'Remove')}><X size={10} /></button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* nunca ocultar (exceções) */}
+            <div className="flex flex-col gap-1.5">
+              <span className={sectionTitle} style={{ margin: 0 }}>{t('Nunca ocultar (exceções — vencem os padrões)', 'Never hide (exceptions — override defaults)')}</span>
+              <div className="flex gap-2">
+                <input value={newAllow} onChange={e => setNewAllow(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addAllow(newAllow); }}
+                  placeholder={t('ex.: .config.dsk, thumbs.db', 'e.g. .config.dsk, thumbs.db')} className="input-text text-xs flex-1" style={{ padding: '5px 9px', minWidth: 0 }} />
+                <button onClick={() => addAllow(newAllow)} disabled={!newAllow.trim()} className="dsk-tool flex items-center gap-1"><Plus size={13} /> {t('Adicionar', 'Add')}</button>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {hideAllow.length === 0 && <span className="text-[10px] text-[var(--text-muted)]">{t('(nenhuma)', '(none)')}</span>}
+                {hideAllow.map(term => (
+                  <span key={term} className="text-[10px] font-mono px-1.5 py-0.5 rounded flex items-center gap-1 normal-case" style={{ background: '#34d39915', border: '1px solid #34d39940', color: '#6ee7b7' }}>
+                    {term}<button onClick={() => removeAllow(term)} className="hover:text-white" title={t('Remover', 'Remove')}><X size={10} /></button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end">
+              <button onClick={() => setHideModal(false)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase">{t('Pronto', 'Done')}</button>
             </div>
           </div>
         </div>

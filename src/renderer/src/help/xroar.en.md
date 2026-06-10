@@ -101,12 +101,14 @@ You usually don't do this by hand: the other tabs mount the disk for you (sectio
 
 ---
 
-## 9. Program (.bin/.rom/.ccc/.hex/.sna)
+## 9. Program (.bin/.rom/.ccc/.pak/.hex/.sna)
 
 - The **loaded program name** is shown highlighted at the top of the block.
-- **Open** loads and **runs** a program (`.bin/.rom/.ccc/.hex/.sna`); XRoar detects the format.
+- **Open** loads and **runs** a program (`.bin/.rom/.ccc/.pak/.hex/.sna`); XRoar detects the format.
+- **`.pak`** is the **VCC** cartridge ROM (identical to `.rom/.ccc`) — the app presents it to XRoar as a `$C000`
+  cartridge automatically (the on-screen name stays `.pak`). It runs directly, like any cartridge.
 - The **"AutoRun"** toggle (next to Open): **on** = a `.bin/.hex` boots the emulator **with** the file and runs by
-  itself; **off** = it only loads into memory (you run it with `EXEC`). Cartridges `.ccc/.rom` and snapshots
+  itself; **off** = it only loads into memory (you run it with `EXEC`). Cartridges `.ccc/.rom/.pak` and snapshots
   `.sna` **always** run directly.
 
 ---

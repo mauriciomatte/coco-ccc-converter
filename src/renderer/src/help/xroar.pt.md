@@ -101,12 +101,14 @@ Normalmente você nem usa isto à mão: as outras abas montam o disco para você
 
 ---
 
-## 9. Programa (.bin/.rom/.ccc/.hex/.sna)
+## 9. Programa (.bin/.rom/.ccc/.pak/.hex/.sna)
 
 - O **nome do programa carregado** aparece em destaque no topo do bloco.
-- **Abrir** carrega e **executa** um programa (`.bin/.rom/.ccc/.hex/.sna`); o XRoar detecta o formato.
+- **Abrir** carrega e **executa** um programa (`.bin/.rom/.ccc/.pak/.hex/.sna`); o XRoar detecta o formato.
+- **`.pak`** é a ROM de cartucho do **VCC** (idêntica a `.rom/.ccc`) — o app a apresenta ao XRoar como cartucho
+  `$C000` automaticamente (o nome de tela continua `.pak`). Roda direto, como qualquer cartucho.
 - O toggle **"AutoRun"** (ao lado de Abrir): **ligado** = um `.bin/.hex` boota o emulador **com** o arquivo e roda sozinho;
-  **desligado** = só carrega na memória (você roda com `EXEC`). Cartuchos `.ccc/.rom` e snapshots `.sna`
+  **desligado** = só carrega na memória (você roda com `EXEC`). Cartuchos `.ccc/.rom/.pak` e snapshots `.sna`
   **sempre** rodam direto.
 
 ---

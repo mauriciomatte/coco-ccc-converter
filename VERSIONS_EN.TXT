@@ -10,6 +10,53 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.57 — 2026-06-09
+--------------------------------------------------------------------------------
+FujiNet — MAIN FIX: the real board now LISTS the WiFi server's files
+  • Root cause: the FujiNet firmware lists directories with the EXTENDED TNFS commands OPENDIRX (0x17) and
+    READDIRX (0x18), which our server didn't implement → it replied "invalid command" instantly (the board
+    opened the host screen at once, but EMPTY). Our loopback tests used the old commands (OPENDIR/READDIR),
+    which is why they missed the gap. Both implemented in src/main/net/tnfsServer.ts following the reference
+    tnfsd wire format (folders-first sort, wildcard filter, EOF, telldir position, per-entry size/dir flag).
+    Validated by speaking the protocol byte-by-byte like the board (tools/tnfsdirxtest.ts, 23/23).
+
+FujiNet — WiFi server: do NOT send system files (desktop.ini, Thumbs.db…) + configurable filter
+  • The board sometimes auto-selected the Windows desktop.ini instead of the disk. The server now HIDES
+    Windows/macOS/Linux system files (desktop.ini, Thumbs.db, .DS_Store, lost+found, dotfiles…) from the
+    listing AND from access by name (stat/read/write).
+  • CONFIGURABLE: a new "Hide files from FujiNet" button (Folder mode) opens a manager that LISTS the built-in
+    defaults (Windows · macOS · Linux) and lets you ADD more patterns (wildcards * and ?) and create EXCEPTIONS
+    ("never hide", which override the defaults). Persisted across sessions.
+
+FujiNet — "Which IP to use": recommends the ROUTABLE interface (default route), not WiFi blindly
+  • Fixes the real-world case where the WiFi had a static Windows Hotspot IP (192.168.137.x, NO gateway) and
+    the app advertised it — the board could never reach it. The green box now HIGHLIGHTS the IP tagged
+    "network ✓" (the interface with a route out) and dims the rest. (Detected via the OS default route.)
+
+FujiNet — conveniences and UI tweaks
+  • The server's path field is now ONE typable field with history (combobox): paste/type the path or pick a
+    recent one from the dropdown; the folder button opens the system picker. (Hidden while the server runs.)
+  • Access buttons renamed to "Read-only" / "Read-write"; the two left-side function headers ("Access TNFS
+    Servers" and "Open Image by URL") got a lighter green for emphasis.
+  • TNFS client connection is now truly cancelable ("Abort"), with per-operation colors/spinner; FOLDER write
+    (Read-write) lets the CoCo create/overwrite real files (one client at a time).
+  • A truncated OS-9 image is recognized and routed to the OS-9 tab with a warning.
+
+OS-9 — "Test in XRoar" respects the Dragon platform (D11)
+  • Testing an OS-9 disk with the platform set to Dragon now boots XRoar as Dragon 64 with BOOT (it used to
+    always force CoCo 3 + DOS, contradicting the modal).
+
+DSK — RENAME a file (RS-DOS and Dragon DOS)
+  • New rename button (1 file selected): rewrites only name/extension in the directory entry, leaving the data
+    untouched; rejects empty names and collisions; handles the Dragon VDK header. Validated (tools/renamert.ts,
+    13/13: round-trip, neighbors intact, collision and empty name rejected).
+
+Help — FujiNet tab manuals rewritten
+  • fujinet.pt.md / fujinet.en.md are now a complete, element-by-element reference (every button, field,
+    dropdown and modal), including the ESSENTIAL step of allowing UDP port 16384 through the firewall (Public
+    AND Private profiles) for the board to reach the server.
+
+--------------------------------------------------------------------------------
 v1.0.56 — 2026-06-09
 --------------------------------------------------------------------------------
 RENAME — the program is now "CoCo File Image Utility (CoCoFIU)" + new splash image

@@ -1,9 +1,9 @@
 {
-  "name": "coco-ccc-converter",
-  "version": "1.0.56",
-  "description": "TRS-80 Color Computer CAS/WAV/DSK to CCC EPROM Converter",
+  "name": "coco-file-image-utility",
+  "version": "1.0.57",
+  "description": "TRS-80 Color Computer File Image Utility - CoCo File Image Utility - CoCoFIU",
   "main": "./out/main/index.js",
-  "author": "Antigravity CoCo Team",
+  "author": "Mauricio Matte",
   "license": "MIT",
   "scripts": {
     "dev": "electron-vite dev",

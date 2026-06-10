@@ -10,6 +10,55 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.57 — 2026-06-09
+--------------------------------------------------------------------------------
+FujiNet — CORREÇÃO PRINCIPAL: a placa real agora LISTA os arquivos do servidor WiFi
+  • Causa-raiz: o firmware da FujiNet lista diretórios com os comandos TNFS ESTENDIDOS OPENDIRX (0x17) e
+    READDIRX (0x18), que o nosso servidor não implementava → respondia "comando inválido" na hora (a placa
+    abria a tela do host instantaneamente, mas VAZIA). Nossos testes de loopback usavam os comandos antigos
+    (OPENDIR/READDIR) e por isso não pegavam a falha. Ambos implementados em src/main/net/tnfsServer.ts
+    seguindo o formato exato do tnfsd de referência (ordenação pastas-primeiro, filtro por curinga, EOF,
+    posição/telldir, tamanho/flag de pasta por entrada). Validado falando o protocolo "na unha" como a placa
+    (tools/tnfsdirxtest.ts, 23/23).
+
+FujiNet — Servidor WiFi: NÃO enviar arquivos de sistema (desktop.ini, Thumbs.db…) e filtro configurável
+  • A placa às vezes auto-selecionava o desktop.ini do Windows em vez do disco. O servidor agora OCULTA
+    arquivos de sistema do Windows/macOS/Linux (desktop.ini, Thumbs.db, .DS_Store, lost+found, dotfiles…) na
+    listagem E no acesso por nome (stat/read/write).
+  • CONFIGURÁVEL: novo botão "Ocultar arquivos da FujiNet" (modo Pasta) abre um gerenciador que LISTA os
+    padrões fixos (Windows · macOS · Linux) e deixa ADICIONAR mais padrões (curingas * e ?) e criar EXCEÇÕES
+    ("nunca ocultar", que vencem os fixos). Persistido entre sessões.
+
+FujiNet — "Qual IP usar": recomenda a interface ROTEÁVEL (rota default), não a WiFi cega
+  • Correção do caso real em que a WiFi tinha um IP estático de Hotspot do Windows (192.168.137.x, SEM
+    gateway) e o app o anunciava — a placa nunca alcançava. Agora o quadro verde DESTACA o IP com o selo
+    "rede ✓" (a interface com saída para a rede) e esmaece os demais. (Detecção via rota default do SO.)
+
+FujiNet — conveniências e ajustes de interface
+  • Campo de pasta do servidor virou UM ÚNICO campo digitável com histórico (combobox): cole/digite o caminho
+    ou escolha um recente no dropdown; o botão de pasta abre o seletor do sistema. (Some quando o servidor está
+    ligado.)
+  • Botões de acesso renomeados para "Só leitura" / "Ler-escrever"; os dois títulos de função do lado esquerdo
+    ("Acessar Servidores TNFS" e "Abrir Imagem por URL") ganharam um verde mais claro para destaque.
+  • Conexão de cliente TNFS agora é cancelável de verdade ("Interromper"), com cores/spinner por operação; a
+    escrita em PASTA (Ler-escrever) permite ao CoCo criar/sobrescrever arquivos reais (um cliente por vez).
+  • Imagem OS-9 truncada é reconhecida e roteada à aba OS-9 com aviso.
+
+OS-9 — "Testar no XRoar" respeita a plataforma Dragon (D11)
+  • Ao testar um disco OS-9 com a plataforma em Dragon, o XRoar agora sobe como Dragon 64 e boota com BOOT
+    (antes forçava sempre CoCo 3 + DOS, contradizendo o modal).
+
+DSK — RENOMEAR arquivo (RS-DOS e Dragon DOS)
+  • Novo botão de renomear (1 arquivo selecionado): reescreve só nome/extensão na entrada de diretório, sem
+    tocar nos dados; recusa nome vazio e colisão; trata o cabeçalho VDK do Dragon. Validado (tools/renamert.ts,
+    13/13: round-trip, vizinhos intactos, colisão e nome vazio rejeitados).
+
+Ajuda — manuais da aba FujiNet reescritos
+  • fujinet.pt.md / fujinet.en.md viraram uma referência completa, elemento por elemento (cada botão, campo,
+    dropdown e modal), incluindo o passo ESSENCIAL de liberar a porta UDP 16384 no firewall (perfis Pública E
+    Privada) para a placa acessar o servidor.
+
+--------------------------------------------------------------------------------
 v1.0.56 — 2026-06-09
 --------------------------------------------------------------------------------
 RENOMEAÇÃO — o programa agora é "CoCo File Image Utility (CoCoFIU)" + nova imagem de splash

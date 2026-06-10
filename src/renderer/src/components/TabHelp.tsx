@@ -37,7 +37,7 @@ const TITLES: Record<HelpTopic, { pt: string; en: string }> = {
   gw: { pt: 'Aba GW (Greaseweazle)', en: 'GW Tab (Greaseweazle)' },
   basic: { pt: 'Aba BASIC', en: 'BASIC Tab' },
   xroar: { pt: 'Aba XRoar (Emulador)', en: 'XRoar Tab (Emulator)' },
-  fujinet: { pt: 'Aba FujiNet / Online', en: 'FujiNet / Online Tab' },
+  fujinet: { pt: 'Aba FujiNet / Acesso Direto Online', en: 'FujiNet / Direct Online Access Tab' },
 };
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

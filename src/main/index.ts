@@ -11,31 +11,36 @@ import { isDmk, dmkToRaw, normalizeDiskImage } from './converter/dmk';
 import { rawToSdf } from './converter/sdf';
 import { downloadUrl } from './net/download';
 import { tnfsList, tnfsReadFile, parseTnfsStatusHtml } from './net/tnfs';
-import { startTnfsServer, folderProvider, containerProvider, localIPv4, TnfsServerHandle, TnfsProvider } from './net/tnfsServer';
+import { startTnfsServer, folderProvider, containerProvider, localIPv4, localIPv4sRanked, DEFAULT_HIDDEN_NAMES, TnfsServerHandle, TnfsProvider } from './net/tnfsServer';
 
 let tnfsSrv: TnfsServerHandle | null = null;
-function buildProvider(mode: string, p: string): TnfsProvider {
-  return mode === 'container' ? containerProvider(p) : folderProvider(p);
+function buildProvider(mode: string, p: string, writable?: boolean, hideExtra?: string[], hideAllow?: string[]): TnfsProvider {
+  // gravação só faz sentido (e só é segura) no modo PASTA; container fica sempre só-leitura.
+  // hideExtra/hideAllow só valem no modo PASTA (container já filtra por extensão de imagem).
+  return mode === 'container' ? containerProvider(p) : folderProvider(p, { writable: !!writable, hideExtra, hideAllow });
 }
 // FujiNet — SERVIDOR WiFi (TNFS) servindo uma PASTA ou um CONTAINER (discos internos como .dsk).
-ipcMain.handle('tnfs-server-start', async (_, opts: { mode: string; path: string }) => {
+ipcMain.handle('tnfs-server-start', async (_, opts: { mode: string; path: string; writable?: boolean; hideExtra?: string[]; hideAllow?: string[] }) => {
   try {
     if (tnfsSrv) { tnfsSrv.stop(); tnfsSrv = null; }
-    const provider = buildProvider(opts.mode, opts.path);
+    const writable = opts.mode !== 'container' && !!opts.writable;
+    const provider = buildProvider(opts.mode, opts.path, writable, opts.hideExtra, opts.hideAllow);
     tnfsSrv = await startTnfsServer(provider, (pt, en, type) => mainWindow?.webContents.send('net-log', { pt, en, type }));
-    return { success: true, ip: tnfsSrv.ip, port: tnfsSrv.port, describe: tnfsSrv.describe };
+    return { success: true, ip: tnfsSrv.ip, port: tnfsSrv.port, describe: tnfsSrv.describe, writable, ips: await localIPv4sRanked() };
   } catch (e: any) { return { success: false, error: e?.message || 'Falha ao iniciar o servidor.' }; }
 });
 ipcMain.handle('tnfs-server-stop', async () => {
   try { tnfsSrv?.stop(); tnfsSrv = null; return { success: true }; }
   catch (e: any) { return { success: false, error: e?.message }; }
 });
-ipcMain.handle('tnfs-server-status', async () => ({ running: !!tnfsSrv, ip: tnfsSrv?.ip || localIPv4(), port: tnfsSrv?.port || 16384, describe: tnfsSrv?.describe || '' }));
+ipcMain.handle('tnfs-server-status', async () => ({ running: !!tnfsSrv, ip: tnfsSrv?.ip || await localIPv4(), port: tnfsSrv?.port || 16384, describe: tnfsSrv?.describe || '', ips: await localIPv4sRanked() }));
+// Padrões hardcoded de arquivos ocultos (p/ a UI exibir) — fonte única em tnfsServer.ts.
+ipcMain.handle('tnfs-hidden-defaults', async () => ({ names: DEFAULT_HIDDEN_NAMES }));
 // Pré-visualiza o que SERÁ servido (lista a raiz) sem iniciar o servidor.
-ipcMain.handle('tnfs-server-preview', async (_, opts: { mode: string; path: string }) => {
+ipcMain.handle('tnfs-server-preview', async (_, opts: { mode: string; path: string; hideExtra?: string[]; hideAllow?: string[] }) => {
   let prov: TnfsProvider | null = null;
   try {
-    prov = buildProvider(opts.mode, opts.path);
+    prov = buildProvider(opts.mode, opts.path, false, opts.hideExtra, opts.hideAllow);
     const entries = prov.list('/');
     return { success: true, describe: prov.describe, entries };
   } catch (e: any) { return { success: false, error: e?.message }; }
@@ -89,11 +94,14 @@ ipcMain.handle('tnfs-community', async () => {
 });
 
 // FujiNet / TNFS (M1b) — navegar um hub e baixar imagens.
+let tnfsListAbort: (() => void) | null = null;
+ipcMain.handle('tnfs-list-cancel', () => { try { tnfsListAbort?.(); } catch { /* */ } return { success: true }; });
 ipcMain.handle('tnfs-list', async (_, host: string, path: string) => {
   try {
-    const entries = await tnfsList(String(host || '').trim(), String(path || '/'));
+    const entries = await tnfsList(String(host || '').trim(), String(path || '/'), { onAbort: (cancel) => { tnfsListAbort = cancel; } });
     return { success: true, entries };
   } catch (e: any) { return { success: false, error: e?.message || 'Falha no TNFS.' }; }
+  finally { tnfsListAbort = null; }
 });
 
 let tnfsReadCancelFlag = false;
@@ -692,7 +700,7 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
       ]
     : kind === 'program'
     ? [
-        { name: 'Programa (.bin/.rom/.ccc/.hex/.sna)', extensions: ['bin', 'rom', 'ccc', 'hex', 'sna'] },
+        { name: 'Programa (.bin/.rom/.ccc/.pak/.hex/.sna)', extensions: ['bin', 'rom', 'ccc', 'pak', 'hex', 'sna'] },
         { name: 'All Files', extensions: ['*'] },
       ]
     : [
