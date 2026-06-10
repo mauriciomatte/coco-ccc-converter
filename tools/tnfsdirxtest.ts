@@ -81,6 +81,21 @@ const readCstr = (b: Buffer, o: number) => { let e = o; while (e < b.length && b
   const od2 = await tx(sock, srv.port, hdr(conn, 4, 0x17, odxBody2));
   ok(od2.readUInt16LE(6) === 1, `filtro *.txt → 1 entrada (got ${od2.readUInt16LE(6)})`);
 
+  // ── TELLDIR (0x15) + SEEKDIR (0x16): a FujiNet guarda a POSIÇÃO e faz SEEKDIR p/ MONTAR o arquivo escolhido.
+  // Sem isso, a placa caía na posição 0 (sempre o 1º arquivo). Ordem ordenada: [SUBDIR, ALPHA.DSK, beta.txt, gamma.bin].
+  const od3 = await tx(sock, srv.port, hdr(conn, 5, 0x10, Buffer.from('/\0', 'latin1'))); // OPENDIR
+  ok(od3[4] === 0x00, 'OPENDIR status 0');
+  const dh3 = od3[5];
+  const td0 = await tx(sock, srv.port, hdr(conn, 6, 0x15, Buffer.from([dh3])));            // TELLDIR
+  ok(td0[4] === 0x00 && td0.readUInt32LE(5) === 0, 'TELLDIR inicial = 0');
+  const seekTo = Buffer.alloc(5); seekTo[0] = dh3; seekTo.writeUInt32LE(2, 1);
+  const sk = await tx(sock, srv.port, hdr(conn, 7, 0x16, seekTo));                          // SEEKDIR p/ 2
+  ok(sk[4] === 0x00, 'SEEKDIR status 0');
+  const td1 = await tx(sock, srv.port, hdr(conn, 8, 0x15, Buffer.from([dh3])));            // TELLDIR
+  ok(td1.readUInt32LE(5) === 2, 'TELLDIR após seek = 2');
+  const rdAfter = await tx(sock, srv.port, hdr(conn, 9, 0x11, Buffer.from([dh3])));         // READDIR
+  ok(rdAfter[4] === 0x00 && readCstr(rdAfter, 5).s === 'beta.txt', `READDIR após SEEKDIR(2) = beta.txt (got ${readCstr(rdAfter, 5).s})`);
+
   sock.close(); srv.stop();
 
   // ── Filtro configurável (hideExtra / hideAllow) ──

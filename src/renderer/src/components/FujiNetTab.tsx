@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw, Copy, Check, Lock, Pencil, EyeOff } from 'lucide-react';
+import { Globe, Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw, Copy, Check, Lock, Pencil, EyeOff, ChevronDown } from 'lucide-react';
 import { HelpButton, TabHelpModal } from './TabHelp';
 
 interface FavServer { host: string; label?: string; path?: string }
@@ -138,6 +138,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   const [hideModal, setHideModal] = useState(false);
   const [newHide, setNewHide] = useState('');   // novo padrão "também ocultar"
   const [newAllow, setNewAllow] = useState(''); // nova exceção "nunca ocultar"
+  const [recentOpen, setRecentOpen] = useState(false); // dropdown próprio de pastas recentes
   const [sharedFiles, setSharedFiles] = useState<null | { name: string; isDir: boolean; size: number }[]>(null);
   const [serverBusy, setServerBusy] = useState(false);
   const [copiedIp, setCopiedIp] = useState(false);
@@ -399,22 +400,38 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
               <button onClick={() => { if (!serverRunning) { setServerMode('container'); setServerPath(''); setSharedFiles(null); } }} disabled={serverRunning}
                 className="dsk-tool flex-1 justify-center" style={{ color: serverMode === 'container' ? 'var(--primary)' : undefined }}><Server size={13} /> {t('Container', 'Container')}</button>
             </div>
-            {/* Campo ÚNICO de caminho = combobox digitável (campo + dropdown de recentes via <datalist>).
-                Escolher um recente troca o modo se preciso; digitar livre faz a prévia no blur/Enter. O botão
-                de pasta abre o seletor do sistema. (Some quando o servidor está ligado — nada a trocar.) */}
-            <div className="flex gap-2">
-              <input list="fujinet-recent-paths" value={serverPath} disabled={serverRunning}
-                onChange={e => { const v = e.target.value; const rec = recentServed.find(r => r.path === v);
-                  if (rec) { if (rec.mode !== serverMode) setServerMode(rec.mode); setServerPath(v); setSharedFiles(null); previewServer(v, rec.mode); }
-                  else { setServerPath(v); setSharedFiles(null); } }}
+            {/* Campo ÚNICO de caminho = campo digitável + dropdown PRÓPRIO de recentes (a setinha ▾). Digitar
+                livre faz a prévia no blur/Enter; o botão de pasta abre o seletor do sistema. (Desabilita com o
+                servidor ligado.) Dropdown próprio (não <datalist>, que filtra pelo texto já digitado e some.) */}
+            <div className="flex gap-2" style={{ position: 'relative' }}>
+              <input value={serverPath} disabled={serverRunning}
+                onChange={e => { setServerPath(e.target.value); setSharedFiles(null); }}
                 onBlur={() => { if (serverPath) previewServer(serverPath, serverMode); }}
                 onKeyDown={e => { if (e.key === 'Enter' && serverPath) { e.currentTarget.blur(); previewServer(serverPath, serverMode); } }}
                 placeholder={serverMode === 'container' ? t('escolha ou cole um .img/.vhd/.dsk', 'pick or paste a .img/.vhd/.dsk') : t('escolha ou cole uma pasta', 'pick or paste a folder')}
                 className="input-text text-xs flex-1" style={{ padding: '6px 10px', minWidth: 0 }} title={serverPath} />
-              <datalist id="fujinet-recent-paths">
-                {recentServed.map(r => <option key={r.mode + r.path} value={r.path}>{r.mode === 'folder' ? t('Pasta', 'Folder') : 'Container'}</option>)}
-              </datalist>
+              {recentServed.length > 0 && (
+                <button onClick={() => setRecentOpen(o => !o)} disabled={serverRunning} className="dsk-tool flex items-center" style={{ padding: '6px 6px' }}
+                  title={t('Pastas/containers recentes', 'Recent folders/containers')}><ChevronDown size={13} /></button>
+              )}
               <button onClick={pickServerPath} disabled={serverRunning} className="dsk-tool flex items-center gap-1" title={t('Procurar no sistema', 'Browse the system')}><FolderOpen size={13} /></button>
+              {recentOpen && recentServed.length > 0 && (
+                <>
+                  {/* backdrop p/ fechar ao clicar fora */}
+                  <div onClick={() => setRecentOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                  <div className="glass-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: 4, zIndex: 50, maxHeight: 220, overflowY: 'auto', padding: 4 }}>
+                    <div className="text-[9px] uppercase tracking-wider px-2 py-1" style={{ color: 'var(--text-muted)' }}>{t('Recentes', 'Recent')}</div>
+                    {recentServed.map(r => (
+                      <button key={r.mode + r.path}
+                        onClick={() => { if (r.mode !== serverMode) setServerMode(r.mode); setServerPath(r.path); setSharedFiles(null); previewServer(r.path, r.mode); pushRecent(r.mode, r.path); setRecentOpen(false); }}
+                        className="dsk-tool flex items-center gap-2 justify-start text-left" style={{ padding: '5px 8px', width: '100%' }} title={r.path}>
+                        {r.mode === 'folder' ? <FolderOpen size={12} className="flex-shrink-0" style={{ color: 'var(--primary)' }} /> : <Server size={12} className="flex-shrink-0" style={{ color: '#c4b5fd' }} />}
+                        <span className="truncate flex-1 normal-case">{r.path}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
             {/* acesso: somente-leitura ou leitura-escrita — gravação SÓ no modo Pasta (container é sempre RO) */}
             <div className="flex gap-1.5">

@@ -10,6 +10,27 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.58 — 2026-06-09
+--------------------------------------------------------------------------------
+FujiNet — FIX: the board always mounted the FIRST file in the folder (not the chosen one)
+  • Root cause: when you pick a file in its browser, the FujiNet STORES that file's POSITION in the directory
+    and, at mount time, does a SEEKDIR to that position. Our server didn't implement TELLDIR (0x15)/SEEKDIR
+    (0x16) → the seek failed and the board fell back to position 0 (the first file). That's why, with
+    desktop.ini + tutstomb.dsk it mounted desktop.ini; and with 01.dsk + 02.dsk, choosing 02 mounted 01.
+    Normal TNFS servers (tnfsd) work because they implement these commands.
+  • Implemented TELLDIR (0x15) and SEEKDIR (0x16) in src/main/net/tnfsServer.ts. Also, OPENDIR (0x10) now SORTS
+    like OPENDIRX (folders first, alphabetical) so the POSITION is the same whichever command the board uses to
+    browse and to mount. Validated tools/tnfsdirxtest.ts (28/28: OPENDIR→SEEKDIR(2)→READDIR returns the right
+    file).
+  • DIAGNOSTICS: the server now logs every OPENDIR/OPENDIRX, SEEKDIR (position → name) and read OPEN to the
+    console (shows EXACTLY which file the board opened/mounted).
+
+FujiNet — WiFi server recent folders: own (visible) dropdown instead of the native one
+  • The path field now has a chevron (▾) that opens a clickable LIST of recent paths. (The previous native
+    dropdown filtered options by the text already in the field and ended up showing nothing — which made it
+    look like recents weren't being saved.)
+
+--------------------------------------------------------------------------------
 v1.0.57 — 2026-06-09
 --------------------------------------------------------------------------------
 FujiNet — MAIN FIX: the real board now LISTS the WiFi server's files

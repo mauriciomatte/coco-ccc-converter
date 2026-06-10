@@ -296,7 +296,10 @@ export function startTnfsServer(provider: TnfsProvider, onLog?: (pt: string, en:
             const { s: p } = readCstr(payload, 0);
             const st = provider.stat(p);
             if (!st || !st.isDir) { err(rinfo, connId, seq, cmd, ENOENT); break; }
-            const h = sess.nextH++ & 0xff; sess.dirs.set(h, { items: provider.list(p), idx: 0 });
+            // ORDENA igual ao OPENDIRX → a POSIÇÃO no diretório (TELLDIR/SEEKDIR) é a MESMA seja qual
+            // comando a placa use p/ navegar e p/ montar (senão a FujiNet seleciona o arquivo errado).
+            const h = sess.nextH++ & 0xff; sess.dirs.set(h, { items: sortEntries(provider.list(p)), idx: 0 });
+            onLog?.(`Servidor TNFS: OPENDIR "${p}" (handle ${h}).`, `TNFS server: OPENDIR "${p}" (handle ${h}).`, 'info');
             reply(rinfo, connId, seq, cmd, Buffer.from([0x00, h])); break;
           }
           case 0x11: { // READDIR
@@ -307,6 +310,21 @@ export function startTnfsServer(provider: TnfsProvider, onLog?: (pt: string, en:
             reply(rinfo, connId, seq, cmd, Buffer.concat([Buffer.from([0x00]), cstr(name)])); break;
           }
           case 0x12: { sess.dirs.delete(payload[0]); reply(rinfo, connId, seq, cmd, Buffer.from([0x00])); break; } // CLOSEDIR
+          case 0x15: { // TELLDIR — posição atual do diretório (a FujiNet GUARDA isto p/ o arquivo escolhido)
+            const d = sess.dirs.get(payload[0]);
+            if (!d) { err(rinfo, connId, seq, cmd, EBADF); break; }
+            const b = Buffer.alloc(5); b[0] = 0x00; b.writeUInt32LE(d.idx >>> 0, 1); // status + posição (u32 LE)
+            reply(rinfo, connId, seq, cmd, b); break;
+          }
+          case 0x16: { // SEEKDIR — posiciona o diretório (a FujiNet faz isto p/ MONTAR o arquivo escolhido)
+            const d = sess.dirs.get(payload[0]);
+            if (!d) { err(rinfo, connId, seq, cmd, EBADF); break; }
+            const pos = payload.readUInt32LE(1);
+            d.idx = Math.max(0, Math.min(pos, d.items.length));   // clampa ao tamanho do diretório
+            onLog?.(`Servidor TNFS: SEEKDIR p/ posição ${pos} → "${d.items[d.idx]?.name ?? '(fim)'}".`,
+                    `TNFS server: SEEKDIR to position ${pos} → "${d.items[d.idx]?.name ?? '(end)'}".`, 'info');
+            reply(rinfo, connId, seq, cmd, Buffer.from([0x00])); break;
+          }
           case 0x17: { // OPENDIRX — abre o diretório com opções (diropts, sortopts, maxresults, padrão, caminho)
             const maxResults = payload.readUInt16LE(2);            // bytes 2-3 (LE); 0 = ilimitado
             const r1 = readCstr(payload, 4); const pattern = r1.s; // padrão wildcard ('' ou '*' = tudo)
@@ -317,6 +335,7 @@ export function startTnfsServer(provider: TnfsProvider, onLog?: (pt: string, en:
             if (pattern && pattern !== '*') { const re = globToRe(pattern); items = items.filter(e => re.test(e.name)); }
             if (maxResults > 0 && items.length > maxResults) items = items.slice(0, maxResults);
             const h = sess.nextH++ & 0xff; sess.dirs.set(h, { items, idx: 0 });
+            onLog?.(`Servidor TNFS: OPENDIRX "${p}" → ${items.length} itens (handle ${h}).`, `TNFS server: OPENDIRX "${p}" → ${items.length} items (handle ${h}).`, 'info');
             // corpo: status(1) + handle(1) + nº de entradas (2, LE)
             const body = Buffer.alloc(4); body[0] = 0x00; body[1] = h; body.writeUInt16LE(items.length & 0xffff, 2);
             reply(rinfo, connId, seq, cmd, body); break;
@@ -382,6 +401,8 @@ export function startTnfsServer(provider: TnfsProvider, onLog?: (pt: string, en:
             const data = provider.read(p);
             if (!data) { err(rinfo, connId, seq, cmd, ENOENT); break; }
             const h = sess.nextH++ & 0xff; sess.files.set(h, { data, pos: 0 });
+            // LOG-CHAVE p/ diagnóstico: mostra EXATAMENTE qual arquivo a placa abriu (o que ela vai montar).
+            onLog?.(`Servidor TNFS: ABRIR (ler) "${p}" — ${data.length} B.`, `TNFS server: OPEN (read) "${p}" — ${data.length} B.`, 'success');
             reply(rinfo, connId, seq, cmd, Buffer.from([0x00, h])); break;
           }
           case 0x22: { // WRITE: fd(1) size(2 LE) data… → grava no buffer em memória (flush no CLOSE)

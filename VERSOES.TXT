@@ -10,6 +10,27 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.58 — 2026-06-09
+--------------------------------------------------------------------------------
+FujiNet — CORREÇÃO: a placa montava SEMPRE o 1º arquivo da pasta (não o escolhido)
+  • Causa-raiz: a FujiNet, ao escolher um arquivo no navegador, GUARDA a POSIÇÃO dele no diretório e, na hora
+    de montar, faz SEEKDIR para essa posição. O nosso servidor não implementava TELLDIR (0x15)/SEEKDIR (0x16)
+    → o seek falhava e a placa caía na posição 0 (o 1º arquivo). Por isso, com desktop.ini + tutstomb.dsk,
+    montava o desktop.ini; e com 01.dsk + 02.dsk, escolher o 02 montava o 01. Em servidores TNFS normais
+    (tnfsd) isso funciona porque eles implementam esses comandos.
+  • Implementados TELLDIR (0x15) e SEEKDIR (0x16) em src/main/net/tnfsServer.ts. Além disso, o OPENDIR (0x10)
+    agora ORDENA igual ao OPENDIRX (pastas primeiro, alfabético) para a POSIÇÃO ser a mesma seja qual comando
+    a placa use para navegar e para montar. Validado tools/tnfsdirxtest.ts (28/28: OPENDIR→SEEKDIR(2)→READDIR
+    devolve o arquivo certo).
+  • DIAGNÓSTICO: o servidor agora registra no console cada OPENDIR/OPENDIRX, SEEKDIR (posição → nome) e o
+    OPEN de leitura (mostra EXATAMENTE qual arquivo a placa abriu/montou).
+
+FujiNet — pastas recentes do servidor WiFi: dropdown próprio (visível) no lugar do nativo
+  • O campo de pasta agora tem uma setinha (▾) que abre uma LISTA clicável dos caminhos recentes. (O dropdown
+    nativo anterior filtrava as opções pelo texto já no campo e acabava mostrando nada — por isso parecia que
+    não salvava.)
+
+--------------------------------------------------------------------------------
 v1.0.57 — 2026-06-09
 --------------------------------------------------------------------------------
 FujiNet — CORREÇÃO PRINCIPAL: a placa real agora LISTA os arquivos do servidor WiFi
