@@ -6,63 +6,133 @@ deixa você **editar** com cara de tela do CoCo, e então **roda no XRoar**, **g
 como `.bas`/`.cas`. Ao terminar este guia você saberá trazer um programa de qualquer origem, editá-lo e
 devolvê-lo rodando.
 
+A tela tem três faixas fixas: a **toolbar** (em cima), a **área de edição** (no meio, que cresce) e o
+**rodapé** de opções (embaixo). Quando você abre **Procurar/Substituir**, uma **barra** extra aparece entre a
+toolbar e a área de edição. O botão **?** (na toolbar) reabre esta ajuda.
+
 ---
 
 ## 1. Como um programa chega aqui
 
-- **Abrir arquivo .BAS (texto)** (toolbar) — abre um `.bas/.txt` em **ASCII** do seu PC.
+- **Abrir arquivo .BAS (texto)** (ícone de pasta na toolbar) — abre um `.bas/.txt` em **ASCII** do seu PC.
 - **Da aba K7** — botão **"Abrir no BASIC"**: manda o BASIC lido da fita (já detokenizado).
 - **Da aba DSK** — botão **"Editar .BAS"**: manda um `.BAS` do disco (precisa estar em **ASCII**; veja a
-  seção 6).
+  seção 7).
 
 Se já houver um programa no editor, o app pergunta antes de substituir. Ao abrir de um disco, aparece o selo
-**"Editando {arquivo}"** e um botão **Salvar** que regrava **no próprio disco de origem** (seção 5).
+**"Editando"** (com o nome do arquivo na dica) e um botão **Salvar** que regrava **no próprio disco de
+origem** (seção 6).
+
+> Se o editor estiver **vazio**, todos os botões que precisam de conteúdo (Salvar, .CAS, Rodar, Novo DSK +
+> Salvar, Salvar in-place) ficam **desabilitados** (esmaecidos).
 
 ---
 
-## 2. A área de edição e as três "telas"
+## 2. A toolbar — botão por botão
 
-Você edita texto livre (sem numeração automática nem realce de sintaxe). O seletor **Tela** (rodapé) muda só
-a **aparência**, para você ver como ficará no CoCo:
+A toolbar (da esquerda para a direita) reúne os comandos de arquivo, edição e execução. Passe o mouse sobre
+qualquer ícone para ver a dica.
+
+| Botão | Ícone | O que faz |
+|-------|-------|-----------|
+| **Abrir arquivo .BAS** | pasta | Abre um `.bas/.txt` (ASCII) do PC para o editor. |
+| **Salvar como .BAS (texto)** | disquete | Grava o programa em **ASCII** num `.bas`/`.txt` do PC. |
+| **Salvar como fita .CAS** | ondas de áudio | Embrulha o programa num `.CAS` carregável por **CLOAD**. |
+| **Recortar** | tesoura | Recorta a seleção (área de transferência do sistema). |
+| **Copiar** | duas folhas | Copia a seleção. |
+| **Colar** | prancheta | Cola na posição do cursor (maiusculizado se "Maiúsculas auto" ligada). |
+| **Procurar** | lupa | Abre a barra de busca. |
+| **Procurar e substituir** | setas | Abre a barra já em modo substituir. |
+| **Inserir ↑** | seta-pra-cima | Insere `^` (exponenciação) no cursor. Atalho: **Alt+↑**. |
+| **Rodar no XRoar** | play | Digita `NEW` + programa no emulador (no prompt `OK`). |
+| **Rodar com reset** | seta circular | Reinicia o emulador (boot limpo) e digita o programa. |
+| **?** | interrogação | Abre esta ajuda. |
+
+Ainda na toolbar, **à direita**, ficam os controles de gravação em disco:
+
+- **Selo "Editando"** (só quando o programa veio de um disco) — lembra a origem.
+- **Salvar** (só quando há origem) — regrava **in-place** no disco de origem (seção 6).
+- **Painel** (A/B) — escolhe o disco de destino do "Novo DSK + Salvar".
+- **Campo de nome** (`PRG-NOME`) — nome do arquivo `.BAS`. Aceita **só A-Z e 0-9**, é **maiusculizado** e
+  **cortado em 8 caracteres** enquanto você digita (espaços/símbolos são descartados). Vazio vira `PRGNOME`.
+- **Novo DSK + Salvar → A/B** — cria/usa o disco do painel e grava o programa como `.BAS` ASCII.
+
+---
+
+## 3. A área de edição e as três "telas"
+
+Você edita texto livre (sem numeração automática nem realce de sintaxe). Quando vazia, a área mostra um
+**exemplo-fantasma** (`10 CLS` / `20 PRINT "HELLO WORLD"` / `30 GOTO 20`) só como placeholder. O seletor
+**Tela** (rodapé) muda só a **aparência**, para você ver como ficará no CoCo:
+
 - **Normal** — texto monoespaçado comum; o seletor **Cores** escolhe o esquema (verde/preto, laranja/preto,
-  etc.).
-- **VDG** — imita a tela do CoCo: maiúsculas em preto sobre verde; **minúsculas em vídeo inverso** (o VDG não
-  tem letras minúsculas de verdade).
-- **VDG 6847 (autêntica)** — desenha os **glifos pixelados reais** do chip MC6847, com a opção **Escala**
-  (Pequena/Média/Grande) e **32 colunas** (a largura real da tela).
+  preto/verde, preto/laranja, azul-marinho/branco, preto/branco).
+- **VDG** — imita a tela do CoCo com a fonte do sistema: maiúsculas em **preto sobre verde**; **minúsculas em
+  vídeo inverso** (verde-claro sobre verde-escuro — o VDG não tem letras minúsculas de verdade).
+- **VDG 6847 (autêntica)** — desenha os **glifos pixelados reais** do chip MC6847 num canvas, com as opções
+  **Escala** (Pequena/Média/Grande) e **32 colunas**.
 
-A opção **Maiúsculas auto** (ligada por padrão) força MAIÚSCULAS enquanto você digita (Color BASIC clássico);
-desligue para permitir minúsculas (CoCo 3 / Disk BASIC aceitam). **Negrito** engrossa a fonte (exceto na tela
-6847, que é bitmap fixo).
+**Os três modos são totalmente EDITÁVEIS** — o cursor, a seleção e a rolagem funcionam igual em todos.
 
-> **Seta-pra-cima ↑ (= `^`, exponenciação):** clique no botão **↑** ou tecle **Alt+↑** para inserir. Nas telas
-> VDG o `^` aparece como ↑, como no CoCo real.
+> **32 colunas** (só nos modos VDG): em vez de não-quebrar com rolagem horizontal, a tela quebra na largura
+> real do CoCo (32 colunas) e vira um **quadro 32×16 centralizado** num "bezel" escuro, parecendo um monitor.
+> Desligado, a linha não quebra e rola na horizontal.
+
+A opção **Maiúsculas auto** (ligada por padrão) força MAIÚSCULAS enquanto você digita (Color BASIC clássico),
+maiusculizando **só o trecho recém-digitado/colado** e preservando o que já existia; desligue para permitir
+minúsculas (CoCo 3 / Disk BASIC aceitam). **Negrito** engrossa a fonte — **exceto na tela VDG 6847**, que é
+bitmap fixo do MC6847 e por isso desabilita o Negrito.
+
+> **Seta-pra-cima ↑ (= `^`, exponenciação):** clique no botão **↑** da toolbar ou tecle **Alt+↑** para
+> inserir (a tecla ↑ sozinha serve para navegar). Nas telas VDG o `^` aparece como ↑, como no CoCo real.
 
 ---
 
-## 3. Editar texto: recortar/copiar/colar e procurar
+## 4. Editar texto: recortar/copiar/colar e procurar
 
 - **Recortar / Copiar / Colar** na toolbar (texto colado também é maiusculizado se "Maiúsculas auto" estiver
-  ligada).
-- **Procurar** e **Procurar e substituir** abrem uma barra: digite o termo (a busca é maiúscula/insensível a
-  caixa), use **Próximo** (com volta ao início), e **Substituir / Todos**. (Sem regex; "Todos" coloca o
-  resultado todo em maiúsculas.)
+  ligada). A inserção respeita a **posição do cursor** e a recoloca corretamente depois.
+- **Procurar** e **Procurar e substituir** abrem uma **barra** sob a toolbar:
+  - **Campo "Procurar…"** — digite o termo (a busca é **insensível à caixa**; tudo é tratado em maiúsculas).
+  - **Próximo** — seleciona a próxima ocorrência a partir do cursor, **voltando ao início** ao chegar no fim.
+  - **Substituir…** (quando só procurando) — expande a barra para o modo substituir.
+  - **Campo "Substituir por…"**, **Substituir** (troca a ocorrência atual e pula para a próxima) e **Todos**
+    (substitui tudo de uma vez).
+  - **X** (fechar) — esconde a barra.
+
+| Atalho | Onde | Ação |
+|--------|------|------|
+| **Alt+↑** | área de edição | Insere `^` (seta-pra-cima/exponenciação). |
+| **Enter** | campo Procurar | Vai para a próxima ocorrência. |
+| **Enter** | campo Substituir | Substitui a ocorrência atual e procura a próxima. |
+| **Esc** | campos de busca | Fecha a barra de Procurar/Substituir. |
+
+> **Sem regex.** "Substituir/Todos" trabalham em **maiúsculas** e devolvem o resultado todo maiusculizado.
 
 ---
 
-## 4. Rodar no XRoar
+## 5. Rodar no XRoar
 
 - **Rodar no XRoar** — digita `NEW` + o seu programa no emulador (você precisa estar no prompt `OK`).
-- **Rodar com reset** — reinicia o emulador (boot limpo, sem `NEW` — o reset já limpa a RAM) e então digita o
-  programa.
+- **Rodar com reset** — reinicia o emulador (boot limpo, **sem `NEW`** — o reset já limpa a RAM) e então
+  digita o programa.
 
-As opções de rodapé controlam a injeção: **NEW antes de injetar**, **RUN ao final** (roda sozinho) e **ENTER
-ao final** (garante que a última linha entre). **Vel.Export.Código** define a rapidez com que as teclas são
-digitadas no XRoar (Rápido 12 ms / Padrão 25 ms).
+As opções de rodapé controlam o que é injetado:
+
+- **NEW antes de injetar** — limpa a memória antes do programa. **Só vale no "Rodar no XRoar"**; em "Rodar com
+  reset" o hard-reset já limpa a RAM e o `NEW` é ignorado.
+- **RUN ao final** — acrescenta `RUN` no fim, fazendo o programa rodar sozinho.
+- **ENTER ao final** — dá um ENTER no fim quando a última linha é código sem quebra final, garantindo que ela
+  seja inserida no emulador. Dispensável se "RUN ao final" estiver ligado (o RUN já gera o ENTER).
+- **Vel.Export.Código** — rapidez com que as teclas são digitadas no XRoar: **Rápido (12 ms/tecla)** ou
+  **Padrão (25 ms/tecla)**, mais seguro. Em máquinas lentas, "Rápido" pode perder algum caractere.
+
+> O XRoar converte `\n` em `\r` (o ENTER do CoCo) automaticamente. Em máquinas **Dragon**, o app ainda manda
+> um espaço inicial para dispensar o prompt "pressione uma tecla" do boot.
 
 ---
 
-## 5. Salvar e exportar
+## 6. Salvar e exportar
 
 - **Salvar como arquivo .BAS (texto)** — grava o programa em **ASCII** (como `SAVE"…",A` no CoCo), em `.bas`
   ou `.txt`.
@@ -79,7 +149,7 @@ digitadas no XRoar (Rápido 12 ms / Padrão 25 ms).
 
 ---
 
-## 6. Sobre detokenizar (e o limite ASCII)
+## 7. Sobre detokenizar (e o limite ASCII)
 
 O app entende o **BASIC tokenizado** (a imagem de memória que o disco/fita guarda) e o converte em texto:
 reconhece os cabeçalhos do CoCo e do Dragon DOS, e as tabelas de comandos/funções dos dois dialetos
@@ -94,7 +164,16 @@ silêncio) — se você vir isso, vale reportar.
 
 ---
 
-## 7. Fluxos práticos
+## 8. O que é lembrado entre sessões
+
+Estas preferências ficam guardadas (localStorage) e voltam ao reabrir o app: **Maiúsculas auto**, **Tela**
+(Normal/VDG/VDG 6847), **32 colunas**, **Escala** da fonte 6847, **ENTER ao final** e a **Vel.Export.Código**
+(compartilhada com a aba XRoar). O **contador** no canto direito do rodapé mostra o total de **linhas** e
+**caracteres** do programa em tempo real.
+
+---
+
+## 9. Fluxos práticos
 - **Editar um programa de fita:** K7 → "Abrir no BASIC" → editar → **Rodar com reset** para testar → **Salvar
   como .CAS** ou **Novo DSK + Salvar**.
 - **Editar um .BAS de disco:** DSK → selecionar o `.BAS` → "Editar .BAS" → editar → **Salvar** (in-place).

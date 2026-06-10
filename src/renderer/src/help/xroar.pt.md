@@ -12,31 +12,60 @@ emulador) e o **painel DIREITO** (estado, máquina, vídeo, filtro, imagem, cont
 
 ## 1. Pronto? O indicador de estado
 
-No topo do painel direito, **● pronto** (em cor primária) significa que o emulador subiu e aceita comandos.
-Enquanto não estiver pronto, a maioria dos controles fica desabilitada. **Clique na tela** para capturar o
-teclado e liberar o áudio (o navegador só toca som após um clique).
+No topo do painel direito, à direita do título **XRoar**, fica o indicador de estado:
+- **● pronto** (em cor primária) — o emulador subiu e aceita comandos. O texto ao lado da bolinha pode mudar
+  para mensagens de estado **enviadas pelo próprio emulador** (ex.: andamento de carga) — não é só "pronto".
+- **iniciando…** (cinza) — o emulador ainda está bootando (ou rebootando após trocar máquina/vídeo/filtro).
+
+Enquanto não estiver pronto, **a maioria dos controles fica desabilitada** (drives, fita, programa,
+joysticks, imagem, controles). **Clique na tela** para capturar o teclado e liberar o áudio (o navegador só
+toca som após um clique).
+
+> **Quando o emulador monta:** o iframe do XRoar só é criado na **primeira vez** que você abre esta aba (e a
+> tela 4:3 já tem tamanho). Antes disso aparece **"iniciando emulador…"** no centro. Depois de montado, ele
+> **continua rodando** mesmo se você trocar de aba — voltar não reinicia nada.
 
 ---
 
 ## 2. Máquina
 
-Escolha a máquina emulada: **CoCo 3 (NTSC/PAL)**, **CoCo 2 (NTSC/PAL)**, **Dragon 32**, **Dragon 64**,
-**Tano Dragon**, **MC-10**. Trocar de máquina **reinicia o emulador** (boot da nova máquina). O app já
-seleciona a máquina certa conforme o que você está testando (CoCo→CoCo 3, Dragon→Dragon 64; OS-9 força
-CoCo 3, que o NitrOS-9 Level 2 exige).
+O seletor **Máquina** lista oito modelos:
+
+| Opção no seletor | O que é |
+|---|---|
+| **Tandy CoCo 3 (NTSC)** | CoCo 3 americano (60 Hz) — padrão para CoCo. |
+| **Tandy CoCo 3 (PAL)** | CoCo 3 europeu (50 Hz). |
+| **Tandy CoCo 2 (NTSC)** | CoCo 2 americano. |
+| **Tandy CoCo 2 (PAL)** | CoCo 2 europeu. |
+| **Dragon 32** | Dragon 32K (PAL). |
+| **Dragon 64** | Dragon 64K (PAL) — padrão para Dragon. |
+| **Tano Dragon (NTSC)** | Dragon 64 versão americana (Tano), 60 Hz. |
+| **Tandy MC-10** | O micro de entrada da Tandy (MC6803), bem mais simples. |
+
+Trocar de máquina **reinicia o emulador** (boot da nova máquina) e, de quebra, **limpa o nome do programa
+carregado** e **volta o toggle de colunas para 32**. O app já seleciona a máquina certa conforme o que você
+está testando (CoCo→CoCo 3, Dragon→Dragon 64; OS-9 força CoCo 3, que o NitrOS-9 Level 2 exige).
+
+> A **plataforma-alvo** do app (toggle CoCo/Dragon) define a máquina **padrão**: trocar para Dragon põe
+> **Dragon 64**, trocar para CoCo põe **CoCo 3 (NTSC)**. Você pode escolher outra máquina à mão depois — vale
+> até a próxima troca de plataforma.
 
 ---
 
 ## 3. Vídeo: Composto × RGB
 
-O seletor **Saída de vídeo** muda como as cores e o texto aparecem:
-- **Composto (azul-verm / laranja-ciano)** — simula o sinal NTSC: o monitor "inventa" **cores de artefato**
-  a partir de pixels finos. É como muitos jogos do CoCo 1/2 produziam cor. **Porém borra o texto fino**, então
-  é ruim para 80 colunas.
+O seletor **Saída de vídeo** tem **três** opções e muda como as cores e o texto aparecem:
+- **Composto (azul-verm)** — simula o sinal NTSC: o monitor "inventa" **cores de artefato** a partir de
+  pixels finos. É como muitos jogos do CoCo 1/2 produziam cor.
+- **Composto (laranja-ciano)** — o **mesmo** composto, mas com a **fase do artefato invertida**: as cores que
+  saíam azul/vermelho saem laranja/ciano. Muitos jogos só ficam "certos" numa das duas fases — se as cores de
+  um jogo parecerem trocadas, **alterne entre estas duas opções**.
 - **RGB (nítido)** — sinal digital exato do CoCo 3, **sem artefato**. **Essencial para as 80 colunas** do
   OS-9 (texto limpo, sem cores falsas).
 
-Trocar o vídeo **reinicia** o emulador. Regra: **jogos com cor de artefato → Composto; texto/OS-9 → RGB**.
+As duas opções **Composto** ligam o decodificador de artefato (cross-colour); **RGB** o desliga. Trocar o
+vídeo **reinicia** o emulador. Regra: **jogos com cor de artefato → Composto (teste as duas fases); texto/OS-9
+→ RGB**.
 
 ---
 
@@ -80,12 +109,14 @@ reaplicados a cada boot.
 
 ## 7. Drives D0–D3 — montar disco
 
-No painel esquerdo, cada linha **D0–D3** mostra o disco montado, com **Abrir** e **Ejetar**.
-- **Abrir** escolhe um disco do PC (`.dsk/.vdk/.jvc/.dmk/.os9`) e o monta naquela drive (um `.os9` é tratado
-  como `.dsk` pela geometria).
-- **Ejetar** desmonta. A **drive 0** é a de boot.
+No painel esquerdo, cada linha **D0–D3** mostra o **nome do disco montado** (ou `—` se vazia), com um ícone
+de disquete que **acende** (cor primária) quando há disco, mais dois botões:
+- **Abrir** (pasta) — escolhe um disco do PC (`.dsk/.vdk/.jvc/.dmk/.os9`) e o monta naquela drive (um `.os9`
+  é tratado como `.dsk` pela geometria). Fica desabilitado enquanto o emulador não está **pronto**.
+- **Ejetar** (×) — desmonta aquela drive. Só fica habilitado quando a drive **tem** disco.
 
-Normalmente você nem usa isto à mão: as outras abas montam o disco para você (seção 11).
+A **drive 0** é a de boot. Normalmente você nem usa isto à mão: as outras abas montam o disco para você
+(seção 11). Trocar de máquina/vídeo **ejeta tudo** (as drives são limpas no reboot).
 
 ---
 
@@ -133,20 +164,46 @@ Quase sempre você não monta nada à mão — as outras abas mandam para cá e 
 - **BASIC → "Rodar"** — digita `NEW` + o programa (ou, com reset, boota limpo e digita o programa).
 
 Quando uma aba pede um vídeo/filtro diferente (ex.: OS-9 pede RGB+Suave), o app aplica isso **antes** de
-mostrar a tela, num único reinício.
+mostrar a tela, num único reinício. Sempre que um conteúdo é **rodado** (duplo-clique, `DOS`, `RUN`…), o app
+dá um **reset total** antes de digitar o comando — assim o texto vai para o prompt limpo (`OK`/`B:`) e não
+para um programa que já esteja na tela; o disco montado permanece na drive.
+
+> **Velocidade de digitação:** a injeção de comandos/BASIC é feita **tecla a tecla**. A cadência é controlada
+> pelo toggle **"Vel.Export.Código"** da aba **BASIC**: **normal** ≈ 25 ms por tecla (padrão, mais seguro) e
+> **rápida** ≈ 12 ms. Se uma linha começar a "perder" caracteres em máquinas mais sensíveis, use a normal.
+
+> **Dragon:** ao bootar/resetar, a ROM do Dragon pede "pressione uma tecla". O app **prefixa um espaço** antes
+> de cada comando digitado para dispensar esse prompt automaticamente (no prompt do BASIC o espaço é inócuo).
 
 ---
 
 ## 12. Expandir a tela
 
-O botão no canto da tela **expande**: esconde os painéis laterais (e o console), e a tela 4:3 fica **bem
-maior e mais nítida**. Ideal para ler as 80 colunas do OS-9. Clique de novo para recolher.
+O botão no **canto superior direito da tela** (ícone de expandir/recolher) alterna o modo expandido:
+**esconde os dois painéis laterais E o console de diagnóstico** (no app), de modo que a tela 4:3 — que é
+limitada pela **altura** — fica **bem maior e mais nítida**. Ideal para ler as 80 colunas do OS-9. Clique de
+novo (ou no ícone de recolher) para voltar a mostrar os painéis.
+
+> A tela é sempre **4:3 com letterbox** (faixas pretas), centralizada e redimensionada automaticamente ao
+> tamanho da janela — nunca distorce a imagem.
 
 ---
 
-## 13. Observações
+## 13. Botão de Ajuda
+
+O botão **Ajuda** (no fim do painel direito) reabre este guia a qualquer momento.
+
+---
+
+## 14. Observações
 - Trocar **Máquina**, **Saída de vídeo** ou **Filtro** **reinicia** o emulador (um disco/comando pendente é
-  reaplicado no novo boot).
-- Cor/Brilho/Contraste, máquina, vídeo, filtro e joysticks ficam **salvos** entre sessões.
+  reaplicado no novo boot — assim você não precisa "testar 2×" depois de uma troca de máquina).
+- **Persistência:** ficam **salvos** entre sessões (com um pequeno atraso após cada mudança) a **máquina**, a
+  **saída de vídeo**, o **filtro**, **Cor/Brilho/Contraste** e os dois **joysticks**. As configurações são
+  carregadas **antes** do primeiro boot (evita boot duplo).
+- Cor/Brilho/Contraste são **inteiros 0–100** (neutro = 50) aplicados **ao vivo**; máquina, vídeo e filtro
+  entram pelo **boot** (por isso reiniciam).
 - Para o **boot de OS-9** funcionar, o emulador já sobe com a auto-detecção de geometria OS-9 ligada — por
-  isso o comando `DOS` encontra a trilha de boot correta.
+  isso o comando `DOS` encontra a trilha de boot correta. Internamente, um `.os9` é montado como `.dsk` (mesma
+  geometria) para o XRoar reconhecê-lo; o nome exibido na drive continua o original.
+- Os `.pak` são apresentados ao XRoar como `.rom` (cartucho) só internamente; o nome de tela continua `.pak`.

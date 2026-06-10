@@ -3,26 +3,42 @@
 > Status: **implementação futura** — registrado com os achados da pesquisa e o escopo
 > que isolamos. Não bloqueia o roadmap OS-9.
 
-> ## STATUS ATUAL — 2026-06-09 (v1.0.51): ABA CRIADA + M1a PRONTO
-> **Aba "FujiNet / Online" criada** (`FujiNetTab.tsx`), ISOLADA (fácil de desativar como a EPROM), com
-> divisão **vertical**: esquerda = cliente ("Acessar servidores"); direita = servidor WiFi ("Servidor WiFi
-> (FujiNet)" com pasta/porta/somente-leitura + explorador). Decisão: estrutura em **aba dedicada** (não
-> espalhar na DSK/OS-9) — confirmada com o usuário. **M1a FEITO:** "Abrir por URL (HTTP/HTTPS)" baixa e abre
-> num painel (`src/main/net/download.ts` + IPC `net-download-url`; OS-9 roteado p/ a aba OS-9). **+ ZIP
-> automático** (Color Computer Archive vem .zip): leitor ZIP em Node puro (`src/main/converter/zip.ts`,
-> `zlib.inflateRawSync`, sem dep. nativa) + IPC `zip-extract`; 1 imagem→abre, várias→seletor. Validado no
-> "3D Brickaway (Avalon Hill).zip" real.
-> **M1b FEITO (v1.0.52):** cliente TNFS (`src/main/net/tnfs.ts`, UDP 16384, MOUNT/OPENDIR/READDIR/STAT/OPEN/
-> READ/CLOSE) + IPC `tnfs-list`/`tnfs-read` + UI (conectar/navegar/baixar). Validado no hub real
-> `tnfs.fujinet.online` (/ → 7 pastas; /COCO → 11 .dsk; news.dsk = 161.280 B). Harness `tools/tnfsprobe.ts`.
-> **Gestão de servidores + persistência FEITAS (v1.0.53):** dropdown favoritos (config) + comunidade ao
-> vivo (parse de `fujinet.online/tnfs-server-status`, status UDP, fallback) + modal "Gerenciar"; aba SEMPRE
-> MONTADA + `cfg.fujinet` persiste favoritos/host/pasta. IPC `tnfs-community`. **A FAZER no M3:** dropdown de
-> "últimas pastas compartilhadas" no servidor WiFi. Login (user/senha) no cliente e SD da placa = não suportados.
-> **PENDENTE:** **M2** "enviar p/ dispositivo", **M3** servidor TNFS,
-> **M4** (opc.) DriveWire serial. M1b–M3 só APIs nativas do Node (sem módulo nativo); M4 = `serialport`.
-> **Dois fluxos do cliente:** (1) baixar IMAGEM → abrir no painel [M1a feito p/ URL]; (2) baixar ARQUIVO
-> avulso → INJETAR na imagem ativa (RS-DOS/OS-9/container) via os caminhos existentes [a fazer].
+> ## STATUS ATUAL — 2026-06-10 (v1.0.59 + ajustes não commitados): CLIENTE e SERVIDOR COMPLETOS e VALIDADOS
+> A aba **FujiNet / Online** (`FujiNetTab.tsx`) está madura: esquerda = **cliente** (acessar servidores),
+> direita = **servidor WiFi**. Resumo do que está PRONTO:
+>
+> **CLIENTE (`src/main/net/tnfs.ts`):**
+> - **M1a — Abrir por URL (HTTP/HTTPS)** + **ZIP automático** (leitor ZIP puro `converter/zip.ts`; 1 imagem→abre,
+>   várias→seletor). OS-9 roteado p/ a aba OS-9.
+> - **M1b — Cliente TNFS** (UDP 16384): MOUNT/UMOUNT/OPENDIR/READDIR/CLOSEDIR/STAT/OPEN/READ/CLOSE +
+>   **OPENDIRX(0x17)/READDIRX(0x18)** (lista a pasta inteira com tamanho/tipo em 1 viagem; **fallback** p/
+>   OPENDIR+STAT em servidores antigos) e **TELLDIR(0x15)/SEEKDIR(0x16)**. Navegar/baixar com cancelamento real
+>   ("Interromper"). **Timeout de retransmissão ADAPTATIVO** (Jacobson/Karels: RTO=srtt+4×rttvar, teto 3 s, piso
+>   500 ms) — antes era fixo 3 s e desperdiçava 3 s por pacote perdido em servidor rápido. Bloco de READ = 1024 B.
+> - **Barra de progresso da LISTAGEM** (X/N itens, via o total do OPENDIRX; só aparece se passar de ~400 ms).
+> - **Gestão de servidores:** dropdown favoritos (persistidos) + **comunidade ao vivo** (parse de
+>   `fujinet.online/tnfs-server-status`, status UDP, fallback) + modal "Gerenciar". Aba SEMPRE MONTADA;
+>   `cfg.fujinet` persiste favoritos/host/etc.
+>
+> **SERVIDOR (`src/main/net/tnfsServer.ts`):**
+> - **M3 — Servidor TNFS** (UDP 16384): MOUNT/UMOUNT/OPENDIR/READDIR/CLOSEDIR/**OPENDIRX/READDIRX**/**TELLDIR/
+>   SEEKDIR**/STAT/OPEN/READ/**WRITE**/CLOSE/**LSEEK** (LSEEK retorna a posição — exigido p/ versão >0x0100).
+>   Provedores **folderProvider** (pasta) e **containerProvider** (MiniIDE/CoCoSDC-FAT/DriveWire → cada disco
+>   interno como `.dsk`).
+> - **ESCRITA em modo Pasta** (Leitura-escrita): o CoCo cria/sobrescreve arquivos reais (1 cliente por vez).
+> - **Filtro de arquivos ocultos** (não envia desktop.ini/Thumbs.db/.DS_Store/lost+found/dotfiles… Win+mac+Linux),
+>   **configurável** (botão "Ocultar arquivos da FujiNet": padrões fixos + adicionar/excluir com curingas).
+> - **IP recomendado** = interface roteável (rota default), não a WiFi cega; quadro verde destaca o IP "rede ✓".
+> - **Conveniências:** campo de pasta = combobox com **dropdown de recentes**; toggle Só-leitura/Ler-escrever.
+>
+> **CORREÇÕES-CHAVE contra a placa REAL (v1.0.57→.59):** (1) a placa lista via OPENDIRX/READDIRX → implementados
+> no servidor; (2) a placa montava sempre o 1º arquivo → faltavam TELLDIR/SEEKDIR; (3) erro de I/O no DIR → o
+> LSEEK precisava devolver a posição. Tudo validado por `tools/tnfsdirxtest.ts` (32/32) e no hub real.
+>
+> **AINDA PENDENTE:** **M2** "Enviar p/ dispositivo" (CoCoSDC=cópia p/ drive Windows; GW já existe; MiniIDE
+> write-back+reflash); fluxo "baixar ARQUIVO avulso → INJETAR na imagem ativa"; **M4** (opc.) DriveWire serial
+> (`serialport` = módulo nativo); **boot/validação REAIS na placa do usuário** (humano — em andamento, já lista,
+> monta o arquivo certo e o DIR funciona após o fix do LSEEK); login TNFS (user/senha) e SD da placa = fora de escopo.
 
 ---
 
@@ -102,8 +118,9 @@ Botão **"Enviar p/ dispositivo"** no painel ativo:
 > CoCoSDC-FAT/DriveWire → cada disco interno como .dsk). IPCs `tnfs-server-start/stop/status/preview` +
 > `pick-file`; preload. UI no painel direito da aba: origem Pasta×Container, listagem (preview), ligar/
 > desligar, IP do host slot, log de conexões. Persiste origem. Validado loopback (`tools/tnfsservetest.ts`):
-> LIST + READ idêntico (368.640 B). **PENDENTE:** boot real com a placa FujiNet (humano); talvez OPENDIRX se
-> a placa não usar OPENDIR clássico; dropdown de "últimas pastas/containers servidos".
+> LIST + READ idêntico (368.640 B). **ATUALIZAÇÃO (v1.0.57→.59): OPENDIRX/READDIRX + TELLDIR/SEEKDIR + LSEEK
+> (posição) + ESCRITA em pasta + filtro de ocultos configurável + dropdown de recentes — TODOS FEITOS** (ver
+> bloco STATUS no topo). **PENDENTE:** confirmação final de boot/uso na placa real (humano).
 > **IDEIA do usuário (2026-06-09): servir um CONTAINER, não só uma pasta.** Projetar o servidor em torno
 > de um **provedor de arquivos** plugável: (a) **pasta real** (arquivos no disco); (b) **container**
 > (MiniIDE/DriveWire/CoCoSDC) — a árvore TNFS exibe **cada disco interno como um `.dsk`** (extraído sob

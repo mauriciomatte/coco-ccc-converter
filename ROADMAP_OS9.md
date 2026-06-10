@@ -9,7 +9,9 @@
 > container** (MiniIDE/CoCoSDC) com leitura + edição-no-arquivo travada na área de sistema; leitura de DMK.
 >
 > **PENDENTE (OS-9):**
-> - **D11** — auto-trocar o XRoar para máquina **Dragon** ao testar um disco OS-9 Dragon (hoje força CoCo3).
+> - ~~**D11** — auto-trocar o XRoar para máquina **Dragon** ao testar um disco OS-9 Dragon~~ — **FEITO (v1.0.57):**
+>   `handleTestOs9InXroar` agora respeita o toggle de plataforma (Dragon → Dragon 64 + `BOOT`; CoCo → CoCo 3 +
+>   `DOS` + RGB/Suave), alinhado ao modal "Testar". (O RBF é idêntico em CoCo/Dragon → segue a plataforma.)
 > - **Harness de round-trip da escrita RBF** com CRC de módulo (verificação automatizada — §O6).
 > - **BOOT real CONFIRMADO (2026-06-09):** "Novo → Bootável → 360K ✓ gabarito" (clone) boota até o shell no
 >   XRoar. Adicionada **proteção** (v1.0.47): o botão "Bootável" (só-boot) avisa em disco sem sistema e

@@ -15,13 +15,21 @@ The tab stacks **two independent explorers** — **Top** and **Bottom** — spli
 appears and you can **drag files/folders from one to the other** (copy).
 
 Each explorer has three areas:
-- **Tree (left):** the disk's folders (OS-9 has real subfolders).
-- **List (center):** the files in the selected folder — **Name, Attributes, Size, Modified**.
-- **Media panel (right):** the disk "platter" with the per-cluster occupancy map (section 8).
+- **Tree (left):** the disk's folders (OS-9 has real subfolders). Each folder with subfolders has a
+  **chevron** (▸/▾) to **expand/collapse**; a **single click** on the name **selects** the folder (shows its
+  contents in the list). The root shows the **volume name** (or `/`).
+- **List (center):** the files in the selected folder — columns **Name, Attributes, Size, Modified**. Folders
+  come first; a **single click** selects an item; a **double-click** on a **folder** enters it, on a **file**
+  **extracts** it. Large, truncated folders show a trailing **`…`**.
+- **Media panel (right):** the disk "platter" with the per-cluster occupancy map (section 8). At its top there
+  is a **state badge** for the disk (**editable / unsaved / read-only**) next to the file name.
 
 Each explorer works in **one of three modes**: **EDITABLE** (in-memory disk — New/Open/dropped: all
 operations + Save); **READ-ONLY** (a container partition, view/extract only); **CONTAINER EDIT** (writes
 straight into the card file — section 9).
+
+> The two explorers are labelled **Top** and **Bottom** (a purple badge in the toolbar corner). The **divider**
+> between them is draggable (20–80% of the height); **Esc** cancels a drag in progress.
 
 ---
 
@@ -117,10 +125,11 @@ Dragon format). **Where to get** a reference disk: the **Color Computer Archive*
   "Save As" the first time.
 - **Save As** — writes a new `.os9`/`.dsk` **or `.sdf` (CoCoSDC)** — choose the type in the dialog. Editing a
   `.sdf` and saving re-writes SDF.
-- **New folder** — creates a subfolder in the current folder (up to 28 chars).
-- **Rename** — renames the selected item.
-- **Extract** — saves the selected file to the PC (also via **double-click**).
-- **Insert** — adds a PC file into the current folder.
+- **New folder** — creates a subfolder in the current folder. Opens a **name field** (up to 28 chars; `/` `\`
+  and non-ASCII characters are stripped automatically). **Enter** confirms, **Esc** cancels.
+- **Rename** — renames the **selected** list item (same name field; disabled with no selection).
+- **Extract** — saves the selected file to the PC (also via **double-click** on the file).
+- **Insert** — adds a PC file into the current folder (opens the system file dialog).
 - **Delete** — removes the selected file (or **empty** folder) and frees its clusters (asks first).
 - **Test** — mounts the disk in **XRoar** (in-memory disks only — section 7).
 - **Bootable** — makes the **already-open disk** bootable (advanced; injects only the boot apparatus — **not**
@@ -134,23 +143,32 @@ Dragon format). **Where to get** a reference disk: the **Color Computer Archive*
 > ⚠️ Don't confuse the two "Bootable": the **one in the New… menu** creates a new, complete, usable disk; the
 > **toolbar button** only injects boot into an already-open disk.
 
+> **Loss protection:** whenever there are **unsaved edits** and you **Open**, create **New**, **drag in another
+> disk**, or **Close**, the app pops an **"Unsaved changes"** modal with **Cancel / Discard / Save & continue**
+> (if the save is cancelled, the action does not proceed). The state badge shows **"unsaved"** (amber) whenever
+> there are pending changes.
+
 ---
 
 ## 7. Test / boot in XRoar
 
-The **Test** button opens a dialog with the **target drive (D0–D3)** and three modes:
-- **Boot OS-9 (DOS)** — resets and types `DOS` (the Disk BASIC command that loads OS-9). Use with a
-  **bootable** disk in **drive 0**.
-- **Mount + Reset** — mounts and reboots clean (you inspect with OS-9 already running).
-- **Mount (no reset)** — just mounts.
+The **Test** button (disabled for container partitions) opens a dialog with a **drive dropdown (D0–D3)** —
+**D0** is the boot drive — and three action buttons:
+- **Boot OS-9 (DOS / BOOT)** — resets and types the **OS-9 boot command**. On the **CoCo** it is `DOS`; on the
+  **Dragon** it is `BOOT` — the app picks it **automatically** by platform and the button label changes. Needs
+  a **bootable** disk in **drive 0**.
+- **Mount + Reset** — mounts on the chosen drive and reboots clean (you inspect with OS-9 already running).
+- **Mount (no reset)** — just mounts on the chosen drive, leaving what's running untouched.
 
 When testing, the app **already prepares XRoar for OS-9**: **CoCo 3** machine (NitrOS-9 Level 2 requires it),
 **RGB video** and the **Smooth filter** (makes 80-column text legible). Then use **Expand** on the XRoar
 screen for a large, sharp picture.
 
 > **Test** only works with **in-memory** disks (New / Open / standalone) — not with a container partition (the
-> emulator's floppy is too small). And remember: the BASIC `dir` command **cannot** read an OS-9 disk (shows
-> garbage + FS ERROR) — that's normal; to see the disk you must **boot** OS-9 and use OS-9's own commands.
+> emulator's floppy is too small). To **inspect a data disk**, mount it on a drive and, with OS-9 **already
+> running**, use `dir /dX` (X = drive number). And remember: the **BASIC** `dir` command **cannot** read an
+> OS-9 disk (shows garbage + FS ERROR) — that's normal; to see the disk you must **boot** OS-9 and use OS-9's
+> own commands.
 
 ---
 
@@ -183,10 +201,15 @@ unavailable on a container partition.)
 
 ## 10. Moving/copying files and dragging to Windows
 
-- **Between the two explorers:** drag a file or folder from one to the other — it is **copied** (folder =
-  recursive copy). A toast confirms "✓ copied. Remember to Save." A read-only target is refused.
-- **From Windows into the explorer:** drag a disk to **open** it.
-- **From the explorer to Windows:** use the **⠿** handle on a file to drag it straight to Explorer (extracts).
+- **Between the two explorers:** drag a file or folder from one to the other — it is **copied** into the
+  **currently selected folder** of the target (folder = recursive copy, with a dir/file count). A dashed green
+  highlight shows the drop target; a floating **toast** at the bottom confirms "✓ copied. Remember to Save."
+  (click it to dismiss). Dropping onto the **source** list itself does nothing; a read-only target is refused.
+- **From Windows into the explorer:** drag a disk to **open** it (green "Drop to open the OS-9 disk" highlight).
+  Works even in the empty state. If there are unsaved edits, the app **confirms** first (Cancel / Discard /
+  Save & continue).
+- **From the explorer to Windows:** use the **⠿** handle to the left of a **file** to drag it straight to
+  Windows Explorer (extracts the real contents). Only files have a handle, not folders.
 
 ---
 

@@ -92,6 +92,7 @@ const api = {
   tnfsRead: (host: string, path: string) => ipcRenderer.invoke('tnfs-read', host, path),
   tnfsReadCancel: () => ipcRenderer.invoke('tnfs-read-cancel'),
   onTnfsProgress: (cb: (m: { got: number }) => void) => { const h = (_e: any, m: any) => cb(m); ipcRenderer.on('tnfs-progress', h); return () => ipcRenderer.removeListener('tnfs-progress', h); },
+  onTnfsListProgress: (cb: (m: { loaded: number; total: number; path: string }) => void) => { const h = (_e: any, m: any) => cb(m); ipcRenderer.on('tnfs-list-progress', h); return () => ipcRenderer.removeListener('tnfs-list-progress', h); },
   tnfsCommunity: () => ipcRenderer.invoke('tnfs-community'),
   tnfsServerStart: (opts: { mode: string; path: string; writable?: boolean; hideExtra?: string[]; hideAllow?: string[] }) => ipcRenderer.invoke('tnfs-server-start', opts),
   tnfsServerStop: () => ipcRenderer.invoke('tnfs-server-stop'),

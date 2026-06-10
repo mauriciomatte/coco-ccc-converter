@@ -15,13 +15,21 @@ arrastável. Enquanto **nenhum** disco está aberto, só o Topo aparece (em tela
 disco, o segundo explorador surge, e você pode **arrastar arquivos/pastas de um para o outro** (copia).
 
 Cada explorador tem três áreas:
-- **Árvore (esquerda):** as pastas do disco (OS-9 tem subpastas reais).
-- **Lista (centro):** os arquivos da pasta selecionada — **Nome, Atributos, Tamanho, Modificado**.
-- **Painel de mídia (direita):** o "prato" do disco com o mapa de ocupação por cluster (seção 8).
+- **Árvore (esquerda):** as pastas do disco (OS-9 tem subpastas reais). Cada pasta com subpastas tem um
+  **chevron** (▸/▾) para **expandir/recolher**; **um clique** no nome **seleciona** a pasta (mostra o
+  conteúdo na lista). A raiz aparece com o **nome do volume** (ou `/`).
+- **Lista (centro):** os arquivos da pasta selecionada — colunas **Nome, Atributos, Tamanho, Modificado**.
+  Pastas vêm primeiro; **um clique** seleciona o item; **duplo-clique** numa **pasta** entra nela, num
+  **arquivo** o **extrai**. Pastas grandes truncadas aparecem com **`…`**.
+- **Painel de mídia (direita):** o "prato" do disco com o mapa de ocupação por cluster (seção 8). No topo
+  dele há um **selo de estado** do disco (**editável / não salvo / leitura**) ao lado do nome do arquivo.
 
 Cada explorador trabalha em **um de três modos**: **EDITÁVEL** (disco em memória — Novo/Abrir/arrastado:
 todas as operações + Salvar); **LEITURA** (partição de container, só ver/extrair); **EDIÇÃO DE CONTAINER**
 (grava direto no arquivo do cartão — seção 9).
+
+> Os dois exploradores são rotulados **Topo** e **Base** (um selo roxo no canto da barra). A **divisória**
+> entre eles é arrastável (20–80% da altura); **Esc** cancela o arraste em andamento.
 
 ---
 
@@ -118,10 +126,11 @@ um disco **bootável** da geometria desejada e aponte-o quando o app pedir.
   "Salvar Como" na 1ª vez.
 - **Salvar Como** — grava como novo `.os9`/`.dsk` **ou `.sdf` (CoCoSDC)** — escolha o tipo no diálogo. Ao
   editar um `.sdf`, o Salvar já regrava em SDF.
-- **Nova pasta** — cria uma subpasta na pasta atual (até 28 caracteres).
-- **Renomear** — renomeia o item selecionado.
-- **Extrair** — salva o arquivo selecionado para o PC (também por **duplo-clique**).
-- **Inserir** — adiciona um arquivo do PC na pasta atual.
+- **Nova pasta** — cria uma subpasta na pasta atual. Abre um **campo de nome** (até 28 caracteres;
+  `/` `\` e caracteres não-ASCII são removidos automaticamente). **Enter** confirma, **Esc** cancela.
+- **Renomear** — renomeia o item **selecionado** na lista (mesmo campo de nome; desabilitado sem seleção).
+- **Extrair** — salva o arquivo selecionado para o PC (também por **duplo-clique** no arquivo).
+- **Inserir** — adiciona um arquivo do PC na pasta atual (abre o diálogo de arquivo do sistema).
 - **Excluir** — remove o arquivo (ou pasta **vazia**) selecionado e libera os clusters (pede confirmação).
 - **Testar** — monta o disco no **XRoar** (só discos em memória — seção 7).
 - **Bootável** — torna **bootável o disco já aberto** (avançado; injeta só o aparato de boot — **não** os
@@ -134,23 +143,32 @@ um disco **bootável** da geometria desejada e aponte-o quando o app pedir.
 > ⚠️ Não confunda os dois "Bootável": o **do menu Novo…** cria um disco novo, completo e usável; o **botão da
 > barra** apenas injeta o boot num disco já aberto.
 
+> **Proteção contra perda:** sempre que houver **edição não salva** e você for **Abrir**, **criar Novo**,
+> **arrastar outro disco** ou **Fechar**, o app abre um modal **"Alterações não salvas"** com **Cancelar /
+> Descartar / Salvar e continuar** (se o save for cancelado, a ação não prossegue). O selo de estado mostra
+> **"não salvo"** (âmbar) sempre que há mudanças pendentes.
+
 ---
 
 ## 7. Testar / bootar no XRoar
 
-O botão **Testar** abre um diálogo com a **drive de destino (D0–D3)** e três modos:
-- **Bootar OS-9 (DOS)** — reseta e digita `DOS` (o comando do Disk BASIC que carrega o OS-9). Use com um
-  disco **bootável** na **drive 0**.
-- **Montar + Reset** — monta e reinicia limpo (você inspeciona com o OS-9 já rodando).
-- **Montar (sem reset)** — só monta.
+O botão **Testar** (desabilitado para partições de container) abre um diálogo com um **dropdown de drive
+(D0–D3)** — a **D0** é a de boot — e três botões de ação:
+- **Bootar OS-9 (DOS / BOOT)** — reseta e digita o **comando de boot do OS-9**. No **CoCo** o comando é
+  `DOS`; no **Dragon** é `BOOT` — o app escolhe **automaticamente** conforme a plataforma e o rótulo do botão
+  muda. Precisa de um disco **bootável** na **drive 0**.
+- **Montar + Reset** — monta na drive escolhida e reinicia limpo (você inspeciona com o OS-9 já rodando).
+- **Montar (sem reset)** — só monta na drive escolhida, sem mexer no que já roda.
 
 Ao testar, o app **já prepara o XRoar para OS-9**: máquina **CoCo 3** (o NitrOS-9 Level 2 exige), **vídeo
 RGB** e **filtro Suave** (deixa as 80 colunas legíveis). Depois use **Expandir** na tela do XRoar para a
 imagem ficar grande e nítida.
 
 > O **Testar** só funciona com discos **em memória** (Novo / Abrir / avulso) — não com partição de container
-> (o floppy do emulador é pequeno demais). E lembre: o comando `dir` do BASIC **não** lê um disco OS-9 (mostra
-> lixo + FS ERROR) — isso é normal; para ver o disco é preciso **bootar** o OS-9 e usar os comandos do OS-9.
+> (o floppy do emulador é pequeno demais). Para **inspecionar um disco de dados**, monte-o numa drive e, com o
+> OS-9 **já rodando**, use `dir /dX` (X = nº da drive). E lembre: o comando `dir` do **BASIC** **não** lê um
+> disco OS-9 (mostra lixo + FS ERROR) — isso é normal; para ver o disco é preciso **bootar** o OS-9 e usar os
+> comandos do OS-9.
 
 ---
 
@@ -183,10 +201,16 @@ cartão.** (Testar e Defrag ficam indisponíveis em partição de container.)
 
 ## 10. Mover/copiar arquivos e arrastar para o Windows
 
-- **Entre os dois exploradores:** arraste um arquivo ou pasta de um para o outro — ele é **copiado** (pasta =
-  cópia recursiva). Um aviso confirma "✓ copiado. Lembre de Salvar." Destino somente-leitura é recusado.
-- **Do Windows para o explorador:** arraste um disco para **abrir**.
-- **Do explorador para o Windows:** use a alça **⠿** num arquivo para arrastá-lo direto ao Explorer (extrai).
+- **Entre os dois exploradores:** arraste um arquivo ou pasta de um para o outro — ele é **copiado** para a
+  **pasta atualmente selecionada** no destino (pasta = cópia recursiva, com contagem de pastas/arquivos). Um
+  realce verde tracejado mostra onde vai soltar; um **aviso** flutuante embaixo confirma "✓ copiado. Lembre de
+  Salvar." (clique nele para fechar). Soltar na **própria** lista de origem não faz nada; destino
+  somente-leitura é recusado.
+- **Do Windows para o explorador:** arraste um disco para **abrir** (realce verde "Solte para abrir o disco
+  OS-9"). Funciona inclusive no estado-vazio. Se já houver edição não salva, o app **confirma** antes
+  (Cancelar / Descartar / Salvar e continuar).
+- **Do explorador para o Windows:** use a alça **⠿** à esquerda de um **arquivo** para arrastá-lo direto ao
+  Explorer do Windows (extrai o conteúdo real). Só arquivos têm alça, não pastas.
 
 ---
 

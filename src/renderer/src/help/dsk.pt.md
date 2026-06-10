@@ -17,8 +17,23 @@ comparar dois discos e copiar arquivos de um para o outro.
   Quase toda ação da barra de ferramentas opera no **painel ativo**.
 - Cada painel tem três colunas: **(esquerda)** abrir/limpar/formatar + informações da imagem;
   **(centro)** a lista de arquivos; **(direita)** o **mapa do disco** + botões de desfragmentação.
+- **Divisória horizontal:** a barra entre A e B é arrastável — puxe para cima/baixo para dar mais altura
+  ao painel que estiver usando.
 
 **Resultado:** você enxerga dois discos ao mesmo tempo e move arquivos entre eles arrastando.
+
+### A coluna esquerda — botões e selos de informação
+
+A coluna esquerda de cada painel tem, em cima, o **selo do painel** ("Painel A/B") e três ícones:
+**📁 Abrir** (abre uma imagem), **🧽 Limpar painel** (esvazia o painel, sem mexer no arquivo) e
+**💿 Formatar** (apaga o disco — veja a seção 8). Abaixo, quando há um disco, aparecem as **informações**:
+
+- **Nome da imagem** (encurtado; passe o mouse para ver o nome completo) e **tamanho em KB**.
+- **Selo de origem:** **"Lida: {formato}"** (disco aberto de um arquivo — a cor/rótulo indicam o formato real
+  detectado) **ou** **"Nova: {nome}"** (imagem criada pelo ✚ e ainda **não salva** em arquivo).
+- **"⚠ Formato não suportado"** (vermelho) — só em contêineres cujos nomes de disco saem **ilegíveis**:
+  abre **só para inspeção**, salvar **não é recomendado**.
+- Em contêineres, o **bloco "Disco"** (navegação) com ◀ ▶, o nº do disco e os botões de cada tipo (seção 5).
 
 ---
 
@@ -36,6 +51,15 @@ Abre qualquer formato: **`.dsk`** (RS-DOS), **`.vdk`** (Dragon), **`.jvc`**, **D
 
 **Resultado:** um disco em branco formatado, pronto para receber arquivos e ser salvo.
 
+> **Trocar o formato de um disco já aberto:** se você **mudar o seletor "Nova:"** entre **CoCo 35T** e
+> **CoCo 40T (JDOS)** com um disco RS-DOS já carregado, o app oferece **recriar a imagem no novo nº de
+> trilhas mantendo os arquivos** (modal "Recriar imagem em 35T/40T?"). Se algum arquivo não couber no novo
+> formato, **nada é alterado**. A operação fica **não salva** — use "Salvar" depois.
+
+> **Seletor de plataforma-alvo (CoCo / Dragon), na barra global do topo:** define o **padrão** do "Novo
+> disco", a **máquina do XRoar** e o **formato do Greaseweazle**. Discos que você **abre** continuam
+> respeitando o **formato real** deles.
+
 ### Arrastar do Windows
 Solte um `.dsk`/imagem sobre o painel para **abrir**; solte um `.bin/.bas/.cas` para **injetar**; solte um
 arquivo num **painel vazio** e ele cria um `.dsk` novo já com aquele arquivo dentro.
@@ -47,11 +71,18 @@ arquivo num **painel vazio** e ele cria um `.dsk` novo já com aquele arquivo de
 Para cada arquivo: **Nome**, **Tipo** (BASIC / DADOS / MÁQUINA / FONTE), **Tamanho**, **Grân.** (quantos
 granules ocupa), **Trilhas** (em quais trilhas está, em faixas tipo "0-2, 4") e **Formato**.
 
-- **Selecionar:** clique numa linha (fica laranja). **Shift+clique** seleciona um intervalo; assim você
-  copia/exclui vários de uma vez.
+- **Selecionar:** clique numa linha (fica laranja). **Shift+clique** seleciona um **intervalo** (a partir
+  da última âncora); **Ctrl+clique** **liga/desliga** arquivos avulsos (multi-seleção esparsa). Assim você
+  copia/exclui/extrai vários de uma vez.
 - **Duplo-clique:** monta o disco no XRoar e **roda** o arquivo na hora — `RUN` para BASIC, `LOADM/EXEC`
   para máquina. A máquina do emulador acompanha o formato (CoCo/Dragon).
-- **Alça ⠿ (esquerda):** arraste para o **Windows Explorer** e o arquivo é **extraído** para a pasta.
+- **Arrastar a linha para o outro painel:** copia (com **Ctrl**) ou move (com **Shift**) o arquivo de A↔B.
+- **Alça ⠿ (esquerda):** arraste para o **Windows Explorer** e o arquivo é **extraído** (arraste nativo do
+  sistema) para a pasta — funciona mesmo num contêiner (o disco daquele momento é capturado no início do
+  arraste).
+
+> A coluna **Grân.** mostra o nº de granules (RS-DOS) **ou** "Ns" = nº de setores (Dragon). A coluna
+> **Trilhas** lista as trilhas ocupadas em faixas (ex.: "0-2, 4").
 
 ---
 
@@ -63,11 +94,14 @@ granules ocupa), **Trilhas** (em quais trilhas está, em faixas tipo "0-2, 4") e
 - **Injetar** — escolhe um arquivo do PC (`.bin/.bas/.cas`) e o adiciona ao disco ativo. Um `.cas` é
   interpretado: cada programa da fita vira um arquivo (ML → `.BIN` com preâmbulo LOADM; BASIC → `.BAS`;
   dados → `.DAT`).
-- **Copiar / Recortar / Colar** — área de transferência de **arquivos**. **Copiar** (ou **Ctrl+C**) /
-  **Recortar** (**Ctrl+X**) leva os selecionados para a memória; **Colar** (**Ctrl+V**) grava-os no painel
-  ativo (no mesmo disco ou no outro). Recortar remove da origem **após** colar.
-- **Renomear** (1 selecionado) — muda NOME (8) e EXT (3). Só a entrada de diretório muda; os dados ficam.
-- **Excluir** (ou **Delete**) — apaga os selecionados e libera os granules.
+- **Copiar / Colar** — área de transferência de **arquivos**. **Copiar** (botão ou **Ctrl+C**) leva os
+  selecionados para a memória; **Colar** (botão ou **Ctrl+V**, só aparece quando há algo copiado) grava-os
+  no painel ativo (no mesmo disco ou no outro). **Recortar** **não** tem botão na barra — use **Ctrl+X**
+  (ou arraste a linha com **Shift**): a origem é removida **após** colar/soltar. Um indicador **📋 nome ✂**
+  no fim da barra lembra o que está na área de transferência (o ✂ marca um recorte).
+- **Renomear** (1 selecionado, ícone de lápis) — abre um modal com os campos **NOME (8)** e **EXT (3)**.
+  Só a entrada de diretório muda; os dados ficam no lugar.
+- **Excluir** (ou tecla **Delete**) — apaga os selecionados e libera os granules.
 - **Visualização rápida .BAS** (lupa) — abre um **visualizador somente-leitura** que **detokeniza** o
   BASIC na hora, sem sair da aba. Ótimo para espiar um programa antes de extrair.
 - **Editar .BAS** — manda o `.BAS` (em ASCII) para a **aba BASIC** para edição completa.
@@ -75,10 +109,13 @@ granules ocupa), **Trilhas** (em quais trilhas está, em faixas tipo "0-2, 4") e
 - **Comparar** (1 selecionado) — abre um **diff hexadecimal** entre o arquivo do disco e um arquivo do PC:
   diz se são **idênticos** ou mostra quantos bytes diferem, a 1ª diferença e os trechos divergentes em
   vermelho. Use para conferir gravações/conversões.
-- **Converter para Dragon** (1 `.BIN` de máquina, em disco não-Dragon) — converte o binário CoCo para
-  Dragon (carga direta ou com relocador) e joga o resultado num disco Dragon novo no outro painel.
-- **Ordenar A-Z** — alfabetiza o diretório do disco ativo. **Ordenar Todos** — ordena todos os discos de
-  um contêiner (pulando discos de arte).
+- **Converter para Dragon** (1 `.BIN` de máquina, em disco não-Dragon; ícone ciano de setas) — abre um modal
+  para converter o binário CoCo para Dragon. Você escolhe **Carga direta** (carrega no mesmo endereço do
+  CoCo) ou **Com relocador** (carrega baixo em `0x0C00` e um stub copia + executa) — o app **marca o modo
+  recomendado** pelo endereço de carga. O resultado vai para um **disco Dragon novo no outro painel**; teste
+  com "Testar Painel" antes de salvar. (Jogos reescritos para Dragon não convertem byte-a-byte.)
+- **Ordenar A-Z** — alfabetiza o diretório do disco ativo. **Ordenar Todos** (só em contêineres) — ordena
+  todos os discos do contêiner (pulando discos de arte).
 - **Copiar Painel A → B** — duplica o disco ativo de A para B como `.dsk` avulso.
 - **Desfazer / Refazer** (**Ctrl+Z** / **Ctrl+Y**) — desfaz/refaz as últimas edições (insere, exclui,
   renomeia, defrag, colar…). A pilha restaura os **dois painéis**.
@@ -101,7 +138,22 @@ Ao abrir um contêiner (DriveWire/MiniIDE/CoCoSDC), o painel ganha um seletor de
 - **OS-9 · {volume}** — abre a partição OS-9 do contêiner na aba OS-9 (somente-leitura por segurança).
 - **Nomear/Renomear** (MiniIDE) — dá/edita o nome de catálogo SIDEKICK do drive.
 
-Cada disco é lido **sob demanda** — abrir um contêiner de gigabytes é instantâneo.
+Cada disco é lido **sob demanda** — abrir um contêiner de gigabytes é instantâneo. Ao abrir um contêiner
+grande aparece uma **barra de progresso** ("Analisando discos…" / "Lendo diretório FAT…").
+
+### Janela "Buscar disco" por dentro
+- Campo de busca casa por **nº/nome/sub-rótulo do disco** e por **nome de arquivo** (com um indicador
+  "Indexando arquivos X/Y…" enquanto o índice é montado). Quando o acerto vem de um arquivo, ele aparece
+  como **"↳ nome.ext"** sob o disco.
+- Cada item mostra o **nº físico (#000)**, o rótulo, um ícone **🎨** se for disco de arte e um contador
+  **mostrando/total**. A lista exibe até **500** itens — refine a busca se passar disso. Clique para abrir.
+
+### Estados especiais de um slot/disco
+- **📭 Slot vazio** (CoCoSDC) — o slot 000–255 não tem disco. Botões **"Inserir imagem (.dsk)"** e
+  **"Formatar"** aparecem na hora; use ◀ ▶ para passar pelos slots.
+- **🚫 Disco em formato não suportado** — o disco do contêiner não é RS-DOS padrão (provável OS-9,
+  dupla-face ou `.dsk` com cabeçalho JVC). Não é editável aqui; vá a outro disco com ◀ ▶ ou extraia este
+  com **"Salvar Como"**.
 
 ---
 
@@ -127,8 +179,12 @@ em vermelho no mapa.
 - **DEFRAG** (disco todo) — abre um diálogo onde você escolhe a **ordem** final (manter a do diretório /
   alfabética / por tamanho) e roda uma **animação nostálgica de disquete** reorganizando tudo em blocos
   contíguos. É **não-destrutivo** (reescreve numa imagem nova; o painel fica "não salvo"). Dá para
-  **cancelar no meio** mantendo o resultado parcial. No fim mostra "Fragmentação X% → Y%".
-- **DEFRAG ARQ.** — desfragmenta só o arquivo selecionado (precisa de um vão contíguo livre).
+  **cancelar no meio**: o app pergunta **"Finalizar o arquivo atual e parar"** (mantém o que já moveu, sem
+  corromper) ou **"Cancelar tudo (descartar)"**. No fim mostra "Fragmentação X% → Y%" e quantos arquivos
+  foram movidos / ficaram "sem espaço contíguo". Se o disco já está 0% fragmentado, o modal só avisa que não
+  há o que otimizar.
+- **DEFRAG ARQ.** — desfragmenta só o arquivo selecionado (precisa de um vão contíguo livre; desabilitado
+  se o arquivo já está contíguo ou no Dragon).
 
 (No Dragon a desfragmentação é sempre do disco inteiro.)
 
@@ -172,14 +228,20 @@ acompanhe o mapa de trilhas na aba GW. Detalhes na Ajuda da aba GW.
 
 ## 11. Editor hexadecimal + Desassemblador 6809
 
-O botão **HEX/DISASM** (topo) abre, lado a lado, um **editor hexadecimal** e um **desassemblador 6809**
-do arquivo selecionado — a ferramenta para estudar e ajustar binários ML.
+O botão **HEX/DISASM** fica na **barra global do topo** (à direita das abas) e fica **verde** quando o modal
+está aberto. Com um arquivo selecionado na lista, ele abre — lado a lado — um **editor hexadecimal** e um
+**desassemblador 6809** desse arquivo. É a ferramenta para estudar e ajustar binários ML.
 
 **Editor hex:**
-- Escolha **8/16/24 colunas** e o **modo de caracteres** (VDG verde com minúsculas invertidas, ou ASCII).
-- **Buscar** por hex (`1A 50`) ou texto, com navegação ◀ ▶ entre ocorrências.
-- **Editar:** clique numa célula e digite em HEX (nibble a nibble) ou em ASCII; as setas navegam. O rodapé
-  mostra deslocamento, endereço ROM e valor. **Salvar Alterações** regrava o arquivo no disco (com Desfazer).
+- Escolha **8/16/24 colunas** e o **modo de caracteres**: **VDG verde** (maiúsculas verdes, minúsculas em
+  vídeo invertido e os bytes ≥ 128 desenhados como **semigráficos 2×2** do VDG) ou **ASCII padrão**.
+- **Buscar** por hex (`1A 50` / `1A50`) ou por texto, com contador **N/total** e navegação ◀ ▶ entre as
+  ocorrências (que ficam realçadas).
+- **Editar:** clique numa célula e digite em **HEX** (nibble alto, depois baixo — avança sozinho) ou em
+  **ASCII** (uma tecla por byte); as **setas** navegam e **ESC** sai da seleção. O rodapé mostra
+  **deslocamento**, **endereço ROM** e o **valor** do byte.
+- A divisória vertical entre o hexa e o disasm é **arrastável** (redimensiona os dois painéis).
+- **Salvar Alterações** regrava o arquivo no disco (com suporte a Desfazer); **Cancelar/Fechar** descarta.
 
 **Desassemblador 6809** (painel à direita):
 - **Origem $** — o endereço de carga onde o código começa (vem do `.BIN`).
@@ -204,9 +266,10 @@ Discos cujo diretório usa **caracteres semigráficos** (desenho no DIR) abrem e
 
 ## 13. Atalhos de teclado (na aba DSK)
 
-**Ctrl+C** copiar · **Ctrl+X** recortar · **Ctrl+V** colar · **Delete** excluir · **Ctrl+Z** desfazer ·
-**Ctrl+Y** (ou **Ctrl+Shift+Z**) refazer. **Arrastar** linha entre painéis: **Ctrl** = copiar, **Shift** =
-mover.
+**Ctrl+C** copiar · **Ctrl+X** recortar (não há botão na barra) · **Ctrl+V** colar · **Delete** excluir ·
+**Ctrl+Z** desfazer · **Ctrl+Y** (ou **Ctrl+Shift+Z**) refazer. Na lista: **clique** seleciona,
+**Shift+clique** = intervalo, **Ctrl+clique** = liga/desliga avulsos, **duplo-clique** roda no XRoar.
+**Arrastar** linha entre painéis: **Ctrl** = copiar, **Shift** = mover; **alça ⠿** arrasta para fora (PC).
 
 ---
 

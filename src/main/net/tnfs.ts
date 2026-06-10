@@ -6,15 +6,29 @@
 import * as dgram from 'dgram';
 
 const TNFS_PORT = 16384;
-const TIMEOUT_MS = 3000;
-const RETRIES = 4;
+// Timeout de retransmissão ADAPTATIVO (algoritmo de Jacobson/Karels, o mesmo do TCP): mantemos o RTT suavizado
+// (srtt) E a variância (rttvar) por sessão, e o timeout (RTO) = srtt + 4×rttvar. Assim, num servidor estável e
+// lento (coconet, RTT ~1,8 s) o RTO fica ~2 s (detecta perda rápido, sem retransmitir à toa); num servidor
+// rápido (RTT 50 ms) cai p/ o piso (500 ms) — um FIXO de 3 s desperdiçava 3 s a cada pacote perdido. Só medimos
+// de respostas de 1ª tentativa (regra de Karn); o RTO inicial (3×DEFAULT) cobre o RTT do 1º MOUNT.
+const DEFAULT_RTT = 700;    // RTO inicial = 700 + 4×350 = 2100 ms (cobre o coconet ~1,8 s no 1º comando)
+// MAX_TO=3000 = o MESMO teto do timeout fixo antigo → o caso lento (coconet) NUNCA fica pior que antes; o caso
+// rápido (RTT 50 ms) cai p/ o piso de 500 ms. MIN baixo + backoff moderado p/ não estourar a cauda em perdas.
+const MIN_TO = 500, MAX_TO = 3000, MAX_BACKOFF = 6000;
+const RETRIES = 6;          // mais tentativas (cada espera agora é mais curta) p/ aguentar links com perda
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+// RTO da sessão a partir do srtt/rttvar medidos (ou o inicial, se ainda não mediu).
+function rtoOf(s: { srtt?: number; rttvar?: number }): number {
+  if (s.srtt == null || s.rttvar == null) return Math.min(MAX_TO, DEFAULT_RTT + 4 * (DEFAULT_RTT / 2));
+  return clamp(s.srtt + 4 * s.rttvar, MIN_TO, MAX_TO);
+}
 const EOF = 0x21;           // código TNFS de fim-de-diretório / fim-de-arquivo
 const MAX_ENTRIES = 600;    // teto de itens por pasta (segurança)
 // Bytes por READ. 1024 ≈ dobro do antigo (512) → metade das idas-e-voltas no download, sem fragmentar UDP
 // (datagrama ~1031 B, bem abaixo da MTU). O servidor devolve no máx. o que couber no buffer dele.
 const READ_CHUNK = 1024;
 
-interface Session { sock: dgram.Socket; host: string; port: number; connId: number; seq: number; aborted?: boolean; abortHook?: (() => void) | null }
+interface Session { sock: dgram.Socket; host: string; port: number; connId: number; seq: number; aborted?: boolean; abortHook?: (() => void) | null; srtt?: number; rttvar?: number }
 export interface TnfsEntry { name: string; isDir: boolean; size: number }
 export interface CommunityServer { host: string; tcpUp: boolean; udpUp: boolean }
 
@@ -47,10 +61,18 @@ function transact(sess: Session, cmd: number, payload: Buffer): Promise<Buffer> 
     const seq = sess.seq & 0xff;
     sess.seq = (sess.seq + 1) & 0xff;
     const pkt = Buffer.concat([u16le(sess.connId), Buffer.from([seq, cmd]), payload]);
+    const t0 = Date.now();
     let tries = 0; let timer: NodeJS.Timeout;
+    let timeout = rtoOf(sess);     // RTO adaptativo (srtt + 4×rttvar) da sessão
     const onMsg = (msg: Buffer) => {
       if (msg.length < 4 || msg[2] !== seq || msg[3] !== cmd) return; // não é a nossa resposta
-      cleanup(); resolve(msg);
+      cleanup();
+      if (tries === 0) {            // resposta de 1ª tentativa = amostra de RTT limpa (regra de Karn) → Jacobson/Karels
+        const sample = Date.now() - t0;
+        if (sess.srtt == null || sess.rttvar == null) { sess.srtt = sample; sess.rttvar = sample / 2; }
+        else { sess.rttvar = 0.75 * sess.rttvar + 0.25 * Math.abs(sample - sess.srtt); sess.srtt = 0.875 * sess.srtt + 0.125 * sample; }
+      }
+      resolve(msg);
     };
     const cleanup = () => { clearTimeout(timer); sess.sock.removeListener('message', onMsg); sess.abortHook = null; };
     // gancho de cancelamento: o abortSession() chama isto p/ interromper esta espera imediatamente
@@ -60,8 +82,9 @@ function transact(sess: Session, cmd: number, payload: Buffer): Promise<Buffer> 
       sess.sock.send(pkt, sess.port, sess.host, (err) => { if (err && !sess.aborted) { cleanup(); reject(err); } });
       timer = setTimeout(() => {
         if (++tries >= RETRIES) { cleanup(); reject(new Error('TNFS: tempo esgotado (servidor não respondeu).')); return; }
+        timeout = Math.min(timeout * 1.5, MAX_BACKOFF); // backoff nas retransmissões (Karn)
         send();
-      }, TIMEOUT_MS);
+      }, timeout);
     };
     sess.sock.on('message', onMsg);
     send();
@@ -115,11 +138,14 @@ const sortEntries = (e: TnfsEntry[]) => e.sort((a, b) => (a.isDir === b.isDir ? 
 // RÁPIDO: OPENDIRX(0x17)+READDIRX(0x18) — traz VÁRIAS entradas por ida-e-volta JÁ com tamanho e flag de
 // pasta (dispensa o STAT por arquivo). Retorna null se o servidor não suportar (status != 0) → cai no método
 // antigo. Cada entrada: flags(1)+size(4 LE)+mtime(4)+ctime(4)+nome\0.
-async function listViaOpendirx(sess: Session, p: string): Promise<TnfsEntry[] | null> {
+type ListProgress = (loaded: number, total: number) => void;
+async function listViaOpendirx(sess: Session, p: string, onProgress?: ListProgress): Promise<TnfsEntry[] | null> {
   // OPENDIRX: diropts(1)=0 + sortopts(1)=0 + maxresults(2 LE)=0 (ilimitado) + pattern\0 (""=tudo) + path\0
   const od = await transact(sess, 0x17, Buffer.concat([Buffer.from([0, 0]), u16le(0), cstr(''), cstr(p)]));
   if (od[4] !== 0) return null;          // EINVAL/erro → servidor sem OPENDIRX → fallback
   const handle = od[5];
+  const total = od.length >= 8 ? od.readUInt16LE(6) : 0; // OPENDIRX já devolve o TOTAL de entradas → progresso real
+  onProgress?.(0, total);
   const entries: TnfsEntry[] = [];
   let guard = 0;
   while (guard++ < 2000) {
@@ -137,6 +163,7 @@ async function listViaOpendirx(sess: Session, p: string): Promise<TnfsEntry[] | 
       off = e + 1;
       if (name && name !== '.' && name !== '..') entries.push({ name, isDir: (flags & 0x01) === 1, size });
     }
+    onProgress?.(entries.length, Math.max(total, entries.length));
     if (dirEof || n === 0 || entries.length > MAX_ENTRIES) break;
   }
   await transact(sess, 0x12, Buffer.from([handle])).catch(() => {});
@@ -145,7 +172,7 @@ async function listViaOpendirx(sess: Session, p: string): Promise<TnfsEntry[] | 
 
 // COMPATÍVEL (lento): OPENDIR(0x10)+READDIR(0x11) 1 nome por vez + STAT(0x24) por arquivo. Para servidores
 // antigos que não têm OPENDIRX. É o gargalo que torna a navegação lenta em pastas grandes.
-async function listViaOpendir(sess: Session, p: string): Promise<TnfsEntry[]> {
+async function listViaOpendir(sess: Session, p: string, onProgress?: ListProgress): Promise<TnfsEntry[]> {
   const od = await transact(sess, 0x10, cstr(p));
   if (od[4] !== 0) throw new Error(`TNFS: OPENDIR falhou em "${p}" (status 0x${od[4].toString(16)}).`);
   const handle = od[5];
@@ -159,24 +186,27 @@ async function listViaOpendir(sess: Session, p: string): Promise<TnfsEntry[]> {
   }
   await transact(sess, 0x12, Buffer.from([handle])).catch(() => {});
   const entries: TnfsEntry[] = [];
+  // Aqui o gargalo é 1 STAT por arquivo → o progresso mostra o avanço (X/N) nessa fase lenta.
+  onProgress?.(0, names.length);
   for (const name of names) {
     try { const st = await statPath(sess, joinPath(p, name)); entries.push({ name, isDir: st.isDir, size: st.size }); }
     catch { entries.push({ name, isDir: false, size: 0 }); }
+    onProgress?.(entries.length, names.length);
   }
   return sortEntries(entries);
 }
 
 /** Lista uma pasta (nome + dir? + tamanho). Tenta o método RÁPIDO (OPENDIRX/READDIRX) e cai no antigo
  *  (OPENDIR/READDIR+STAT) se o servidor não suportar. opts.onAbort recebe um cancelamento REAL. */
-export async function tnfsList(host: string, path = '/', opts?: { onAbort?: (cancel: () => void) => void }): Promise<TnfsEntry[]> {
+export async function tnfsList(host: string, path = '/', opts?: { onAbort?: (cancel: () => void) => void; onProgress?: ListProgress }): Promise<TnfsEntry[]> {
   const p = path && path.startsWith('/') ? path : '/' + (path || '');
   const sess = await openSocket(host);
   opts?.onAbort?.(() => abortSession(sess)); // arma o cancelamento ANTES do MOUNT (onde servidor-fora-do-ar trava)
   try {
     await mountSess(sess);
     let entries: TnfsEntry[] | null = null;
-    try { entries = await listViaOpendirx(sess, p); } catch { entries = null; } // OPENDIRX falhou → fallback
-    if (!entries) entries = await listViaOpendir(sess, p);
+    try { entries = await listViaOpendirx(sess, p, opts?.onProgress); } catch { entries = null; } // OPENDIRX falhou → fallback
+    if (!entries) entries = await listViaOpendir(sess, p, opts?.onProgress);
     return entries;
   } finally { await umount(sess); }
 }

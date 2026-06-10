@@ -86,6 +86,10 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   const [dlGot, setDlGot] = useState(0);    // bytes baixados (progresso)
   const [dlTotal, setDlTotal] = useState(0); // tamanho total (do STAT/listagem)
   const [dlName, setDlName] = useState('');  // nome do arquivo em download (status bar visível quando != '')
+  // progresso da LISTAGEM (X/N itens). Só aparece se a listagem demorar > ~400 ms (senão pisca à toa).
+  const [listProg, setListProg] = useState<{ loaded: number; total: number } | null>(null);
+  const [listBarOn, setListBarOn] = useState(false);
+  const listTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const jp = (d: string, n: string) => (d.endsWith('/') ? d + n : d + '/' + n);
   const parentOf = (p: string) => { const q = p.replace(/\/+$/, ''); const i = q.lastIndexOf('/'); return i <= 0 ? '/' : q.slice(0, i); };
 
@@ -93,15 +97,20 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
     const h = (hostOverride ?? host).trim(); if (!h || busy) return;
     const myGen = ++connectGen.current;            // marca esta tentativa
     setBusy(true); setBusyKind('connect');
+    setListProg(null);
+    // só mostra a barra de listagem se passar de ~400 ms (carga rápida não pisca a barra)
+    if (listTimer.current) clearTimeout(listTimer.current);
+    listTimer.current = setTimeout(() => { if (myGen === connectGen.current) setListBarOn(true); }, 400);
+    const finishBar = () => { if (listTimer.current) { clearTimeout(listTimer.current); listTimer.current = null; } setListBarOn(false); setListProg(null); };
     onLog(`FujiNet TNFS: listando ${h}:${path}…`, `FujiNet TNFS: listing ${h}:${path}…`, 'info');
     try {
       const r = await window.cocoApi.tnfsList(h, path);
-      if (myGen !== connectGen.current) return;     // usuário clicou Desconectar/abandonou: ignora o resultado
+      if (myGen !== connectGen.current) { finishBar(); return; }     // usuário clicou Desconectar/abandonou: ignora o resultado
       if (!r?.success) { onLog(`FujiNet TNFS: ${r?.error}`, `FujiNet TNFS: ${r?.error}`, 'error'); return; }
       setTnfsPath(path); setTnfsEntries(r.entries || []);
       onLog(`FujiNet TNFS: ${r.entries?.length ?? 0} itens em ${path}.`, `FujiNet TNFS: ${r.entries?.length ?? 0} items in ${path}.`, 'success');
     } catch (e: any) { if (myGen === connectGen.current) onLog(`FujiNet TNFS: erro — ${e?.message}`, `FujiNet TNFS: error — ${e?.message}`, 'error'); }
-    finally { if (myGen === connectGen.current) { setBusy(false); setBusyKind(''); } }
+    finally { if (myGen === connectGen.current) { setBusy(false); setBusyKind(''); finishBar(); } }
   };
 
   // TNFS é 512 bytes por ida-e-volta → arquivos grandes (ex.: imagem de cartão SDC de 30 MB) demoram
@@ -227,7 +236,8 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
     // log de conexões do servidor → console (item 5) + progresso de download TNFS
     const off = window.cocoApi.onNetLog?.((m: any) => onLog(m?.pt || '', m?.en || m?.pt || '', m?.type || 'info'));
     const offP = window.cocoApi.onTnfsProgress?.((m: any) => setDlGot(m?.got || 0));
-    return () => { try { off?.(); } catch { /* */ } try { offP?.(); } catch { /* */ } };
+    const offLP = window.cocoApi.onTnfsListProgress?.((m: any) => setListProg({ loaded: m?.loaded || 0, total: m?.total || 0 }));
+    return () => { try { off?.(); } catch { /* */ } try { offP?.(); } catch { /* */ } try { offLP?.(); } catch { /* */ } };
   }, []);
 
   // Persiste no config (debounce) quando favoritos/host/servidor mudam.
@@ -315,6 +325,27 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
                 <WifiOff size={13} /> {busyKind === 'connect' ? t('Interromper', 'Abort') : t('Desconectar', 'Disconnect')}
               </button>
             </div>
+            {/* Barra de progresso da LISTAGEM — só quando a carga passa de ~400 ms (servidor lento/pasta grande) */}
+            {listBarOn && busyKind === 'connect' && (() => {
+              const total = listProg?.total || 0; const loaded = listProg?.loaded || 0;
+              const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+              const CELLS = 40; const filled = total > 0 ? Math.round((pct / 100) * CELLS) : 0;
+              return (
+                <div className="flex flex-col gap-1 rounded p-2" style={{ background: '#fbbf2410', border: '1px solid #fbbf2433' }}>
+                  <div className="flex items-center justify-between text-[10px]">
+                    <span className="text-[var(--text-secondary)] flex items-center gap-1.5"><Loader size={11} className="spin" style={{ color: '#fbbf24' }} /> {t('Carregando lista…', 'Loading list…')}</span>
+                    <span className="font-mono flex-shrink-0" style={{ color: '#fbbf24' }}>{total > 0 ? `${loaded}/${total} (${pct}%)` : t('conectando…', 'connecting…')}</span>
+                  </div>
+                  {total > 0 && (
+                    <div className="flex" style={{ gap: 2 }}>
+                      {Array.from({ length: CELLS }).map((_, i) => (
+                        <div key={i} style={{ flex: 1, minWidth: 2, height: 8, background: i < filled ? '#fbbf24' : 'var(--bg-elevated)' }} className="rounded-[2px]" />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {tnfsEntries !== null && (
               <>
                 <div className="flex items-center gap-2 text-[10px] text-[var(--text-secondary)]">

@@ -98,7 +98,12 @@ let tnfsListAbort: (() => void) | null = null;
 ipcMain.handle('tnfs-list-cancel', () => { try { tnfsListAbort?.(); } catch { /* */ } return { success: true }; });
 ipcMain.handle('tnfs-list', async (_, host: string, path: string) => {
   try {
-    const entries = await tnfsList(String(host || '').trim(), String(path || '/'), { onAbort: (cancel) => { tnfsListAbort = cancel; } });
+    let lastT = 0;
+    const entries = await tnfsList(String(host || '').trim(), String(path || '/'), {
+      onAbort: (cancel) => { tnfsListAbort = cancel; },
+      // progresso da listagem (X/N itens) — throttle por tempo; a UI só mostra a barra se demorar.
+      onProgress: (loaded, total) => { const now = Date.now(); if (now - lastT >= 200 || loaded >= total) { lastT = now; mainWindow?.webContents.send('tnfs-list-progress', { loaded, total, path: String(path || '/') }); } },
+    });
     return { success: true, entries };
   } catch (e: any) { return { success: false, error: e?.message || 'Falha no TNFS.' }; }
   finally { tnfsListAbort = null; }

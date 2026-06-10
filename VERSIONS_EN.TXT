@@ -10,6 +10,33 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.60 — 2026-06-10
+--------------------------------------------------------------------------------
+FujiNet — smarter server access: adaptive timeout + listing progress bar
+  • ADAPTIVE RETRANSMIT TIMEOUT (Jacobson/Karels algorithm, same as TCP): the client measures each response's
+    RTT and keeps a smoothed RTT + variance per session; timeout = srtt + 4×rttvar (cap 3 s, floor 500 ms).
+    It used to be FIXED at 3 s — on a fast server that dropped one packet we wasted a full 3 s; now loss is
+    detected in ~500 ms. On a slow server (e.g. coconet.ddns.net, ~1.8 s RTT) the timeout rises by itself and is
+    NEVER worse than before (3 s cap). More retries (6) with backoff. DIAGNOSIS: the slowness of some servers is
+    the server itself (high RTT + packet loss), not the app — proven with tools/tnfsdldiag.ts (the same client
+    lists tnfs.fujinet.online in <1 s and a slow home server in tens of seconds).
+  • LISTING PROGRESS BAR: OPENDIRX already returns the total item count, so browsing shows "X/N (%)". The bar
+    only appears if the load takes more than ~400 ms (a fast load doesn't flash the bar).
+
+Help — COMPLETE overhaul of every tab's manual
+  • Meticulous, tab-by-tab review (DSK, K7, GW, BASIC, OS-9, XRoar — FujiNet was already complete): every
+    button, field, toggle, dropdown, slider, keyboard shortcut, modal and behavior is now described in the
+    manuals (PT and EN, in parallel), keeping all prior content. Examples of what was detailed: multi-select
+    (Shift/Ctrl) and the 6809 disassembler on DSK; player/REC and "→ No loader" on K7; format auto-detection and
+    track map on GW; button-by-button toolbar and shortcuts on BASIC; "Test" Dragon (BOOT) and drag-and-drop on
+    OS-9; 8 machines and video outputs on XRoar.
+
+Roadmaps — updated
+  • ROADMAP_FUJINET.md rewritten (client+server complete: OPENDIRX/READDIRX, TELLDIR/SEEKDIR, LSEEK, writing,
+    hidden-file filter, adaptive timeout, progress bar; real pending: M2, M4, on-board validation).
+  • ROADMAP_OS9.md: D11 (XRoar Dragon when testing a Dragon OS-9 disk) marked DONE.
+
+--------------------------------------------------------------------------------
 v1.0.59 — 2026-06-09
 --------------------------------------------------------------------------------
 FujiNet — FIX: I/O error reading the mounted disk (LSEEK missing the position)
