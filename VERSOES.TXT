@@ -10,6 +10,31 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.59 — 2026-06-09
+--------------------------------------------------------------------------------
+FujiNet — CORREÇÃO: erro de I/O ao ler o disco montado (LSEEK sem a posição)
+  • Depois de montar o .dsk certo, o CoCo dava erro de I/O no DIR. Causa: no MOUNT anunciamos versão TNFS 1.2
+    (0x0102); pelo protocolo, para versão > 0x0100 a resposta do LSEEK (0x25) DEVE incluir a NOVA POSIÇÃO do
+    arquivo (u32 LE) após o byte de status. O nosso LSEEK respondia só o status → a placa lia 4 bytes a menos,
+    dessincronizava a posição e cada leitura de setor caía no offset errado (erro de I/O). Corrigido: LSEEK
+    agora devolve status + posição. Validado tools/tnfsdirxtest.ts (32/32: LSEEK retorna a posição e o READ
+    após o seek vem certo).
+
+FujiNet — ACESSO AOS SERVIDORES MUITO MAIS RÁPIDO (cliente)
+  • Listagem: o cliente agora usa OPENDIRX (0x17)/READDIRX (0x18) — traz VÁRIAS entradas por ida-e-volta JÁ com
+    tamanho e tipo, dispensando o STAT por arquivo. Antes eram ~2N+3 viagens por pasta (1 nome por READDIR +
+    1 STAT por arquivo); agora ~1–3 viagens. Em pasta com 100 arquivos (RTT 150 ms) cai de ~30 s para < 1 s.
+    Fallback automático para o método antigo (OPENDIR/READDIR+STAT) em servidores sem OPENDIRX. Validado no hub
+    real tnfs.fujinet.online (/COCO, 11 arquivos, 0,91 s) e em loopback.
+  • Download: bloco de leitura de 512 → 1024 bytes por READ (metade das idas-e-voltas; sem fragmentar UDP).
+  • Obs.: a placa também é rápida porque lê o disco SOB DEMANDA (só os setores usados); o app baixa o arquivo
+    inteiro para poder editar — por isso o download não fica instantâneo, mas ficou ~2× mais rápido.
+
+Splash — nova imagem
+  • Tela de abertura atualizada (amostras/new2splash.png → resources/splash/splash.png, 760×567, transparência
+    preservada).
+
+--------------------------------------------------------------------------------
 v1.0.58 — 2026-06-09
 --------------------------------------------------------------------------------
 FujiNet — CORREÇÃO: a placa montava SEMPRE o 1º arquivo da pasta (não o escolhido)

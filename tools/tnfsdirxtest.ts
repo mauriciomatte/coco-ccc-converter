@@ -96,6 +96,19 @@ const readCstr = (b: Buffer, o: number) => { let e = o; while (e < b.length && b
   const rdAfter = await tx(sock, srv.port, hdr(conn, 9, 0x11, Buffer.from([dh3])));         // READDIR
   ok(rdAfter[4] === 0x00 && readCstr(rdAfter, 5).s === 'beta.txt', `READDIR após SEEKDIR(2) = beta.txt (got ${readCstr(rdAfter, 5).s})`);
 
+  // ── LSEEK (0x25): a resposta DEVE incluir a nova posição (u32 LE) pois anunciamos versão TNFS 1.2.
+  // Sem isso a placa dessincroniza a posição e dá erro de I/O ao ler setores (DIR no CoCo).
+  const op = await tx(sock, srv.port, hdr(conn, 10, 0x29, Buffer.concat([Buffer.from([0, 0, 0, 0]), Buffer.from('/beta.txt\0', 'latin1')]))); // OPEN read (flags 0, mode 0)
+  ok(op[4] === 0x00, 'OPEN /beta.txt status 0');
+  const ofd = op[5];
+  const seekF = Buffer.alloc(6); seekF[0] = ofd; seekF[1] = 0; seekF.writeInt32LE(6, 2); // fd, SEEK_SET, pos 6
+  const ls = await tx(sock, srv.port, hdr(conn, 11, 0x25, seekF));
+  ok(ls[4] === 0x00, 'LSEEK status 0');
+  ok(ls.length >= 9 && ls.readUInt32LE(5) === 6, `LSEEK retorna a nova posição 6 (len ${ls.length})`);
+  const rdF = Buffer.alloc(3); rdF[0] = ofd; rdF.writeUInt16LE(5, 1);
+  const rr = await tx(sock, srv.port, hdr(conn, 12, 0x21, rdF));            // READ 5 bytes a partir de 6
+  ok(rr[4] === 0x00 && rr.slice(7, 12).toString('latin1') === 'world', `READ após LSEEK = "world" (got "${rr.slice(7, 7 + rr.readUInt16LE(5)).toString('latin1')}")`);
+
   sock.close(); srv.stop();
 
   // ── Filtro configurável (hideExtra / hideAllow) ──

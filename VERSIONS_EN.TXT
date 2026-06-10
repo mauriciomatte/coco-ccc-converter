@@ -10,6 +10,30 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.59 — 2026-06-09
+--------------------------------------------------------------------------------
+FujiNet — FIX: I/O error reading the mounted disk (LSEEK missing the position)
+  • After mounting the right .dsk, the CoCo gave an I/O error on DIR. Cause: at MOUNT we advertise TNFS version
+    1.2 (0x0102); per the protocol, for version > 0x0100 the LSEEK (0x25) response MUST include the NEW file
+    position (u32 LE) after the status byte. Our LSEEK replied with the status only → the board read 4 bytes
+    short, desynced the file position, and every sector read landed at the wrong offset (I/O error). Fixed:
+    LSEEK now returns status + position. Validated tools/tnfsdirxtest.ts (32/32: LSEEK returns the position and
+    READ after seek is correct).
+
+FujiNet — MUCH FASTER server access (client)
+  • Listing: the client now uses OPENDIRX (0x17)/READDIRX (0x18) — many entries per round-trip WITH size and
+    type, so no per-file STAT. It used to be ~2N+3 round-trips per folder (1 name per READDIR + 1 STAT per
+    file); now ~1–3 round-trips. For a folder with 100 files (150 ms RTT) it drops from ~30 s to < 1 s. Auto
+    fallback to the old method (OPENDIR/READDIR+STAT) on servers without OPENDIRX. Validated against the real
+    hub tnfs.fujinet.online (/COCO, 11 files, 0.91 s) and on loopback.
+  • Download: read block raised 512 → 1024 bytes per READ (half the round-trips; no UDP fragmentation).
+  • Note: the board is also fast because it reads the disk ON-DEMAND (only the sectors used); the app downloads
+    the whole file so it can edit it — so the download isn't instant, but it's ~2× faster now.
+
+Splash — new image
+  • Startup screen updated (amostras/new2splash.png → resources/splash/splash.png, 760×567, transparency kept).
+
+--------------------------------------------------------------------------------
 v1.0.58 — 2026-06-09
 --------------------------------------------------------------------------------
 FujiNet — FIX: the board always mounted the FIRST file in the folder (not the chosen one)

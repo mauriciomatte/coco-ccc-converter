@@ -10,7 +10,9 @@ const TIMEOUT_MS = 3000;
 const RETRIES = 4;
 const EOF = 0x21;           // código TNFS de fim-de-diretório / fim-de-arquivo
 const MAX_ENTRIES = 600;    // teto de itens por pasta (segurança)
-const READ_CHUNK = 512;     // bytes por READ (cabe num datagrama)
+// Bytes por READ. 1024 ≈ dobro do antigo (512) → metade das idas-e-voltas no download, sem fragmentar UDP
+// (datagrama ~1031 B, bem abaixo da MTU). O servidor devolve no máx. o que couber no buffer dele.
+const READ_CHUNK = 1024;
 
 interface Session { sock: dgram.Socket; host: string; port: number; connId: number; seq: number; aborted?: boolean; abortHook?: (() => void) | null }
 export interface TnfsEntry { name: string; isDir: boolean; size: number }
@@ -108,34 +110,73 @@ async function statPath(sess: Session, path: string): Promise<{ isDir: boolean; 
   return { isDir: (mode & 0xf000) === 0x4000, size };
 }
 
-/** Lista uma pasta (nome + dir? + tamanho). Faz mount→opendir→readdir(loop)→stat(cada)→closedir→umount.
- *  opts.onAbort recebe uma função de cancelamento REAL (fecha o socket e interrompe a espera/MOUNT). */
+const sortEntries = (e: TnfsEntry[]) => e.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+
+// RÁPIDO: OPENDIRX(0x17)+READDIRX(0x18) — traz VÁRIAS entradas por ida-e-volta JÁ com tamanho e flag de
+// pasta (dispensa o STAT por arquivo). Retorna null se o servidor não suportar (status != 0) → cai no método
+// antigo. Cada entrada: flags(1)+size(4 LE)+mtime(4)+ctime(4)+nome\0.
+async function listViaOpendirx(sess: Session, p: string): Promise<TnfsEntry[] | null> {
+  // OPENDIRX: diropts(1)=0 + sortopts(1)=0 + maxresults(2 LE)=0 (ilimitado) + pattern\0 (""=tudo) + path\0
+  const od = await transact(sess, 0x17, Buffer.concat([Buffer.from([0, 0]), u16le(0), cstr(''), cstr(p)]));
+  if (od[4] !== 0) return null;          // EINVAL/erro → servidor sem OPENDIRX → fallback
+  const handle = od[5];
+  const entries: TnfsEntry[] = [];
+  let guard = 0;
+  while (guard++ < 2000) {
+    const rd = await transact(sess, 0x18, Buffer.from([handle, 0])); // READDIRX: handle + wantCount(0=quantas couberem)
+    if (rd[4] === EOF) break;             // 0x21 = fim do diretório
+    if (rd[4] !== 0) break;
+    const n = rd[5];
+    const dirEof = (rd[6] & 0x01) === 1;  // flag de fim na mesma resposta
+    let off = 9;                          // status(1)+count(1)+dirstatus(1)+telldir(2) já consumidos
+    for (let i = 0; i < n && off + 13 <= rd.length; i++) {
+      const flags = rd[off];
+      const size = rd.readUInt32LE(off + 1);
+      let e = off + 13; while (e < rd.length && rd[e] !== 0) e++;
+      const name = rd.toString('latin1', off + 13, e);
+      off = e + 1;
+      if (name && name !== '.' && name !== '..') entries.push({ name, isDir: (flags & 0x01) === 1, size });
+    }
+    if (dirEof || n === 0 || entries.length > MAX_ENTRIES) break;
+  }
+  await transact(sess, 0x12, Buffer.from([handle])).catch(() => {});
+  return sortEntries(entries);
+}
+
+// COMPATÍVEL (lento): OPENDIR(0x10)+READDIR(0x11) 1 nome por vez + STAT(0x24) por arquivo. Para servidores
+// antigos que não têm OPENDIRX. É o gargalo que torna a navegação lenta em pastas grandes.
+async function listViaOpendir(sess: Session, p: string): Promise<TnfsEntry[]> {
+  const od = await transact(sess, 0x10, cstr(p));
+  if (od[4] !== 0) throw new Error(`TNFS: OPENDIR falhou em "${p}" (status 0x${od[4].toString(16)}).`);
+  const handle = od[5];
+  const names: string[] = [];
+  for (let i = 0; i < MAX_ENTRIES; i++) {
+    const rd = await transact(sess, 0x11, Buffer.from([handle]));
+    if (rd[4] === EOF || rd[4] !== 0) break;
+    let end = 5; while (end < rd.length && rd[end] !== 0) end++;
+    const name = rd.toString('latin1', 5, end);
+    if (name && name !== '.' && name !== '..') names.push(name);
+  }
+  await transact(sess, 0x12, Buffer.from([handle])).catch(() => {});
+  const entries: TnfsEntry[] = [];
+  for (const name of names) {
+    try { const st = await statPath(sess, joinPath(p, name)); entries.push({ name, isDir: st.isDir, size: st.size }); }
+    catch { entries.push({ name, isDir: false, size: 0 }); }
+  }
+  return sortEntries(entries);
+}
+
+/** Lista uma pasta (nome + dir? + tamanho). Tenta o método RÁPIDO (OPENDIRX/READDIRX) e cai no antigo
+ *  (OPENDIR/READDIR+STAT) se o servidor não suportar. opts.onAbort recebe um cancelamento REAL. */
 export async function tnfsList(host: string, path = '/', opts?: { onAbort?: (cancel: () => void) => void }): Promise<TnfsEntry[]> {
   const p = path && path.startsWith('/') ? path : '/' + (path || '');
   const sess = await openSocket(host);
   opts?.onAbort?.(() => abortSession(sess)); // arma o cancelamento ANTES do MOUNT (onde servidor-fora-do-ar trava)
   try {
     await mountSess(sess);
-    const od = await transact(sess, 0x10, cstr(p));
-    if (od[4] !== 0) throw new Error(`TNFS: OPENDIR falhou em "${p}" (status 0x${od[4].toString(16)}).`);
-    const handle = od[5];
-    const names: string[] = [];
-    for (let i = 0; i < MAX_ENTRIES; i++) {
-      const rd = await transact(sess, 0x11, Buffer.from([handle]));
-      if (rd[4] === EOF) break;
-      if (rd[4] !== 0) break;
-      let end = 5; while (end < rd.length && rd[end] !== 0) end++;
-      const name = rd.toString('latin1', 5, end);
-      if (name && name !== '.' && name !== '..') names.push(name);
-    }
-    await transact(sess, 0x12, Buffer.from([handle])).catch(() => {});
-    const entries: TnfsEntry[] = [];
-    for (const name of names) {
-      try { const st = await statPath(sess, joinPath(p, name)); entries.push({ name, isDir: st.isDir, size: st.size }); }
-      catch { entries.push({ name, isDir: false, size: 0 }); }
-    }
-    // pastas primeiro, depois alfabético
-    entries.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
+    let entries: TnfsEntry[] | null = null;
+    try { entries = await listViaOpendirx(sess, p); } catch { entries = null; } // OPENDIRX falhou → fallback
+    if (!entries) entries = await listViaOpendir(sess, p);
     return entries;
   } finally { await umount(sess); }
 }

@@ -430,8 +430,14 @@ export function startTnfsServer(provider: TnfsProvider, onLog?: (pt: string, en:
             if (!f) { err(rinfo, connId, seq, cmd, EBADF); break; }
             f.pos = whence === 1 ? f.pos + offv : whence === 2 ? f.data.length + offv : offv;
             if (f.pos < 0) f.pos = 0;
-            if (!f.writable && f.pos > f.data.length) f.pos = f.data.length; // leitura: clampa; escrita: permite estender (esparso)
-            reply(rinfo, connId, seq, cmd, Buffer.from([0x00])); break;
+            // ⚠️ CRÍTICO: como anunciamos versão TNFS 1.2 (>0x0100) no MOUNT, a resposta do LSEEK DEVE incluir a
+            // NOVA POSIÇÃO (u32 LE) após o status — senão a placa lê 4 bytes a menos, dessincroniza a posição do
+            // arquivo e toda leitura de setor cai no offset errado (erro de I/O no DIR do CoCo).
+            {
+              if (!f.writable && f.pos > f.data.length) f.pos = f.data.length; // leitura: clampa; escrita: permite estender (esparso)
+              const b = Buffer.alloc(5); b[0] = 0x00; b.writeUInt32LE(f.pos >>> 0, 1);
+              reply(rinfo, connId, seq, cmd, b); break;
+            }
           }
           case 0x23: { // CLOSE — se gravável e "sujo", faz flush do buffer p/ o arquivo real
             const f = sess.files.get(payload[0]); sess.files.delete(payload[0]);
