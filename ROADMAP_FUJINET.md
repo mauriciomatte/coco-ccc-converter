@@ -35,10 +35,20 @@
 > no servidor; (2) a placa montava sempre o 1º arquivo → faltavam TELLDIR/SEEKDIR; (3) erro de I/O no DIR → o
 > LSEEK precisava devolver a posição. Tudo validado por `tools/tnfsdirxtest.ts` (32/32) e no hub real.
 >
-> **AINDA PENDENTE:** **M2** "Enviar p/ dispositivo" (CoCoSDC=cópia p/ drive Windows; GW já existe; MiniIDE
-> write-back+reflash); fluxo "baixar ARQUIVO avulso → INJETAR na imagem ativa"; **M4** (opc.) DriveWire serial
-> (`serialport` = módulo nativo); **boot/validação REAIS na placa do usuário** (humano — em andamento, já lista,
-> monta o arquivo certo e o DIR funciona após o fix do LSEEK).
+> **ATUALIZAÇÃO 2026-06-11 — M2 FEITO + GRAVAR CARTÃO CF FEITO (uncommitted):**
+> - **M2 "Enviar p/ dispositivo"** — botão Send na toolbar DSK (`handleSendToDevice`) injeta o arquivo baixado
+>   da FujiNet na imagem ativa do painel.
+> - **GRAVAR a `.img` num cartão CF direto do app** — botão Database (laranja), modal `cfModal` com checagem de
+>   Administrador, lista só de drives removíveis, confirmação digitando o nº do disco e barra de progresso. A
+>   escrita crua é feita por **.NET `FileStream` via PowerShell** (o `fs` do Node corrompe `\\.\PhysicalDriveN`)
+>   após `Clear-Disk` (remove o volume montado; mídia removível NÃO aceita offline). **PENDENTE: teste físico
+>   real** (gravar um CF e bootar) — ver [[driveweire-and-miniide-formats]] / ROADMAP_MINIIDE.
+>
+> **AINDA PENDENTE:** fluxo "baixar ARQUIVO avulso → INJETAR na imagem ativa" (parcial via M2); **M4** (opc.)
+> DriveWire serial (`serialport` = módulo nativo); **Fase 4 — write-back em discos INTERNOS de containers**
+> (MiniIDE/CoCoSDC/DriveWire — remap de setor + bookkeeping de FAT/slot, risco de corrupção); **boot/validação
+> REAIS na placa do usuário** (humano — em andamento, já lista, monta o arquivo certo e o DIR funciona após o
+> fix do LSEEK).
 >
 > **DESCARTADO (2026-06-10):** **autenticação TNFS por usuário/senha** — a placa FujiNet REAL monta o nosso
 > servidor de forma **anônima** sem problema, então o login por senha saiu do roadmap. O servidor continua

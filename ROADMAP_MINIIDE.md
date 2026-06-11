@@ -10,8 +10,18 @@
 > container abrem e editam (com trava de área de sistema). Escrita **FAT** (CoCoSDC/RetroRewind) também
 > entregue.
 >
-> **PENDENTE:** **Fase F — formatador de imagem MiniIDE do zero** (marcado como NÃO essencial: os cartões
-> existentes já são lidos/editados); **estudo profundo do catálogo** (setor 322: nome + cache de granules).
+> **ATUALIZAÇÃO 2026-06-11 — GRAVAR a `.img` editada num cartão CF direto do app (reflash) IMPLEMENTADO
+> (uncommitted):** botão Database (laranja) na toolbar DSK quando o painel ativo é um container com
+> `container.filePath` → modal `cfModal`: checa Administrador (`cf-is-admin`), lista **só** drives removíveis
+> (`cf-list-removable`, exclui sistema/boot), exige confirmação digitando o nº do disco, e grava com barra de
+> progresso (`cf-flash`). Achados da depuração (2026-06-11): mídia removível **não** aceita `Set-Disk -IsOffline`;
+> a escrita usa `Clear-Disk` (remove o volume montado) + **.NET `FileStream` via PowerShell** (o `fs` do Node
+> corrompe `\\.\PhysicalDriveN` → EIO). **PENDENTE — TESTE FÍSICO REAL** (gravar um CF de verdade e bootar a
+> MiniIDE no hardware; rodar o app como ADMINISTRADOR). Alternativa: balenaEtcher na `.img` salva.
+>
+> **PENDENTE:** **teste físico do reflash** (acima); **Fase F — formatador de imagem MiniIDE do zero** (NÃO
+> essencial: os cartões existentes já são lidos/editados); **estudo profundo do catálogo** (setor 322: nome +
+> cache de granules).
 
 ## ✅ Concluído (leitura)
 - **Layout descoberto e documentado** (ver `miniide.txt`).

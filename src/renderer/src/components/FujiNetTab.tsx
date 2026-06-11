@@ -82,6 +82,10 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
   const [host, setHost] = useState('tnfs.fujinet.online');
   const [tnfsPath, setTnfsPath] = useState('/');
   const [tnfsEntries, setTnfsEntries] = useState<null | { name: string; isDir: boolean; size: number }[]>(null);
+  const [tnfsSel, setTnfsSel] = useState<string | null>(null); // item selecionado (1 clique seleciona, 2 cliques age)
+  useEffect(() => { setTnfsSel(null); }, [tnfsEntries]); // troca de pasta → limpa a seleção
+  // Ação do item selecionado (ou de um item específico): pasta → entra; arquivo → baixa e abre.
+  const tnfsActEntry = (e: { name: string; isDir: boolean; size: number }) => { if (e.isDir) tnfsGo(jp(tnfsPath, e.name)); else tnfsOpenFile(e.name, e.size); };
   const [bigDl, setBigDl] = useState<null | { name: string; size: number }>(null); // confirmação p/ arquivo grande
   const [dlGot, setDlGot] = useState(0);    // bytes baixados (progresso)
   const [dlTotal, setDlTotal] = useState(0); // tamanho total (do STAT/listagem)
@@ -350,14 +354,20 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
               <>
                 <div className="flex items-center gap-2 text-[10px] text-[var(--text-secondary)]">
                   <button onClick={() => tnfsGo(parentOf(tnfsPath))} disabled={busy || tnfsPath === '/'} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Subir', 'Up')}><ArrowUp size={12} /></button>
-                  <span className="font-mono truncate" title={tnfsPath}>{tnfsPath}</span>
+                  <span className="font-mono truncate flex-1" title={tnfsPath}>{tnfsPath}</span>
+                  {(() => { const sel = tnfsEntries.find(e => e.name === tnfsSel); return (
+                    <button onClick={() => sel && tnfsActEntry(sel)} disabled={busy || !sel} className="dsk-tool flex items-center gap-1" style={{ padding: '2px 8px', color: sel ? 'var(--primary)' : undefined }}
+                      title={t('Abre o item selecionado (ou dê DUPLO-CLIQUE nele)', 'Open the selected item (or DOUBLE-CLICK it)')}>
+                      {sel?.isDir ? <Folder size={12} /> : <Download size={12} />}{sel?.isDir ? t('Entrar', 'Enter') : t('Abrir', 'Open')}
+                    </button>
+                  ); })()}
                 </div>
                 <div className="flex-1 flex flex-col gap-0.5 overflow-y-auto" style={{ minHeight: 0 }}>
                   {tnfsEntries.length === 0 && <div className="text-[10px] text-[var(--text-muted)] px-1 py-2">{t('(pasta vazia)', '(empty folder)')}</div>}
                   {tnfsEntries.map(e => (
                     <button key={e.name} disabled={busy}
-                      onClick={() => e.isDir ? tnfsGo(jp(tnfsPath, e.name)) : tnfsOpenFile(e.name, e.size)}
-                      className="dsk-tool flex items-center gap-2 justify-start text-left" style={{ padding: '4px 8px' }} title={e.name}>
+                      onClick={() => setTnfsSel(e.name)} onDoubleClick={() => tnfsActEntry(e)}
+                      className="dsk-tool flex items-center gap-2 justify-start text-left" style={{ padding: '4px 8px', background: tnfsSel === e.name ? 'var(--primary-glow)' : undefined, borderColor: tnfsSel === e.name ? 'var(--primary)' : undefined }} title={t(`${e.name} — 1 clique seleciona, duplo-clique abre`, `${e.name} — single click selects, double-click opens`)}>
                       {e.isDir ? <Folder size={13} className="flex-shrink-0" style={{ color: '#c4b5fd' }} /> : <Download size={13} className="flex-shrink-0" />}
                       <span className="truncate flex-1 text-left normal-case">{e.name}</span>
                       {!e.isDir && <span className="text-[9px] text-[var(--text-muted)] flex-shrink-0">{Math.max(1, Math.round(e.size / 1024))} KB</span>}
@@ -368,8 +378,8 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
             )}
             {tnfsEntries === null && (
               <div className="text-[9px] text-[var(--text-muted)] leading-tight">
-                {t('Conecte a um hub TNFS (UDP 16384), navegue as pastas e clique numa imagem p/ baixar e abrir. Ex.: tnfs.fujinet.online → pasta COCO.',
-                   'Connect to a TNFS hub (UDP 16384), browse folders and click an image to download and open. E.g.: tnfs.fujinet.online → COCO folder.')}
+                {t('Conecte a um hub TNFS (UDP 16384). 1 clique SELECIONA um item; DUPLO-CLIQUE (ou "Abrir/Entrar") age: pasta → entra; imagem → baixa e abre. Ex.: tnfs.fujinet.online → pasta COCO.',
+                   'Connect to a TNFS hub (UDP 16384). 1 click SELECTS an item; DOUBLE-CLICK (or "Open/Enter") acts: folder → enter; image → download and open. E.g.: tnfs.fujinet.online → COCO folder.')}
               </div>
             )}
           </div>

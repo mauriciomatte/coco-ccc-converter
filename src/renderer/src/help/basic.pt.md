@@ -33,14 +33,22 @@ toolbar e a área de edição. O botão **?** (na toolbar) reabre esta ajuda.
 
 ## 1. Como um programa chega aqui
 
-- **Abrir arquivo .BAS (texto)** (ícone de pasta na toolbar) — abre um `.bas/.txt` em **ASCII** do seu PC.
+- **Abrir** (ícone de pasta na toolbar) — abre um `.bas/.txt` em **ASCII** do seu PC, **ou uma fita `.CAS`**:
+  nesse caso o app extrai o **1º programa BASIC** da fita e o **detokeniza** para o editor (a aba adota o nome
+  do arquivo). Para código de máquina/dados numa fita, use a aba **K7**.
 - **Da aba K7** — botão **"Abrir no BASIC"**: manda o BASIC lido da fita (já detokenizado).
-- **Da aba DSK** — botão **"Editar .BAS"**: manda um `.BAS` do disco (precisa estar em **ASCII**; veja a
-  seção 7).
+- **Da aba DSK** — botão **"Editar"**: manda um programa BASIC do disco, **independente da extensão**
+  (`.BAS`, `.BAT`, `.TXT`…). O app **confirma o tipo**: programa BASIC (tokenizado ou ASCII) é aberto
+  (detokeniza se preciso) preservando o **nome e a extensão originais**; **Linguagem de Máquina é recusada**
+  (use o **HEX/DISASM** na aba Geral).
 
-Se já houver um programa no editor, o app pergunta antes de substituir. Ao abrir de um disco, aparece o selo
-**"Editando"** (com o nome do arquivo na dica) e um botão **Salvar** que regrava **no próprio disco de
-origem** (seção 6).
+Se já houver um programa no editor, o app pergunta antes de substituir. Quando há **alterações não salvas**, o
+**nome da aba fica em vermelho** (com "●") e o botão **Salvar** acende; ao salvar, ele esmaece. O **Salvar**
+regrava **no próprio disco de origem** (seção 6), mantendo nome/extensão. Se você **fechar/limpar o painel DSK**
+de origem com edições pendentes, o app **avisa** (o texto continua aqui; grave com "Novo DSK em →").
+
+> Em **Procurar/Substituir**, ao lado de "Próximo" aparece a **contagem de ocorrências** (ex.: `3/7 ocorr.`);
+> a busca ignora maiúsculas/minúsculas.
 
 > Se o editor estiver **vazio**, todos os botões que precisam de conteúdo (Salvar, .CAS, Rodar, Novo DSK +
 > Salvar, Salvar in-place) ficam **desabilitados** (esmaecidos).

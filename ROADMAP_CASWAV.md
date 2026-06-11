@@ -13,8 +13,9 @@
 > EOF; IPC `cas-fix`). Validado por `tools/casfixtest.ts` (24/24: íntegro, checksum corrompido, EOF ausente,
 > lixo/falso-sync, multi-arquivo, e disco→cas com load/exec do LOADM).
 >
-> **PENDENTE:** **D11 — sabor Dragon** (auto-switch da máquina XRoar p/ Dragon ao testar); famílias de
-> loader além de SoftKristian.
+> **ATUALIZAÇÃO 2026-06-11:** **D11 — sabor Dragon FEITO** (v1.0.57: o XRoar auto-troca p/ Dragon 64 ao
+> abrir/testar disco/fita Dragon — ver ROADMAP_OS9). **PENDENTE:** famílias de loader além de SoftKristian
+> (ligado ao ROADMAP_RECUPERACAO / EPROM-cartucho).
 
 Recurso **futuro**. Origem: análise do material de preservação do worldofdragon.org, PyDragon32/PyDC,
 cas2bas e tlindner (2026-06-03). Estende e absorve o `ROADMAP_WAV.md` (que cobria só `encodeWav`).

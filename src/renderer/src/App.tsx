@@ -45,7 +45,8 @@ import {
   ArrowRightLeft,
   MoreHorizontal,
   Search,
-  Globe
+  Globe,
+  Send
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import FujiNetTab from './components/FujiNetTab';
@@ -106,9 +107,9 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     tabDsk: 'DSK',
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
-    tabBasic: 'BASIC',
+    tabBasic: 'BAS',
     tabFujinet: 'FujiNet',
-    hexEditorBtn: 'Editor Hexadecimal',
+    hexEditorBtn: 'Editor Hexadecimal / Desmontador 6809 (HEX/DISASM)',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Leitura/Gravação de Discos Reais',
     gwFormatLabel: 'Formato (CoCo / Dragon)',
@@ -157,7 +158,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolRedo: 'Refazer',
     dskToolSort: 'Ordenar A-Z (disco ativo)',
     dskToolSortAll: 'Ordenar Todos os discos do contêiner',
-    dskToolXroar: 'Testar painel/DSK no XRoar (drive 0)',
+    dskToolXroar: 'Testar painel/DSK no XRoar (escolha o drive ao lado)',
     dskToolXroarShort: 'Testar Painel',
     dskToolGw: 'Gravar painel ativo em disco físico (Greaseweazle)',
     dskToolGwShort: 'Gravar GW',
@@ -277,9 +278,9 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     tabDsk: 'DSK',
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
-    tabBasic: 'BASIC',
+    tabBasic: 'BAS',
     tabFujinet: 'FujiNet',
-    hexEditorBtn: 'Hex Editor',
+    hexEditorBtn: 'Hex Editor / 6809 Disassembler (HEX/DISASM)',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Read/Write Real Disks',
     gwFormatLabel: 'Format (CoCo / Dragon)',
@@ -328,7 +329,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolRedo: 'Redo',
     dskToolSort: 'Sort A-Z (active disk)',
     dskToolSortAll: 'Sort All container disks',
-    dskToolXroar: 'Test pane/DSK in XRoar (drive 0)',
+    dskToolXroar: 'Test pane/DSK in XRoar (pick the drive beside it)',
     dskToolXroarShort: 'Test Pane',
     dskToolGw: 'Write active pane to physical disk (Greaseweazle)',
     dskToolGwShort: 'Write GW',
@@ -509,12 +510,18 @@ export default function App() {
   // DERIVADOS do documento ativo (leituras inalteradas no resto do código); só os setters viram updates.
   // `epoch` muda a cada CARGA EXTERNA no doc → força a remontagem do editor (key) p/ reposicionar o caret
   // mesmo quando a carga cai na própria aba ativa (a digitação NÃO mexe no epoch, então não remonta).
-  type BasicDoc = { id: number; text: string; name: string; source: BasicSrc | null; epoch: number };
+  // `savedText` = o texto da ÚLTIMA gravação (disco/in-place) → `dirty` = text ≠ savedText (alterações
+  // não salvas) → colore o "Salvar" e deixa o NOME da aba em vermelho.
+  type BasicDoc = { id: number; text: string; name: string; source: BasicSrc | null; epoch: number; savedText: string };
   const MAX_BASIC_TABS = 6;
+  const isDocDirty = (d: BasicDoc) => d.text !== d.savedText;
+  // Extensão ORIGINAL do arquivo aberto no editor (da entry de origem) — preserva ".BAT"/".TXT"/etc. ao
+  // exibir a aba e ao sugerir o nome no "Novo DSK". Sem origem (novo/da fita) → 'BAS'.
+  const docOrigExt = (d: BasicDoc) => ((d.source?.entry?.ext || 'BAS').toString().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'BAS');
   // Nome-padrão ÚNICO "SEMNOME{N}" (N = menor 1..6 não usado) — cada aba precisa de nome distinto porque o
   // "Novo DSK + Salvar" usa o nome da aba ATIVA como nome do arquivo (8 letras, formato CoCo).
   const untitledName = (docs: BasicDoc[]): string => { for (let n = 1; n <= MAX_BASIC_TABS; n++) { const nm = 'SEMNOME' + n; if (!docs.some(d => d.name === nm)) return nm; } return 'SEMNOME' + (docs.length + 1); };
-  const [basicDocs, setBasicDocs] = useState<BasicDoc[]>([{ id: 1, text: '', name: 'SEMNOME1', source: null, epoch: 0 }]);
+  const [basicDocs, setBasicDocs] = useState<BasicDoc[]>([{ id: 1, text: '', name: 'SEMNOME1', source: null, epoch: 0, savedText: '' }]);
   const [basicActive, setBasicActive] = useState(0);
   const [basicRenaming, setBasicRenaming] = useState<number | null>(null); // índice da aba em edição inline de nome
   const basicIdSeq = useRef(2);
@@ -527,7 +534,7 @@ export default function App() {
   const setBasicName = (v: string) => updateActiveDoc({ name: v });
   const setBasicSource = (v: BasicSrc | null) => updateActiveDoc({ source: v });
   const setBasicDocName = (i: number, name: string) => setBasicDocs(ds => ds.map((d, k) => k === i ? { ...d, name } : d)); // renomeia a aba i
-  const newBasicDoc = (init?: Partial<BasicDoc>): BasicDoc => ({ id: basicIdSeq.current++, text: '', name: '', source: null, epoch: 0, ...init });
+  const newBasicDoc = (init?: Partial<BasicDoc>): BasicDoc => { const b = { id: basicIdSeq.current++, text: '', name: '', source: null as BasicSrc | null, epoch: 0, savedText: '', ...init }; return { ...b, savedText: init?.savedText ?? b.text }; }; // savedText default = text → não-dirty
   const addBasicTab = () => { if (basicDocs.length >= MAX_BASIC_TABS) return; setBasicDocs(ds => [...ds, newBasicDoc({ name: untitledName(ds) })]); setBasicActive(basicDocs.length); };
   const closeBasicTab = (i: number) => {
     setBasicDocs(ds => {
@@ -538,11 +545,12 @@ export default function App() {
     });
   };
   // Modais do editor BASIC
-  const [basicSaveConfirm, setBasicSaveConfirm] = useState<{ name: string; program: string; pane: 'A' | 'B' } | null>(null);
+  const [basicSaveConfirm, setBasicSaveConfirm] = useState<{ name: string; ext: string; program: string; pane: 'A' | 'B' } | null>(null);
   const [basQuickView, setBasQuickView] = useState<{ name: string; text: string; ok: boolean } | null>(null); // visualização rápida .BAS (somente leitura)
   // Modal "todas as 6 abas ocupadas" — escolher em qual aba colocar o código exportado, ou cancelar.
   const [basicLoadPick, setBasicLoadPick] = useState<{ text: string; label: string; source: BasicSrc | null; name: string } | null>(null);
   const [basicCloseConfirm, setBasicCloseConfirm] = useState<number | null>(null); // índice da aba (não vazia) a fechar
+  const [clearPaneConfirm, setClearPaneConfirm] = useState<{ which: 'A' | 'B'; names: string[] } | null>(null); // limpar painel c/ BASIC não salvo
   // Modal: o arquivo de origem sumiu / disco foi trocado ao tentar "Salvar" in-place.
   const [basicUpdateConfirm, setBasicUpdateConfirm] = useState<{ which: 'A' | 'B'; name: string; reason: 'missing' | 'diskChanged' } | null>(null);
   const [dskDirty, setDskDirty] = useState<{ A: boolean; B: boolean }>({ A: false, B: false }); // alterações não salvas por painel
@@ -571,6 +579,16 @@ export default function App() {
   const [gwReadConfirm, setGwReadConfirm] = useState<boolean>(false); // modal: sobrescrever painel ao ler
   const [dskGwConfirm, setDskGwConfirm] = useState<boolean>(false); // modal: confirmar gravação no GW a partir da aba DSK
   const [xroarTestConfirm, setXroarTestConfirm] = useState<boolean>(false); // modal: avisar que o XRoar será resetado ao testar o painel
+  const [xroarDrive, setXroarDrive] = useState<number>(0); // drive de destino (0–3) ao testar painel/arquivo no XRoar
+  // Modal "Gravar em cartão CF" (reflash da .img do contêiner): lista de drives removíveis + progresso.
+  const [cfModal, setCfModal] = useState<null | { filePath: string; fileName: string }>(null);
+  const [cfDrives, setCfDrives] = useState<null | { number: number; name: string; size: number; busType: string }[]>(null);
+  const [cfSel, setCfSel] = useState<number | null>(null);
+  const [cfTyped, setCfTyped] = useState('');      // confirmação: o usuário digita o nº do disco
+  const [cfBusy, setCfBusy] = useState(false);
+  const [cfProgress, setCfProgress] = useState(0); // 0..1
+  const [cfAdmin, setCfAdmin] = useState<boolean | null>(null); // app rodando como Administrador? (null = checando)
+  const [cfError, setCfError] = useState<string | null>(null);  // erro da última gravação (mostrado no modal)
   const [formatConfirm, setFormatConfirm] = useState<{ which: 'A' | 'B' } | null>(null); // modal: formatar a imagem do painel (rápida/completa)
   const [renameDrive, setRenameDrive] = useState<{ which: 'A' | 'B'; current: string; named: boolean } | null>(null); // modal: nomear/renomear drive SIDEKICK (MiniIDE)
   const [imgWriteConfirm, setImgWriteConfirm] = useState<{ which: 'A' | 'B'; fileName: string; slot: number; pendingSwitch?: number; kind?: 'miniide' | 'cocosdc' } | null>(null); // modal: confirmar gravação no .img (MiniIDE / CoCoSDC)
@@ -1504,6 +1522,10 @@ export default function App() {
       full = norm.image;
       addLog(`DMK decodificado → imagem de setores (${(full.length / 1024).toFixed(0)} KB).`,
              `DMK decoded → raw sector image (${(full.length / 1024).toFixed(0)} KB).`, 'info');
+    } else if (norm?.success && norm.jvc) {
+      full = norm.image; // C8 — cabeçalho JVC removido → setores alinhados
+      addLog(`Cabeçalho JVC de ${norm.jvcHeaderLen} byte(s) removido (${norm.jvcSectors} setores/trilha, ${norm.jvcSides} lado(s)).`,
+             `JVC header of ${norm.jvcHeaderLen} byte(s) stripped (${norm.jvcSectors} sectors/track, ${norm.jvcSides} side(s)).`, 'info');
     }
     let count = (full.length > 0 && full.length % STD_DISK === 0) ? full.length / STD_DISK : 1;
     if (count > 1) {
@@ -2212,10 +2234,47 @@ export default function App() {
     const targetPlatform: 'coco' | 'dragon' = pane.format === 'dragon' ? 'dragon' : 'coco';
     if (platform !== targetPlatform) { setPlatform(targetPlatform); addLog(`Plataforma do XRoar ajustada para ${targetPlatform === 'dragon' ? 'Dragon' : 'CoCo'} (formato do disco).`, `XRoar platform set to ${targetPlatform === 'dragon' ? 'Dragon' : 'CoCo'} (disk format).`, 'info'); }
     const d = xroarDiskFor(pane);
-    setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, reset });
+    setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: xroarDrive, reset });
     setActiveTab('xroar');
-    addLog(reset ? `XRoar resetado e recebendo "${d.name}" (drive 0).` : `Disco "${d.name}" montado no XRoar SEM reset (drive 0).`,
-           reset ? `XRoar reset and loading "${d.name}" (drive 0).` : `Disk "${d.name}" mounted in XRoar WITHOUT reset (drive 0).`, 'info');
+    addLog(reset ? `XRoar resetado e recebendo "${d.name}" (drive ${xroarDrive}).` : `Disco "${d.name}" montado no XRoar SEM reset (drive ${xroarDrive}).`,
+           reset ? `XRoar reset and loading "${d.name}" (drive ${xroarDrive}).` : `Disk "${d.name}" mounted in XRoar WITHOUT reset (drive ${xroarDrive}).`, 'info');
+  };
+
+  // M2 — "Enviar para dispositivo": salva o disco do painel ativo como .dsk no local escolhido (ex.: o
+  // cartão CoCoSDC montado como drive no Windows, ou uma pasta p/ depois copiar). Ponte offline, sem placa.
+  const handleSendToDevice = async () => {
+    const pane = getPane(activePane);
+    if (!pane?.buffer) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    const base = (pane.fileName || 'disco').replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9._-]/g, '_') || 'disco';
+    const r = await window.cocoApi.saveCartridgeFile(pane.buffer, base + '.dsk',
+      currentLang === 'pt-br' ? 'Enviar para dispositivo — salvar .dsk (ex.: no cartão CoCoSDC)' : 'Send to device — save .dsk (e.g. onto the CoCoSDC card)',
+      [{ name: 'RS-DOS Disk (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]);
+    if (r?.success) addLog(`Disco enviado: ${r.filePath} — grave/copie no dispositivo (CoCoSDC, etc.).`, `Disk sent: ${r.filePath} — write/copy it to the device (CoCoSDC, etc.).`, 'success');
+    else if (r?.error) addLog(`Enviar p/ dispositivo: ${r.error}`, `Send to device: ${r.error}`, 'error');
+  };
+
+  // Abre o modal "Gravar em cartão CF" (reflash da .img do contêiner do painel ativo) e lista os removíveis.
+  const openCfReflash = async () => {
+    const pane = getPane(activePane);
+    const fp = pane?.container?.filePath;
+    if (!fp) { addLog('Abra uma imagem de contêiner (.img: MiniIDE/CoCoSDC) no painel ativo para gravar num cartão CF.', 'Open a container image (.img: MiniIDE/CoCoSDC) in the active pane to write to a CF card.', 'warn'); return; }
+    setCfModal({ filePath: fp, fileName: pane.container.fileName || fp.split(/[\\/]/).pop() || fp });
+    setCfDrives(null); setCfSel(null); setCfTyped(''); setCfProgress(0); setCfBusy(false); setCfError(null); setCfAdmin(null);
+    window.cocoApi.cfIsAdmin?.().then((a: any) => setCfAdmin(!!a?.admin)).catch(() => setCfAdmin(false));
+    const r = await window.cocoApi.cfListRemovable();
+    if (!r?.success) { addLog(`Listar cartões: ${r?.error || '?'}`, `List cards: ${r?.error || '?'}`, 'warn'); setCfDrives([]); return; }
+    setCfDrives(r.drives);
+  };
+  const doCfFlash = async () => {
+    if (!cfModal || cfSel == null) return;
+    setCfBusy(true); setCfProgress(0); setCfError(null);
+    const off = window.cocoApi.onCfFlashProgress?.((p: any) => setCfProgress(p.total ? p.written / p.total : 0));
+    try {
+      const r = await window.cocoApi.cfFlash(cfModal.filePath, cfSel);
+      if (r?.success) { addLog(`Cartão CF gravado: ${(r.bytes / 1048576).toFixed(0)} MB no disco ${cfSel}. Pode ejetar com segurança.`, `CF card written: ${(r.bytes / 1048576).toFixed(0)} MB to disk ${cfSel}. Safe to eject.`, 'success'); setCfModal(null); }
+      else { const msg = r?.error || '?'; setCfError(msg); addLog(`Gravar CF: ${msg}`, `Write CF: ${msg}`, 'error'); } // mantém o modal aberto p/ o usuário LER o erro
+    } catch (err: any) { const msg = err?.message || String(err); setCfError(msg); addLog(`Gravar CF: ${msg}`, `Write CF: ${msg}`, 'error'); }
+    finally { off?.(); setCfBusy(false); }
   };
 
   // Ponte OS-9 → XRoar: monta o disco OS-9 (em memória) numa drive do emulador. `mode`:
@@ -2334,18 +2393,21 @@ export default function App() {
   // Aba BASIC: grava o texto como .BAS ASCII (tipo 0, flag 0xFF) num painel DSK (A/B). O CoCo
   // carrega esse formato com LOAD"NOME" (re-tokeniza na carga) — sem precisar tokenizar aqui.
   // Se o painel de destino já tiver um disco com arquivos, pede confirmação antes.
-  const handleBasicSaveToDisk = (name: string, program: string) => {
+  const handleBasicSaveToDisk = (name: string, ext: string, program: string) => {
     if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    const e = (ext || 'BAS').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'BAS';
     const pane = getPane(basicPane);
     if (pane && pane.files && pane.files.length) {
-      setBasicSaveConfirm({ name, program, pane: basicPane });
+      setBasicSaveConfirm({ name, ext: e, program, pane: basicPane });
     } else {
-      doBasicSaveToDisk(name, program, basicPane);
+      doBasicSaveToDisk(name, e, program, basicPane);
     }
   };
-  const doBasicSaveToDisk = (name: string, program: string, pane: 'A' | 'B') => {
+  const doBasicSaveToDisk = (name: string, ext: string, program: string, pane: 'A' | 'B') => {
     setBasicSaveConfirm(null);
-    beginAddBatch(pane, [{ name, ext: 'BAS', fileType: 0, asciiFlag: 0xFF, data: basicTextToAsciiBytes(program) }]);
+    beginAddBatch(pane, [{ name, ext: (ext || 'BAS').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3) || 'BAS', fileType: 0, asciiFlag: 0xFF, data: basicTextToAsciiBytes(program) }]);
+    setBasicDocs(ds => ds.map((d, i) => i === actIdx ? { ...d, savedText: program } : d)); // gravado → não-dirty
+    setActivePane(pane); setActiveTab('dsk'); // vai para a aba DSK no painel gravado p/ o usuário ver o resultado
   };
 
   // Aba BASIC: salva o programa como ARQUIVO DE TEXTO (.bas) no sistema de arquivos.
@@ -2515,7 +2577,7 @@ export default function App() {
   // para o FIM, numa nova linha (o texto já vem com '\n' final), e o `epoch` muda → remonta e reposiciona.
   const loadBasicIntoDoc = (idx: number, newText: string, name: string, source: BasicSrc | null, label: string) => {
     const id = basicDocs[idx]?.id; if (id != null) basicCaretRef.current[id] = newText.length; // caret ao final
-    setBasicDocs(ds => ds.map((d, i) => i === idx ? { ...d, text: newText, name: name || d.name, source, epoch: (d.epoch || 0) + 1 } : d));
+    setBasicDocs(ds => ds.map((d, i) => i === idx ? { ...d, text: newText, name: name || d.name, source, epoch: (d.epoch || 0) + 1, savedText: newText } : d)); // carregado = baseline salvo
     setBasicActive(idx);
     setActiveTab('basic');
     addLog(`"${label}" aberto no editor BASIC (aba ${idx + 1}).`, `"${label}" opened in the BASIC editor (tab ${idx + 1}).`, 'success');
@@ -2575,6 +2637,7 @@ export default function App() {
       if (res.success) {
         await refreshPane(which, res.image);
         markDirty(which);
+        setBasicDocs(ds => ds.map((d, i) => i === actIdx ? { ...d, savedText: d.text } : d)); // salvo in-place → não-dirty
         addLog(`"${entry.fullName}" atualizado na imagem do Painel ${which}. Lembre-se de salvar a imagem (.DSK).`,
                `"${entry.fullName}" updated in Pane ${which}'s image. Remember to save the .DSK image.`, 'success');
       } else {
@@ -2585,49 +2648,69 @@ export default function App() {
     } catch (err: any) { addLog(`Atualizar BAS: ${err.message}`, `Update BAS: ${err.message}`, 'error'); }
   };
 
-  // Aba BASIC: abre um arquivo de texto (.bas/.txt) do sistema de arquivos no editor.
+  // Aba BASIC: abre um arquivo de texto (.bas/.txt) OU uma fita digital (.cas/.c10) no editor. Para o
+  // .cas, extrai o 1º programa BASIC (parseCas) e detokeniza (B6/B7 — "Abrir do CAS").
   const handleBasicOpenTextFile = async () => {
     try {
       const f = await window.cocoApi.selectFile();
       if (!f) return;
-      // Import avulso: usa a plataforma-alvo (CoCo/Dragon) como dica do dialeto de tokens.
-      const { text, tokenized } = decodeBasToText(new Uint8Array(f.buffer), 0xFF, platform === 'dragon' ? 'dragon' : 'coco');
-      if (tokenized) { addLog(`"${f.fileName}" não parece texto (.bas tokenizado/binário). Abra um .BAS em ASCII.`, `"${f.fileName}" is not text (tokenized/binary .bas). Open an ASCII .BAS.`, 'warn'); return; }
-      // Arquivo do sistema de arquivos não tem origem em DSK → sem "Salvar" in-place.
-      requestLoadBasic(text, f.fileName || 'arquivo.bas', null);
-    } catch (err: any) { addLog(`Abrir .BAS: ${err.message}`, `Open .BAS: ${err.message}`, 'error'); }
-  };
-
-  // DSK: botão "Editar" — abre o .BAS selecionado no editor BASIC (somente formato ASCII/texto).
-  const handleDskEditBas = async () => {
-    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo .BAS.', 'Select a .BAS file.', 'warn'); return; }
-    const entry = selectedDsk.entries[0];
-    if ((entry.ext || '').toUpperCase() !== 'BAS') { addLog('Selecione um arquivo .BAS para editar.', 'Select a .BAS file to edit.', 'warn'); return; }
-    const pane = getPane(selectedDsk.pane);
-    if (!pane) return;
-    try {
-      const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
-      if (!res.success) { addLog(`Editar BAS: ${res.error}`, `Edit BAS: ${res.error}`, 'error'); return; }
-      const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag, pane.format === 'dragon' ? 'dragon' : 'coco');
-      if (tokenized) {
-        addLog(`"${entry.fullName}" está em formato TOKENIZADO — o editor abre apenas .BAS em ASCII/texto por enquanto. No CoCo, salve como ASCII (SAVE"NOME",A) e tente de novo.`,
-               `"${entry.fullName}" is TOKENIZED — the editor only opens ASCII/text .BAS for now. On the CoCo, save it as ASCII (SAVE"NAME",A) and retry.`, 'warn');
+      const dialect = platform === 'dragon' ? 'dragon' : 'coco';
+      const ext = (f.fileExt || '').toLowerCase();
+      if (ext === '.cas' || ext === '.c10') {
+        const r = await window.cocoApi.casExtractBasic(new Uint8Array(f.buffer));
+        if (!r?.success) { addLog(`Abrir do CAS: ${r?.error || '?'}`, `Open from CAS: ${r?.error || '?'}`, 'error'); return; }
+        if (r.error === 'no-blocks') { addLog(`"${f.fileName}": nenhum bloco de fita reconhecido (.cas inválido?).`, `"${f.fileName}": no tape blocks recognized (invalid .cas?).`, 'warn'); return; }
+        if (!r.found) { addLog(`"${f.fileName}": o 1º arquivo da fita é "${r.fileTypeName}", não BASIC. Use a aba K7 p/ código de máquina/dados.`, `"${f.fileName}": the tape's first file is "${r.fileTypeName}", not BASIC. Use the K7 tab for machine code/data.`, 'warn'); return; }
+        const { text, tokenized } = decodeBasToText(new Uint8Array(r.data), r.asciiFlag, dialect);
+        if (tokenized || !text.trim()) { addLog(`"${f.fileName}": não foi possível detokenizar o BASIC da fita.`, `"${f.fileName}": could not detokenize the tape's BASIC.`, 'warn'); return; }
+        requestLoadBasic(text, (r.name || f.fileName || 'FITA').toString(), null);
         return;
       }
-      requestLoadBasic(text, entry.fullName, { pane: selectedDsk.pane, entry, diskName: pane.fileName, containerIndex: pane.container?.index });
-    } catch (err: any) { addLog(`Editar BAS: ${err.message}`, `Edit BAS: ${err.message}`, 'error'); }
+      // .bas/.txt ASCII (ou tokenizado em disco): usa a plataforma-alvo como dica do dialeto de tokens.
+      const { text, tokenized } = decodeBasToText(new Uint8Array(f.buffer), 0xFF, dialect);
+      if (tokenized) { addLog(`"${f.fileName}" não parece texto (.bas tokenizado/binário). Abra um .BAS em ASCII ou um .CAS.`, `"${f.fileName}" is not text (tokenized/binary .bas). Open an ASCII .BAS or a .CAS.`, 'warn'); return; }
+      requestLoadBasic(text, f.fileName || 'arquivo.bas', null);
+    } catch (err: any) { addLog(`Abrir BASIC: ${err.message}`, `Open BASIC: ${err.message}`, 'error'); }
   };
 
-  // Visualização Rápida .BAS — abre um modal SOMENTE LEITURA com o programa detokenizado (não vai p/ o editor).
-  const handleDskQuickViewBas = async () => {
-    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo .BAS.', 'Select a .BAS file.', 'warn'); return; }
+  // DSK: botão "Editar" — abre o arquivo selecionado no editor BASIC SE for um programa BASIC, INDEPENDENTE
+  // da extensão (mantém nome+ext originais). Confirma o tipo: LINGUAGEM DE MÁQUINA (tipo 2) é recusada (use
+  // HEX/DISASM); BASIC tokenizado é detokenizado; ASCII/texto entra direto. Binário não-BASIC é recusado.
+  const handleDskEditBas = async () => {
+    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo.', 'Select a file.', 'warn'); return; }
     const entry = selectedDsk.entries[0];
-    if ((entry.ext || '').toUpperCase() !== 'BAS') { addLog('Selecione um arquivo .BAS.', 'Select a .BAS file.', 'warn'); return; }
+    const pane = getPane(selectedDsk.pane);
+    if (!pane) return;
+    if (entry.fileType === 2) { // CÓDIGO DE MÁQUINA — não é editável como BASIC
+      addLog(`"${entry.fullName}" é LINGUAGEM DE MÁQUINA (${entry.fileTypeName}). Abra na aba GERAL com o botão HEX/DISASM para editar/desmontar — o editor BASIC só abre programas BASIC.`,
+             `"${entry.fullName}" is MACHINE LANGUAGE (${entry.fileTypeName}). Open it in the GENERAL tab via the HEX/DISASM button to edit/disassemble — the BASIC editor only opens BASIC programs.`, 'warn');
+      return;
+    }
+    try {
+      const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
+      if (!res.success) { addLog(`Editar BASIC: ${res.error}`, `Edit BASIC: ${res.error}`, 'error'); return; }
+      const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag, pane.format === 'dragon' ? 'dragon' : 'coco');
+      if (tokenized) { // não detokenizou → não é um programa BASIC válido (provável dados/binário)
+        addLog(`"${entry.fullName}" (${entry.fileTypeName}) não parece um programa BASIC — não foi possível detokenizar. O editor BASIC abre apenas programas BASIC (tokenizados ou ASCII).`,
+               `"${entry.fullName}" (${entry.fileTypeName}) does not look like a BASIC program — could not detokenize. The BASIC editor only opens BASIC programs (tokenized or ASCII).`, 'warn');
+        return;
+      }
+      // Abre preservando o NOME e a EXTENSÃO originais (a `source` carrega a entry → ext original p/ salvar).
+      requestLoadBasic(text, entry.fullName, { pane: selectedDsk.pane, entry, diskName: pane.fileName, containerIndex: pane.container?.index });
+    } catch (err: any) { addLog(`Editar BASIC: ${err.message}`, `Edit BASIC: ${err.message}`, 'error'); }
+  };
+
+  // Visualização Rápida — abre um modal SOMENTE LEITURA com o programa BASIC detokenizado (qualquer extensão;
+  // não vai p/ o editor). Recusa LINGUAGEM DE MÁQUINA (tipo 2).
+  const handleDskQuickViewBas = async () => {
+    if (!selectedDsk || !selectedDsk.entries.length) { addLog('Selecione um arquivo.', 'Select a file.', 'warn'); return; }
+    const entry = selectedDsk.entries[0];
+    if (entry.fileType === 2) { addLog(`"${entry.fullName}" é LINGUAGEM DE MÁQUINA (${entry.fileTypeName}). Use o HEX/DISASM.`, `"${entry.fullName}" is MACHINE LANGUAGE (${entry.fileTypeName}). Use HEX/DISASM.`, 'warn'); return; }
     const pane = getPane(selectedDsk.pane);
     if (!pane) return;
     try {
       const res = await window.cocoApi.dskExtractRaw(pane.buffer, entry);
-      if (!res.success) { addLog(`Visualizar BAS: ${res.error}`, `View BAS: ${res.error}`, 'error'); return; }
+      if (!res.success) { addLog(`Visualizar BASIC: ${res.error}`, `View BASIC: ${res.error}`, 'error'); return; }
       const { text, tokenized } = decodeBasToText(new Uint8Array(res.data), entry.asciiFlag, pane.format === 'dragon' ? 'dragon' : 'coco');
       const ok = !(tokenized || !text.trim());
       setBasQuickView({ name: entry.fullName, text: ok ? text : '', ok });
@@ -2714,12 +2797,24 @@ export default function App() {
     } catch (err: any) { addLog(`Converter: ${err.message}`, `Convert: ${err.message}`, 'error'); }
   };
 
-  // Limpa um painel (volta ao estado de app recém-aberto para aquele painel).
-  const handleClearPane = (which: 'A' | 'B') => {
+  // Limpa um painel (volta ao estado de app recém-aberto para aquele painel). EXECUÇÃO efetiva.
+  const doClearPane = (which: 'A' | 'B') => {
+    // Desvincula a origem dos docs ligados a este painel (a imagem deixou de existir) — mantém texto/dirty.
+    setBasicDocs(ds => ds.map(d => (d.source?.pane === which ? { ...d, source: null } : d)));
     setPane(which, null);
     if (selectedDsk?.pane === which) setSelectedDsk(null);
     clearDirty(which);
     addLog(`Painel ${which} limpo.`, `Pane ${which} cleared.`, 'info');
+  };
+  // #4 — pedido de limpar painel: se houver programa(s) abertos na aba BAS DESTE painel com alterações NÃO
+  // salvas, BLOQUEIA com um modal de confirmação (senão perde-se o vínculo p/ "Salvar" de volta na imagem).
+  const handleClearPane = (which: 'A' | 'B') => {
+    const dirtyDocs = basicDocs.filter(d => d.source?.pane === which && isDocDirty(d));
+    if (dirtyDocs.length) {
+      setClearPaneConfirm({ which, names: dirtyDocs.map(d => `${d.name}.${docOrigExt(d)}`) });
+      return;
+    }
+    doClearPane(which);
   };
 
   // FORMATAR a imagem do painel (apaga dados). 'quick' = só FAT+diretório; 'full' = imagem toda (0xFF).
@@ -3657,16 +3752,7 @@ export default function App() {
     const pct = total ? Math.round((gwDone.size / total) * 100) : 0;
     const fieldCls = 'input-text py-1.5 text-xs w-full';
     const labelCls = 'flex flex-col gap-1 text-[11px] text-[var(--text-secondary)] font-semibold';
-    const gwHelp = (k: string) => (
-      <button
-        type="button"
-        onClick={(e) => { e.preventDefault(); toggleHint(k); }}
-        className={`ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full align-middle transition-all ${activeHint === k ? 'text-[var(--primary)]' : 'text-slate-500 hover:text-[var(--primary)]'}`}
-        title="?"
-      >
-        <HelpCircle size={11} />
-      </button>
-    );
+    // Os "?" por-componente foram removidos — a ajuda da aba GW agora é o botão "?" no título (manual da aba).
     return (
       <div className="flex-1 overflow-y-auto p-4 flex flex-col items-center gap-4" style={{ minHeight: 0 }}>
         {/* Opções */}
@@ -3677,20 +3763,20 @@ export default function App() {
           </h2>
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <label className={labelCls} style={{ gridColumn: '1 / span 2' }}>
-              <span>{t('gwFormatLabel')}{gwHelp('gwHintFormat')}</span>
+              <span>{t('gwFormatLabel')}</span>
               <select className="input-select text-xs py-1.5" value={gwFormat} onChange={e => setGwFormat(e.target.value)}>
                 {GW_FORMATS.map(f => <option key={f.id} value={f.id}>{f.label} — {f.id}</option>)}
               </select>
             </label>
             <label className={labelCls}>
-              <span>{t('gwDeviceLabel')}{gwHelp('gwHintDevice')}</span>
+              <span>{t('gwDeviceLabel')}</span>
               <div className="flex gap-1.5 items-center">
                 <input className={fieldCls} style={{ flex: 1, minWidth: 0 }} value={gwDevice} placeholder="auto (ex.: COM3)" onChange={e => setGwDevice(e.target.value)} />
                 <button type="button" disabled={gwBusy} onClick={handleGwInfo} className="dsk-tool flex-shrink-0" title={t('gwTestBtn')}><RefreshCw size={13} className={gwBusy && gwOp === 'info' ? 'animate-spin' : ''} /> {t('gwTestBtn')}</button>
               </div>
             </label>
             <label className={labelCls}>
-              <span>{t('gwDriveLabel')}{gwHelp('gwHintDrive')}</span>
+              <span>{t('gwDriveLabel')}</span>
               <select className="input-select text-xs py-1.5" value={gwDrive} onChange={e => setGwDrive(e.target.value)}>
                 <option value="">{t('gwDriveDefault')}</option>
                 <option value="a">A</option>
@@ -3700,18 +3786,18 @@ export default function App() {
               </select>
             </label>
             <label className={labelCls} style={{ gridColumn: '1 / span 2' }}>
-              <span>{t('gwPathLabel')}{gwHelp('gwHintPath')}</span>
+              <span>{t('gwPathLabel')}</span>
               <div className="flex gap-1.5 items-center">
                 <input className={fieldCls} style={{ flex: 1, minWidth: 0 }} value={gwPath} placeholder="gw  (ou C:\\gw\\gw.exe)" onChange={e => setGwPath(e.target.value)} />
                 <button type="button" onClick={handleGwPickExe} className="dsk-tool flex-shrink-0" title={t('gwBrowseBtn')}><FolderOpen size={13} /> {t('gwBrowseBtn')}</button>
               </div>
             </label>
             <label className={labelCls}>
-              <span>{t('gwExtraLabel')}{gwHelp('gwHintExtra')}</span>
+              <span>{t('gwExtraLabel')}</span>
               <input className={fieldCls} value={gwExtra} placeholder="--no-verify --retries=3" onChange={e => setGwExtra(e.target.value)} />
             </label>
             <label className={labelCls}>
-              <span>{t('gwDirectLabel')}{gwHelp('gwHintDirect')}</span>
+              <span>{t('gwDirectLabel')}</span>
               <input className={fieldCls} value={gwDirect} placeholder="read --format coco.decb --device COM7 --drive 0 --revs 3"
                 style={gwDirect.trim() ? { borderColor: 'var(--primary)', boxShadow: '0 0 6px var(--primary-glow)' } : undefined}
                 onChange={e => setGwDirect(e.target.value)} />
@@ -3719,19 +3805,19 @@ export default function App() {
           </div>
           <div className="flex gap-2 flex-wrap pt-1 items-center">
             {/* Seletor de painel inline (rótulo + dropdown) — ocupa o lugar do antigo botão Testar, sem esticar a linha */}
-            <span className="text-[11px] text-[var(--text-secondary)] font-semibold flex items-center">{t('gwUsePaneLabel')}{gwHelp('gwHintPane')}</span>
-            <select className="input-select text-xs py-1.5" style={{ minWidth: 88 }} value={gwPane} onChange={e => setGwPane(e.target.value as 'A' | 'B')}>
-              <option value="A">{currentLang === 'pt-br' ? 'Painel A' : 'Pane A'}</option>
-              <option value="B">{currentLang === 'pt-br' ? 'Painel B' : 'Pane B'}</option>
+            <span className="text-[11px] text-[var(--text-secondary)] font-semibold flex items-center">{t('gwUsePaneLabel')}</span>
+            <select className="input-select text-xs py-1.5" style={{ minWidth: 56 }} value={gwPane} onChange={e => setGwPane(e.target.value as 'A' | 'B')}>
+              <option value="A">A</option>
+              <option value="B">B</option>
             </select>
-            <button disabled={gwBusy} onClick={handleGwRead} className="dsk-tool" style={{ borderColor: 'var(--border-active)', color: 'var(--primary)' }}><Download size={13} /> {currentLang === 'pt-br' ? `Ler → Painel ${gwPane}` : `Read → Pane ${gwPane}`}</button>
-            <button disabled={gwBusy || !getPane(gwPane)} onClick={handleGwWritePane} className="dsk-tool"><Upload size={13} /> {currentLang === 'pt-br' ? `Gravar Painel ${gwPane} → Disco` : `Write Pane ${gwPane} → Disk`}</button>
+            <button disabled={gwBusy} onClick={handleGwRead} className="dsk-tool" style={{ borderColor: 'var(--border-active)', color: 'var(--primary)' }}><Download size={13} /> {currentLang === 'pt-br' ? `Ler → ${gwPane}` : `Read → ${gwPane}`}</button>
+            <button disabled={gwBusy || !getPane(gwPane)} onClick={handleGwWritePane} className="dsk-tool"><Upload size={13} /> {currentLang === 'pt-br' ? `Gravar ${gwPane} → Disco` : `Write ${gwPane} → Disk`}</button>
             <button disabled={gwBusy} onClick={handleGwWriteFile} className="dsk-tool"><Upload size={13} /> {t('gwWriteFileBtn')}</button>
-            {gwHelp('gwHintActions')}
+            
           </div>
           {/* Diagnóstico / ajuste do drive — útil quando o seek/verify falha (ver saga GW). */}
           <div className="flex gap-2 flex-wrap items-center pt-1 border-t border-[var(--border)] mt-1">
-            <span className="text-[10px] uppercase tracking-wider font-bold text-[var(--text-muted)] flex items-center">{currentLang === 'pt-br' ? 'Diagnóstico do drive' : 'Drive diagnostics'}{gwHelp('gwHintDiag')}</span>
+            <span className="text-[10px] uppercase tracking-wider font-bold text-[var(--text-muted)] flex items-center">{currentLang === 'pt-br' ? 'Diagnóstico do drive' : 'Drive diagnostics'}</span>
             <button disabled={gwBusy} onClick={handleGwSeekTest} className="dsk-tool" title={currentLang === 'pt-br' ? 'gw seek 0 — testa o movimento da cabeça / recalibra' : 'gw seek 0 — test head movement / recalibrate'}><RefreshCw size={13} className={gwBusy && gwOp === 'info' ? 'animate-spin' : ''} /> {currentLang === 'pt-br' ? 'Testar seek' : 'Seek test'}</button>
             <button disabled={gwBusy} onClick={handleGwShowDelays} className="dsk-tool" title="gw delays">{currentLang === 'pt-br' ? 'Ver tempos' : 'Show delays'}</button>
             <span className="text-[10px] text-[var(--text-secondary)] font-semibold ml-1">Step (µs):</span>
@@ -3752,7 +3838,7 @@ export default function App() {
         <section className="glass-panel p-4 flex flex-col gap-3 animate-slideup" style={{ width: '100%', maxWidth: 820 }}>
           <div className="flex justify-between items-center">
             <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              {t('gwTrackMap')}{gwHelp('gwHintMap')} {gwOp === 'read' ? `· ${t('gwReading')}` : gwOp === 'write' ? `· ${t('gwWriting')}` : ''}
+              {t('gwTrackMap')} {gwOp === 'read' ? `· ${t('gwReading')}` : gwOp === 'write' ? `· ${t('gwWriting')}` : ''}
             </h3>
             <span className="text-[11px] font-mono text-[var(--primary)]">{gwDone.size} / {total} ({pct}%)</span>
           </div>
@@ -4234,7 +4320,7 @@ export default function App() {
             }`}
             title={t('hexEditorBtn')}
           >
-            <Binary size={13} /> HEX/DISASM
+            <Binary size={13} />
           </button>
           <div className="w-[1px] h-5 bg-[var(--border)]" />
 
@@ -4874,7 +4960,8 @@ export default function App() {
                       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
                       className="font-mono" style={{ width: 92, fontSize: 11, background: '#0a0e14', color: 'var(--text-primary, #e5e5e5)', border: '1px solid var(--primary, #ff8c1a)', borderRadius: 3, padding: '0 4px', outline: 'none' }} />
                   ) : (
-                    <span className="font-mono truncate" style={{ maxWidth: 150 }} onDoubleClick={(e) => { e.stopPropagation(); setBasicRenaming(i); }}>{d.name}.BAS</span>
+                    <span className="font-mono truncate" style={{ maxWidth: 150, color: isDocDirty(d) ? '#f87171' : undefined }} onDoubleClick={(e) => { e.stopPropagation(); setBasicRenaming(i); }}
+                      title={isDocDirty(d) ? (currentLang === 'pt-br' ? 'Alterações NÃO salvas' : 'UNSAVED changes') : undefined}>{isDocDirty(d) ? '● ' : ''}{d.name}.{docOrigExt(d)}</span>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); if (d.text.trim()) setBasicCloseConfirm(i); else closeBasicTab(i); }}
                     className="rounded hover:bg-red-900/40" style={{ lineHeight: 1, padding: '1px 3px', color: 'var(--text-muted)' }}
@@ -4893,6 +4980,8 @@ export default function App() {
               onTextChange={setBasicText}
               initialCaret={basicCaretRef.current[activeDoc.id] ?? 0}
               onCaretChange={(p) => { basicCaretRef.current[activeDoc.id] = p; }}
+              dirty={isDocDirty(activeDoc)}
+              initialExt={docOrigExt(activeDoc)}
               name={basicName}
               onNameChange={setBasicName}
               pane={basicPane}
@@ -4931,8 +5020,8 @@ export default function App() {
                   <button onClick={() => handleDskCopy(false)} title={t('dskToolCopy')} aria-label={t('dskToolCopy')} className="dsk-tool"><Copy size={15} /></button>
                   <button onClick={openDskRename} disabled={selectedDsk.entries.length !== 1} title={currentLang === 'pt-br' ? 'Renomear o arquivo' : 'Rename the file'} aria-label={currentLang === 'pt-br' ? 'Renomear' : 'Rename'} className="dsk-tool"><Pencil size={15} /></button>
                   <button onClick={handleDskDelete} title={t('dskToolDelete')} aria-label={t('dskToolDelete')} className="dsk-tool dsk-tool-danger"><Trash2 size={15} /></button>
-                  <button onClick={handleDskQuickViewBas} disabled={(selectedDsk.entries[0].ext || '').toUpperCase() !== 'BAS'} title={t('Visualização Rápida .BAS', 'Quick .BAS View')} aria-label="Visualização Rápida .BAS" className="dsk-tool"><Search size={15} /></button>
-                  <button onClick={handleDskEditBas} disabled={(selectedDsk.entries[0].ext || '').toUpperCase() !== 'BAS'} title={t('Editar .BAS no editor BASIC', 'Edit .BAS in the BASIC editor')} aria-label="Editar BAS" className="dsk-tool"><FileCode2 size={15} /></button>
+                  <button onClick={handleDskQuickViewBas} disabled={selectedDsk.entries[0].fileType === 2} title={t('Visualização Rápida do programa BASIC (detokeniza; qualquer extensão)', 'Quick BASIC program view (detokenizes; any extension)')} aria-label="Visualização Rápida BASIC" className="dsk-tool"><Search size={15} /></button>
+                  <button onClick={handleDskEditBas} disabled={selectedDsk.entries[0].fileType === 2} title={t('Abrir programa BASIC no editor (qualquer extensão; mantém nome+ext originais)', 'Open BASIC program in the editor (any extension; keeps original name+ext)')} aria-label="Editar BASIC" className="dsk-tool"><FileCode2 size={15} /></button>
                   <button onClick={handleDskExtractToPc} title={currentLang === 'pt-br' ? 'Extrair o(s) arquivo(s) selecionado(s) para uma pasta do Windows' : 'Extract the selected file(s) to a Windows folder'} aria-label={currentLang === 'pt-br' ? 'Extrair arquivo' : 'Extract file'} className="dsk-tool"><Download size={15} /></button>
                   <button onClick={handleDskCompare} disabled={selectedDsk.entries.length !== 1} title={currentLang === 'pt-br' ? 'Comparar com um arquivo do PC (diff hexadecimal)' : 'Compare with a file from the PC (hex diff)'} aria-label={currentLang === 'pt-br' ? 'Comparar' : 'Compare'} className="dsk-tool"><GitCompare size={15} /></button>
                   <button onClick={handleConvertToDragon} disabled={!(selectedDsk.entries.length === 1 && selectedDsk.entries[0].fileType === 2 && getPane(selectedDsk.pane)?.format !== 'dragon')} title={currentLang === 'pt-br' ? 'Converter o .BIN de máquina (CoCo) para Dragon — testa-se antes de salvar' : 'Convert the (CoCo) machine-code .BIN to Dragon — test before saving'} aria-label={currentLang === 'pt-br' ? 'Converter para Dragon' : 'Convert to Dragon'} className="dsk-tool" style={{ color: '#22d3ee' }}><ArrowRightLeft size={15} /></button>
@@ -4979,7 +5068,16 @@ export default function App() {
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
               <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /></button>
+              <select value={xroarDrive} onChange={e => setXroarDrive(Number(e.target.value))} className="input-select text-[10px]" style={{ padding: '1px 2px', width: 42 }} title={currentLang === 'pt-br' ? 'Drive de destino no XRoar (0–3) para o teste do painel e para arquivos abertos' : 'Target XRoar drive (0–3) for the pane test and opened files'}>
+                {[0, 1, 2, 3].map(d => <option key={d} value={d}>D{d}</option>)}
+              </select>
               <button onClick={handleDskWriteToGw} disabled={!getPane(activePane)} title={t('dskToolGw')} aria-label={t('dskToolGw')} className="dsk-tool"><HardDrive size={15} /></button>
+              {/* M2 — Enviar p/ dispositivo: salva o disco ativo como .dsk no destino (ex.: cartão CoCoSDC). */}
+              <button onClick={handleSendToDevice} disabled={!getPane(activePane)} title={currentLang === 'pt-br' ? 'Enviar para dispositivo: salva o disco ativo como .dsk (ex.: no cartão CoCoSDC montado no Windows)' : 'Send to device: save the active disk as .dsk (e.g. onto the CoCoSDC card mounted in Windows)'} className="dsk-tool"><Send size={15} /></button>
+              {/* Gravar em cartão CF (reflash da .img do contêiner) — só aparece com uma imagem .img aberta. */}
+              {getPane(activePane)?.container?.filePath && (
+                <button onClick={openCfReflash} title={currentLang === 'pt-br' ? 'Gravar a imagem .img (MiniIDE/CoCoSDC) num cartão CF — requer ADMINISTRADOR' : 'Write the .img (MiniIDE/CoCoSDC) image to a CF card — requires ADMINISTRATOR'} className="dsk-tool" style={{ color: '#f59e0b' }}><Database size={15} /></button>
+              )}
               {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)] ml-2">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
               <span className="ml-auto"><HelpButton onClick={() => setHelpTopic('dsk')} lang={currentLang} /></span>
             </div>
@@ -5480,8 +5578,8 @@ export default function App() {
             </div>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {currentLang === 'pt-br'
-                ? 'Montar o disco do painel ativo no drive 0 do XRoar. Escolha: TESTAR SEM RESET (mantém o que está rodando — útil p/ trocar o disco em tempo real) ou RESET E TESTAR (reinício total → estado limpo; perde o que estiver rodando/não salvo no emulador).'
-                : 'Mount the active pane\'s disk in XRoar drive 0. Choose: TEST WITHOUT RESET (keeps what\'s running — handy to swap the disk live) or RESET AND TEST (hard reset → clean state; loses anything running/unsaved in the emulator).'}
+                ? `Montar o disco do painel ativo no DRIVE ${xroarDrive} do XRoar. Escolha: TESTAR SEM RESET (mantém o que está rodando — útil p/ trocar o disco em tempo real) ou RESET E TESTAR (reinício total → estado limpo; perde o que estiver rodando/não salvo no emulador).`
+                : `Mount the active pane's disk in XRoar DRIVE ${xroarDrive}. Choose: TEST WITHOUT RESET (keeps what's running — handy to swap the disk live) or RESET AND TEST (hard reset → clean state; loses anything running/unsaved in the emulator).`}
             </p>
             <div className="flex justify-end gap-2 pt-1 flex-wrap">
               <button onClick={() => setXroarTestConfirm(false)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
@@ -5490,6 +5588,66 @@ export default function App() {
               </button>
               <button onClick={() => proceedTestInXroar(true)} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5">
                 <RefreshCw size={13} /> {currentLang === 'pt-br' ? 'Reset e testar' : 'Reset and test'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL — Gravar a imagem .img num cartão CF (reflash). PERIGOSO: apaga o cartão. Só removíveis. */}
+      {cfModal && (
+        <div className="glass-modal-overlay" onClick={() => { if (!cfBusy) setCfModal(null); }}>
+          <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 500, maxWidth: '94%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-red-950/30 text-red-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Gravar em cartão CF' : 'Write to CF card'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? <>Grava a imagem <b className="font-mono">{cfModal.fileName}</b> num cartão CF/SD/USB. <b className="text-red-400">ISTO APAGA TODO o cartão escolhido.</b> Só mostramos drives <b>removíveis</b> (nunca o disco do sistema). Requer o app rodando como <b>ADMINISTRADOR</b>.</>
+                : <>Writes the image <b className="font-mono">{cfModal.fileName}</b> to a CF/SD/USB card. <b className="text-red-400">THIS ERASES the entire chosen card.</b> Only <b>removable</b> drives are shown (never the system disk). Requires the app running as <b>ADMINISTRATOR</b>.</>}
+            </p>
+            {cfAdmin === false && (
+              <div className="text-xs rounded-md p-2.5 flex items-start gap-2" style={{ background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(248,113,113,0.4)', color: '#fca5a5' }}>
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>{currentLang === 'pt-br'
+                  ? <>O app <b>NÃO</b> está rodando como <b>Administrador</b> — a gravação vai falhar. Feche e reabra com <b>“Executar como administrador”</b> (clique direito no atalho/ícone).</>
+                  : <>The app is <b>NOT</b> running as <b>Administrator</b> — writing will fail. Close and reopen via <b>“Run as administrator”</b> (right-click the shortcut/icon).</>}</span>
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+              {cfDrives === null && <div className="text-xs text-[var(--text-muted)] py-2">{currentLang === 'pt-br' ? 'Procurando cartões removíveis…' : 'Scanning removable cards…'}</div>}
+              {cfDrives && cfDrives.length === 0 && <div className="text-xs text-[var(--text-muted)] py-2">{currentLang === 'pt-br' ? 'Nenhum cartão removível encontrado. Insira o CF (via leitor USB) e reabra este diálogo.' : 'No removable card found. Insert the CF (via a USB reader) and reopen this dialog.'}</div>}
+              {cfDrives && cfDrives.map(d => (
+                <button key={d.number} onClick={() => { setCfSel(d.number); setCfTyped(''); }} disabled={cfBusy}
+                  className="dsk-tool flex items-center justify-between text-left" style={{ padding: '6px 10px', background: cfSel === d.number ? 'var(--primary-glow)' : undefined, borderColor: cfSel === d.number ? 'var(--primary)' : undefined }}>
+                  <span className="truncate"><b>Disco {d.number}</b> — {d.name || '(?)'} <span className="text-[var(--text-muted)]">[{d.busType}]</span></span>
+                  <span className="font-mono text-[10px] text-[var(--text-muted)] flex-shrink-0 ml-2">{(d.size / 1073741824).toFixed(1)} GB</span>
+                </button>
+              ))}
+            </div>
+            {cfBusy ? (
+              <div className="flex flex-col gap-1">
+                <div className="text-[11px] text-[var(--text-secondary)]">{currentLang === 'pt-br' ? 'Gravando…' : 'Writing…'} {Math.round(cfProgress * 100)}%</div>
+                <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${Math.round(cfProgress * 100)}%`, height: '100%', background: 'var(--primary)' }} /></div>
+                <div className="text-[10px] text-[var(--text-muted)]">{currentLang === 'pt-br' ? 'Não remova o cartão nem feche o app.' : 'Do not remove the card or close the app.'}</div>
+              </div>
+            ) : cfSel !== null && (
+              <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                <span>{currentLang === 'pt-br' ? `Para confirmar, digite o número do disco (${cfSel}):` : `To confirm, type the disk number (${cfSel}):`}</span>
+                <input value={cfTyped} onChange={e => setCfTyped(e.target.value.replace(/[^0-9]/g, ''))} className="input-text py-1 text-xs font-mono" style={{ width: 56 }} />
+              </label>
+            )}
+            {cfError && !cfBusy && (
+              <div className="text-xs rounded-md p-2.5 flex items-start gap-2 break-words" style={{ background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(248,113,113,0.4)', color: '#fca5a5' }}>
+                <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
+                <span><b>{currentLang === 'pt-br' ? 'Falha na gravação: ' : 'Write failed: '}</b>{cfError}</span>
+              </div>
+            )}
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setCfModal(null)} disabled={cfBusy} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={doCfFlash} disabled={cfBusy || cfSel === null || cfTyped !== String(cfSel) || cfAdmin === false} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5 disabled:opacity-30" style={{ background: '#b91c1c' }}>
+                <Database size={13} /> {currentLang === 'pt-br' ? 'Gravar cartão' : 'Write card'}
               </button>
             </div>
           </div>
@@ -5690,12 +5848,12 @@ export default function App() {
             </div>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {currentLang === 'pt-br'
-                ? `O Painel ${basicSaveConfirm.pane} já contém um disco com arquivos. O programa "${basicSaveConfirm.name}.BAS" será adicionado a esse disco (em caso de nome igual, será pedido para substituir/renomear). Deseja continuar?`
-                : `Pane ${basicSaveConfirm.pane} already contains a disk with files. The program "${basicSaveConfirm.name}.BAS" will be added to that disk (on a name clash you'll be asked to overwrite/rename). Continue?`}
+                ? `O Painel ${basicSaveConfirm.pane} já contém um disco com arquivos. O programa "${basicSaveConfirm.name}.${basicSaveConfirm.ext}" será adicionado a esse disco (em caso de nome igual, será pedido para substituir/renomear). Deseja continuar?`
+                : `Pane ${basicSaveConfirm.pane} already contains a disk with files. The program "${basicSaveConfirm.name}.${basicSaveConfirm.ext}" will be added to that disk (on a name clash you'll be asked to overwrite/rename). Continue?`}
             </p>
             <div className="flex justify-end gap-3 pt-1">
               <button onClick={() => setBasicSaveConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
-              <button onClick={() => doBasicSaveToDisk(basicSaveConfirm.name, basicSaveConfirm.program, basicSaveConfirm.pane)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
+              <button onClick={() => doBasicSaveToDisk(basicSaveConfirm.name, basicSaveConfirm.ext, basicSaveConfirm.program, basicSaveConfirm.pane)} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
                 <Save size={13} /> {currentLang === 'pt-br' ? 'Salvar' : 'Save'}
               </button>
             </div>
@@ -5767,6 +5925,37 @@ export default function App() {
               <button onClick={() => setBasicCloseConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
               <button onClick={() => { const i = basicCloseConfirm; setBasicCloseConfirm(null); closeBasicTab(i); }} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase" style={{ background: '#b91c1c' }}>
                 {currentLang === 'pt-br' ? 'Fechar' : 'Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* #4 — Modal: limpar painel com programa(s) BASIC abertos dele e NÃO salvos (bloqueia antes de limpar). */}
+      {clearPaneConfirm && (
+        <div className="glass-modal-overlay" onClick={() => setClearPaneConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-red-950/30 text-red-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? `Limpar o Painel ${clearPaneConfirm.which}?` : `Clear Pane ${clearPaneConfirm.which}?`}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `Você tem alterações NÃO salvas na aba BAS para ${clearPaneConfirm.names.length > 1 ? 'os arquivos' : 'o arquivo'} abaixo, abertos deste painel:`
+                : `You have UNSAVED changes in the BAS tab for the file${clearPaneConfirm.names.length > 1 ? 's' : ''} below, opened from this pane:`}
+            </p>
+            <ul className="text-xs font-mono leading-relaxed pl-1" style={{ color: '#f87171' }}>
+              {clearPaneConfirm.names.map((n, i) => <li key={i}>● {n}</li>)}
+            </ul>
+            <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? 'Limpar fecha a imagem e DESFAZ o vínculo de "Salvar" de volta nela. O texto permanece na aba BAS — depois você pode gravá-lo com "Novo DSK em →". Limpar mesmo assim?'
+                : 'Clearing closes the image and BREAKS the "Save" link back to it. The text stays in the BAS tab — you can later write it with "New DSK on →". Clear anyway?'}
+            </p>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setClearPaneConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={() => { const w = clearPaneConfirm.which; setClearPaneConfirm(null); doClearPane(w); }} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase" style={{ background: '#b91c1c' }}>
+                {currentLang === 'pt-br' ? 'Limpar assim mesmo' : 'Clear anyway'}
               </button>
             </div>
           </div>

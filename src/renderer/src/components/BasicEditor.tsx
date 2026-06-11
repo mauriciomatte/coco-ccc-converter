@@ -22,8 +22,8 @@ interface Props {
   onBoldChange: (v: boolean) => void;
   // Roda o programa no XRoar. reset=true força hard-reset (boot limpo) antes de digitar.
   onRun: (program: string, reset: boolean) => void;
-  // Salva como .BAS (ASCII) num painel do editor DSK (A/B). A confirmação fica no App.
-  onSaveToDisk: (name: string, program: string) => void;
+  // Salva no painel DSK (A/B) — name + ext (extensão editável, BAS por padrão) + program. Confirmação no App.
+  onSaveToDisk: (name: string, ext: string, program: string) => void;
   // Salva como arquivo de TEXTO (.bas) no sistema de arquivos.
   onSaveTextFile: (name: string, program: string) => void;
   // Salva como fita .CAS (cassete de emulador) no sistema de arquivos.
@@ -39,6 +39,10 @@ interface Props {
   // Posição do caret a restaurar ao montar (memória por aba) e callback ao mover o caret.
   initialCaret?: number;
   onCaretChange?: (pos: number) => void;
+  // true quando há alterações NÃO salvas (texto ≠ último salvo) — colore o "Salvar" e o nome da aba.
+  dirty?: boolean;
+  // Extensão ORIGINAL do arquivo aberto (ex.: 'BAS', 'TXT') — padrão do campo de extensão do "Novo DSK".
+  initialExt?: string;
 }
 
 // Combinações de cores do editor (fundo/letra) selecionáveis por dropdown.
@@ -59,7 +63,7 @@ export default function BasicEditor({
   lang, text, onTextChange, name, onNameChange, pane, onPaneChange, screen, onScreenChange,
   addNew, onAddNewChange, addRun, onAddRunChange, bold, onBoldChange,
   onRun, onSaveToDisk, onSaveTextFile, onSaveCasFile, onSaveWavFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
-  initialCaret, onCaretChange,
+  initialCaret, onCaretChange, dirty, initialExt,
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
   const [showHelp, setShowHelp] = useState(false);
@@ -74,8 +78,20 @@ export default function BasicEditor({
 
   const [findOpen, setFindOpen] = useState(false);
   const [showReplace, setShowReplace] = useState(false);
+  const [ext, setExt] = useState((initialExt || 'BAS').toUpperCase()); // extensão do "Novo DSK" — padrão = ext original do arquivo aberto, editável
   const [findStr, setFindStr] = useState('');
   const [replStr, setReplStr] = useState('');
+  const [findIdx, setFindIdx] = useState(-1); // offset da ocorrência atualmente selecionada (-1 = nenhuma)
+
+  // Posições (offsets) de TODAS as ocorrências do termo (case-insensitive) → usado p/ "k/N ocorrências".
+  const findMatches = (() => {
+    if (!findStr) return [] as number[];
+    const hay = text.toUpperCase(), needle = findStr.toUpperCase(), pos: number[] = [];
+    let i = hay.indexOf(needle);
+    while (i !== -1) { pos.push(i); i = hay.indexOf(needle, i + needle.length); }
+    return pos;
+  })();
+  const findCur = findIdx >= 0 ? findMatches.indexOf(findIdx) + 1 : 0; // 1-based; 0 = nenhuma selecionada ainda
 
   const empty = !text.trim();
   const focusTA = () => taRef.current?.focus();
@@ -162,14 +178,37 @@ export default function BasicEditor({
   const vdgMeasRef = useRef<HTMLSpanElement>(null);
   const [vdgCharW, setVdgCharW] = useState(9.4);
   useLayoutEffect(() => { const s = vdgMeasRef.current; if (s) { const w = s.getBoundingClientRect().width / 20; if (w > 1 && Math.abs(w - vdgCharW) > 0.02) setVdgCharW(w); } }, [display, bold, isVdg]);
+
+  // ── Cursor do modo 'vdg' simples: MEDIDO via "espelho" (mirror). Um <div> oculto com EXATAMENTE o mesmo
+  // CSS da camada de render (fonte/padding/largura/quebra) recebe `text.slice(0, caretOff)` + um marcador
+  // de largura-zero; lemos offsetLeft/offsetTop do marcador → posição real do caret, acompanhando a quebra
+  // de linha do navegador (corrige a dessincronia acumulada em que o bloco "afundava" para baixo do texto).
+  const vdgMarkRef = useRef<HTMLSpanElement>(null);
+  const [caretPx, setCaretPx] = useState<{ left: number; top: number } | null>(null);
+  useLayoutEffect(() => {
+    if (display !== 'vdg' || caretOff < 0) { setCaretPx(null); return; }
+    const mk = vdgMarkRef.current;
+    if (!mk) { setCaretPx(null); return; }
+    setCaretPx({ left: mk.offsetLeft, top: mk.offsetTop });
+  }, [display, caretOff, text, wrap32, bold, vdgCharW]);
+
   // Posição/tamanho do bloco do cursor conforme o modo VDG (ou null se oculto / com seleção).
   const caretBlock = (mode: 'vdg' | 'vdg6847'): React.CSSProperties | null => {
     if (caretOff < 0) return null;
-    let row = 0, col = 0;
-    for (let i = 0; i < caretOff && i < text.length; i++) { const ch = text[i]; if (ch === '\n') { row++; col = 0; } else { col++; if (wrap32 && col >= COLS) { row++; col = 0; } } }
-    if (mode === 'vdg6847') return { left: col * cellW, top: row * cellH, width: Math.max(2, cellW - 1), height: cellH };
-    const lineH = 14 * 1.55, pad = 12;                                    // fontSize 14 · lineHeight 1.55 · padding 12
-    return { left: pad + col * vdgCharW, top: pad + row * lineH, width: Math.max(2, vdgCharW), height: lineH };
+    if (mode === 'vdg') {
+      if (!caretPx) return null;
+      const lineH = 14 * 1.55;                                            // fontSize 14 · lineHeight 1.55
+      return { left: caretPx.left, top: caretPx.top, width: Math.max(2, vdgCharW), height: lineH };
+    }
+    // vdg6847 (canvas 32 col): conta linha/coluna espelhando wrapForDisplay — auto-wrap em COLS, sem
+    // duplicar a linha quando um '\n' segue logo após um auto-wrap (flag `justWrapped`).
+    let row = 0, col = 0, justWrapped = false;
+    for (let i = 0; i < caretOff && i < text.length; i++) {
+      const ch = text[i];
+      if (ch === '\n') { if (!justWrapped) row++; col = 0; justWrapped = false; }
+      else { col++; justWrapped = false; if (wrap32 && col >= COLS) { row++; col = 0; justWrapped = true; } }
+    }
+    return { left: col * cellW, top: row * cellH, width: Math.max(2, cellW - 1), height: cellH };
   };
   const renderCaretBlock = (mode: 'vdg' | 'vdg6847'): React.ReactNode => {
     const st = caretBlock(mode);
@@ -271,37 +310,45 @@ export default function BasicEditor({
     } catch { document.execCommand('paste'); }
   };
 
-  // Procurar: seleciona a próxima ocorrência a partir do cursor (com wrap).
+  // Procurar: seleciona a próxima ocorrência a partir do cursor (com wrap). Case-INSENSITIVE — busca no
+  // texto em maiúsculas para achar igual em qualquer modo de caixa. Após selecionar, syncCaret() sincroniza
+  // o cursor-bloco (do VDG) com a seleção — sem isto o bloco ficava defasado e a digitação "saía na linha de cima".
   const findNext = () => {
     const ta = taRef.current; const needle = findStr.toUpperCase();
     if (!ta || !needle) return;
+    const hay = text.toUpperCase();
     const from = ta.selectionEnd;
-    let idx = text.indexOf(needle, from);
-    if (idx === -1) idx = text.indexOf(needle, 0); // wrap
-    if (idx === -1) return;
+    let idx = hay.indexOf(needle, from);
+    if (idx === -1) idx = hay.indexOf(needle, 0); // wrap
+    if (idx === -1) { setFindIdx(-1); return; }
     ta.focus();
     ta.setSelectionRange(idx, idx + needle.length);
+    setFindIdx(idx);
+    syncCaret();
   };
 
-  // Substituir: se a seleção atual já for o alvo, troca; depois pula para a próxima.
+  const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+  // Substituir: se a seleção atual já for o alvo, troca (preservando a caixa do texto — NÃO força maiúsculas
+  // no documento todo); depois pula para a próxima.
   const replaceOne = () => {
     const ta = taRef.current; const needle = findStr.toUpperCase();
     if (!ta || !needle) return;
     const s = ta.selectionStart, e = ta.selectionEnd;
     if (text.slice(s, e).toUpperCase() === needle) {
-      const repl = replStr.toUpperCase();
-      const next = (text.slice(0, s) + repl + text.slice(e)).toUpperCase();
+      const repl = replStr;
+      const next = text.slice(0, s) + repl + text.slice(e);
+      caretToRestore.current = { s: s + repl.length, e: s + repl.length };
       onTextChange(next);
-      requestAnimationFrame(() => { ta.focus(); ta.setSelectionRange(s + repl.length, s + repl.length); findNext(); });
+      requestAnimationFrame(() => { ta.focus(); findNext(); });
     } else {
       findNext();
     }
   };
 
   const replaceAll = () => {
-    const needle = findStr.toUpperCase();
-    if (!needle) return;
-    const next = text.split(needle).join(replStr.toUpperCase()).toUpperCase();
+    if (!findStr) return;
+    const next = text.replace(new RegExp(reEscape(findStr), 'gi'), () => replStr); // case-insensitive, replStr literal
     onTextChange(next);
   };
 
@@ -330,7 +377,7 @@ export default function BasicEditor({
       {/* Toolbar */}
       <div className="flex items-center gap-1.5 mb-2 flex-wrap flex-shrink-0">
         {/* Arquivo de TEXTO (.bas) no sistema de arquivos */}
-        <button onClick={onOpenTextFile} title={t('Abrir arquivo .BAS (texto)', 'Open .BAS text file')} className={toolBtn}><FolderOpen size={15} /></button>
+        <button onClick={onOpenTextFile} title={t('Abrir um .BAS (texto) ou uma fita .CAS (extrai e detokeniza o programa BASIC)', 'Open a .BAS (text) or a .CAS tape (extracts and detokenizes the BASIC program)')} className={toolBtn}><FolderOpen size={15} /></button>
         <button onClick={() => onSaveTextFile(safeName(), text)} disabled={empty} title={t('Salvar como arquivo .BAS (texto)', 'Save as .BAS text file')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><Save size={15} /></button>
         <button onClick={() => onSaveCasFile(safeName(), text)} disabled={empty} title={t('Salvar como fita .CAS (cassete de emulador — CLOAD)', 'Save as .CAS tape (emulator cassette — CLOAD)')} className={`${toolBtn} text-[11px] font-bold disabled:opacity-30 disabled:cursor-not-allowed`}>.CAS</button>
         <button onClick={() => onSaveWavFile(safeName(), text)} disabled={empty} title={t('Salvar como ÁUDIO de fita .WAV (FSK 1200/2400 Hz) — carrega no XRoar em tempo normal (CLOAD) e grava numa fita K7 real sem erros', 'Save as tape AUDIO .WAV (FSK 1200/2400 Hz) — loads in XRoar at normal speed (CLOAD) and records to a real K7 tape without errors')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><AudioLines size={15} /></button>
@@ -345,48 +392,54 @@ export default function BasicEditor({
         {/* Seta-pra-cima do CoCo (↑ = '^', exponenciação). A tecla ↑ navega; aqui inserimos por botão ou Alt+↑. */}
         <button onClick={insertUpArrow} title={t('Inserir ↑ (seta-pra-cima do CoCo = ^, exponenciação) — atalho: Alt+↑', 'Insert ↑ (CoCo up-arrow = ^, exponentiation) — shortcut: Alt+↑')} className={`${toolBtn} font-bold`} style={{ fontSize: 15, lineHeight: 1 }}>↑</button>
         {sep}
-        <button onClick={() => onRun(buildProgram(), false)} disabled={empty} className="btn btn-primary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Digita NEW + programa no XRoar (precisa estar no prompt OK)', 'Types NEW + program into XRoar (must be at the OK prompt)')}>
+        <button onClick={() => onRun(buildProgram(), false)} disabled={empty} className="btn btn-primary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+          title={addNew ? t('Digita NEW + o programa no XRoar (precisa estar no prompt OK)', 'Types NEW + the program into XRoar (must be at the OK prompt)') : t('Digita o programa no XRoar (precisa estar no prompt OK)', 'Types the program into XRoar (must be at the OK prompt)')}>
           <Play size={13} /> {t('Rodar no XRoar', 'Run in XRoar')}
         </button>
         <button onClick={() => onRun(buildProgram(true), true)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Reinicia o emulador (boot limpo, sem NEW — o reset já limpa a RAM) e então digita o programa', 'Resets the emulator (clean boot, no NEW — reset already clears RAM) then types the program')}>
-          <RotateCcw size={13} /> {t('Rodar com reset', 'Run + reset')}
+          <RotateCcw size={13} /> {t('RESET+RODAR', 'RESET+RUN')}
         </button>
-        {sep}
-        <HelpButton onClick={() => setShowHelp(true)} lang={lang} />
         <div className="flex-1" />
-        {/* Badge "EDITANDO": identifica que o conteúdo veio de um arquivo de disco */}
+        {/* SALVAR in-place: atualiza o arquivo na imagem DSK de origem. Cor ATIVA só quando há alteração não
+            salva (dirty); esmaece (desabilitado) quando salvo. O badge "Editando" saiu — agora o NOME da aba
+            fica VERMELHO quando há alterações pendentes (ver App). */}
         {sourceLabel && (
-          <span
-            className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-md flex items-center gap-1"
-            style={{ color: 'var(--primary)', border: '1px solid var(--primary)', background: 'var(--primary-glow)' }}
-            title={`${t('Editando', 'Editing')}: ${sourceLabel}`}
-          >
-            <FileCode2 size={12} /> {t('Editando', 'Editing')}
-          </span>
-        )}
-        {/* SALVAR in-place: atualiza o arquivo na imagem DSK de onde foi aberto */}
-        {sourceLabel && (
-          <button onClick={onUpdateInDsk} disabled={empty} className="btn btn-primary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t(`Atualiza "${sourceLabel}" na imagem DSK de origem`, `Update "${sourceLabel}" in its source DSK image`)}>
+          <button onClick={onUpdateInDsk} disabled={empty || !dirty} className={`btn ${dirty ? 'btn-primary' : 'btn-secondary'} py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed`} title={dirty ? t(`Atualiza "${sourceLabel}" na imagem DSK de origem (há alterações não salvas)`, `Update "${sourceLabel}" in its source DSK image (unsaved changes)`) : t(`"${sourceLabel}" — sem alterações para salvar`, `"${sourceLabel}" — no changes to save`)}>
             <Disc size={13} /> {t('Salvar', 'Save')}
           </button>
         )}
-        {/* Gravar como .BAS (ASCII) num painel do editor DSK (cria/usa o disco do painel) */}
-        <span className="text-[10px] text-[var(--text-secondary)] font-semibold">{t('Painel', 'Pane')}</span>
-        <select value={pane} onChange={e => onPaneChange(e.target.value as 'A' | 'B')} className="input-select text-xs py-1" style={{ width: 72, paddingRight: 22 }} title={t('Painel DSK de destino do .BAS', 'Target DSK pane for the .BAS')}>
-          <option value="A">A</option>
-          <option value="B">B</option>
-        </select>
-        <input
-          value={name}
-          onChange={e => onNameChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
-          placeholder="PRG-NOME"
-          className="input-text py-1.5 text-xs"
-          style={{ width: 110 }}
-          title={t('Nome do arquivo .BAS — máximo 8 caracteres, apenas A-Z e 0-9 (sem espaços/símbolos)', '.BAS file name — max 8 chars, only A-Z and 0-9 (no spaces/symbols)')}
-        />
-        <button onClick={() => onSaveToDisk(safeName(), text)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t(`Cria/usa o disco do Painel ${pane} e grava como .BAS (ASCII)`, `Create/use Pane ${pane}'s disk and save as ASCII .BAS`)}>
-          <Disc size={13} /> {t('Novo DSK + Salvar', 'New DSK + Save')} → {pane}
-        </button>
+        {/* Gravar no painel DSK (cria/usa o disco): NOME ARQ.: [nome] . [ext] | Novo DSK + Salvar → [A/B] */}
+        <span className="text-[10px] text-[var(--text-secondary)] font-semibold whitespace-nowrap">{t('NOME ARQ.:', 'FILE NAME:')}</span>
+        <div className="flex items-center" style={{ gap: 2 }}>
+          <input
+            value={name}
+            onChange={e => onNameChange(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+            placeholder="PRG-NOME"
+            className="input-text py-1.5 text-xs"
+            style={{ width: 100 }}
+            title={t('Nome do arquivo — máximo 8 caracteres, apenas A-Z e 0-9 (sem espaços/símbolos)', 'File name — max 8 chars, only A-Z and 0-9 (no spaces/symbols)')}
+          />
+          <span className="text-xs font-bold text-[var(--text-secondary)]">.</span>
+          <input
+            value={ext}
+            onChange={e => setExt(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 3))}
+            placeholder="BAS"
+            className="input-text py-1.5 text-xs font-mono"
+            style={{ width: 56, textAlign: 'center' }}
+            title={t('Extensão do arquivo (BAS por padrão; editável caso queira gravar com outra)', 'File extension (BAS by default; editable if you want a different one)')}
+          />
+        </div>
+        <div className="flex items-center" style={{ gap: 0 }}>
+          <button onClick={() => onSaveToDisk(safeName(), ext || 'BAS', text)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" style={{ borderTopRightRadius: 0, borderBottomRightRadius: 0 }} title={t(`Cria/usa o disco do Painel ${pane} e grava o arquivo (.${ext || 'BAS'}); depois abre a aba DSK no Painel ${pane}`, `Create/use Pane ${pane}'s disk and save the file (.${ext || 'BAS'}); then opens the DSK tab on Pane ${pane}`)}>
+            <Disc size={13} /> {t('Novo DSK em', 'New DSK on')} →
+          </button>
+          <select value={pane} onChange={e => onPaneChange(e.target.value as 'A' | 'B')} className="input-select text-xs py-1 font-bold" style={{ width: 64, paddingLeft: 8, paddingRight: 18, borderTopLeftRadius: 0, borderBottomLeftRadius: 0, borderLeft: 'none' }} title={t('Painel DSK de destino (A ou B)', 'Target DSK pane (A or B)')}>
+            <option value="A">A</option>
+            <option value="B">B</option>
+          </select>
+        </div>
+        {/* Ajuda da aba (manual) — no EXTREMO direito da toolbar, com uma divisória "|" à esquerda. */}
+        <span className="flex items-center">{sep}<HelpButton onClick={() => setShowHelp(true)} lang={lang} /></span>
       </div>
 
       {/* Find / Replace bar */}
@@ -395,7 +448,7 @@ export default function BasicEditor({
           <Search size={13} className="text-[var(--text-muted)]" />
           <input
             value={findStr}
-            onChange={e => setFindStr(e.target.value.toUpperCase())}
+            onChange={e => { setFindStr(e.target.value.toUpperCase()); setFindIdx(-1); }}
             onKeyDown={e => { if (e.key === 'Enter') findNext(); if (e.key === 'Escape') setFindOpen(false); }}
             placeholder={t('Procurar…', 'Find…')}
             className="input-text py-1 text-xs"
@@ -403,6 +456,13 @@ export default function BasicEditor({
             autoFocus
           />
           <button onClick={findNext} className="dsk-tool text-[11px] px-2">{t('Próximo', 'Next')}</button>
+          {findStr && (
+            <span className="text-[11px] font-mono whitespace-nowrap" style={{ color: findMatches.length ? 'var(--text-secondary)' : '#f87171' }}>
+              {findMatches.length === 0
+                ? t('nenhuma', 'none')
+                : `${findCur > 0 ? findCur : '–'}/${findMatches.length} ${t('ocorr.', 'match.')}`}
+            </span>
+          )}
           {showReplace && (
             <>
               <Replace size={13} className="text-[var(--text-muted)] ml-1" />
@@ -443,6 +503,10 @@ export default function BasicEditor({
                 <div aria-hidden style={{ ...vdgFont, minHeight: '100%', pointerEvents: 'none' }}>
                   {text ? renderVdg(text) : <span style={{ color: 'rgba(0,0,0,0.35)' }}>{'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}</span>}
                   {'​'}
+                </div>
+                {/* Espelho oculto: mesmo CSS da camada de render → o marcador cai onde o caret realmente está. */}
+                <div aria-hidden style={{ ...vdgFont, position: 'absolute', top: 0, left: 0, width: wrap32 ? wrapW : '100%', minHeight: '100%', visibility: 'hidden', pointerEvents: 'none' }}>
+                  {caretOff >= 0 ? text.slice(0, caretOff) : ''}<span ref={vdgMarkRef}>{'​'}</span>
                 </div>
                 {renderCaretBlock('vdg')}
                 <span ref={vdgMeasRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: 0, left: 0, fontFamily: vdgFontFamily, fontSize: 14, letterSpacing: '1px', whiteSpace: 'pre', fontWeight: bold ? 700 : 400 }}>00000000000000000000</span>

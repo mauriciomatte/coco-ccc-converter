@@ -31,15 +31,23 @@ and the editing area. The **?** button (in the toolbar) reopens this help.
 
 ## 1. How a program gets here
 
-- **Open .BAS text file** (folder icon in the toolbar) — opens a PC `.bas/.txt` in **ASCII**.
+- **Open** (folder icon in the toolbar) — opens a PC `.bas/.txt` in **ASCII**, **or a `.CAS` tape**: it then
+  extracts the **first BASIC program** from the tape and **detokenizes** it into the editor (the tab adopts the
+  file name). For machine code/data on a tape, use the **K7** tab.
 - **From the K7 tab** — the **"Open in BASIC"** button: sends the BASIC read from the tape (already
   detokenized).
-- **From the DSK tab** — the **"Edit .BAS"** button: sends a `.BAS` from the disk (must be **ASCII**; see
-  section 7).
+- **From the DSK tab** — the **"Edit"** button: sends a BASIC program from the disk, **regardless of the
+  extension** (`.BAS`, `.BAT`, `.TXT`…). The app **confirms the type**: a BASIC program (tokenized or ASCII)
+  opens (auto-detokenized if needed) keeping the **original name and extension**; **Machine Language is
+  refused** (use **HEX/DISASM** on the General tab).
 
-If a program is already in the editor, the app asks before replacing it. When opened from a disk, an
-**"Editing"** badge appears (with the file name in its tooltip) along with a **Save** button that writes back
-**into the source disk** (section 6).
+If a program is already in the editor, the app asks before replacing it. When there are **unsaved changes**,
+the **tab name turns red** (with "●") and the **Save** button lights up; saving dims it. **Save** writes back
+**into the source disk** (section 6), keeping name/extension. If you **close/clear the source DSK pane** with
+pending edits, the app **warns** you (the text stays here; write it with "New DSK on →").
+
+> In **Find/Replace**, next to "Next" the app shows the **occurrence count** (e.g. `3/7 match.`); the search is
+> case-insensitive.
 
 > If the editor is **empty**, every button that needs content (Save, .CAS, Run, New DSK + Save, in-place Save)
 > is **disabled** (greyed out).

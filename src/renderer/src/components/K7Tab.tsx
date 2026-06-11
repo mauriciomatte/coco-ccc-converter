@@ -563,7 +563,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         let mx = 0; for (let i = 0; i < d.length; i++) { const a = Math.abs(d[i]); if (a > mx) mx = a; } setVu(mx);
         // CONTAGIROS da gravação: tempo decorrido + gira os carretéis (a fita rodando ao gravar).
         recSamplesRef.current += d.length; recTimeRef.current = recSamplesRef.current / ctx.sampleRate;
-        reelL.current += 7; reelR.current += 7; setFrame(f => f + 1);
+        reelL.current -= 7; reelR.current -= 7; setFrame(f => f + 1); // anti-horário (sentido real da fita)
       };
       src.connect(proc); proc.connect(gain); gain.connect(ctx.destination);
       recRef.current = { stream, ctx, proc, src, gain, chunks, sampleRate: ctx.sampleRate };
@@ -621,11 +621,12 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (ctx && srcRef.current) {
       const pos = Math.min(anchorOffRef.current + (ctx.currentTime - anchorCtxRef.current) * speedRef.current, audio?.durationSec ?? 0);
       const dPos = pos - lastPosRef.current; lastPosRef.current = pos; posRef.current = pos;
-      // carretéis: o de recolhimento (esq) cresce, o de alimentação (dir) encolhe; vel angular ∝ 1/raio
+      // carretéis: ESQUERDO = alimentação (cheio no início, ENCOLHE); DIREITO = recolhimento (vazio,
+      // CRESCE) — a fita corre da esquerda p/ a direita. Vel. angular ∝ 1/raio (raio maior gira mais devagar).
       const p = audio ? pos / audio.durationSec : 0;
-      const rTake = 4 + 7 * p, rSupply = 11 - 7 * p;
-      reelL.current += dPos * 520 / Math.max(2, rTake);
-      reelR.current += dPos * 520 / Math.max(2, rSupply);
+      const rSupply = 11 - 7 * p, rTake = 4 + 7 * p;
+      reelL.current -= dPos * 520 / Math.max(2, rSupply); // anti-horário (sentido real da fita ao tocar)
+      reelR.current -= dPos * 520 / Math.max(2, rTake);
       autoFollow(pos);
       setFrame(f => f + 1);
       // Revelação progressiva — throttle ~7 quadros (≈8x/s) p/ não reconstruir a 60fps. (.cas = instantâneo, pula)
@@ -1032,13 +1033,13 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         {tool(<Wrench size={14} />, 'FIXCAS', onFixCasClick, !fixing, t('Validar/reparar um .CAS do PC: recalcula checksums, refaz o leader/sync e garante o EOF — salva um .CAS íntegro (não altera o arquivo carregado na onda).', 'Validate/repair a .CAS from the PC: recomputes checksums, rebuilds leader/sync and ensures EOF — saves a clean .CAS (does not touch the waveform loaded here).'))}
         {tool(<CassetteTape size={14} />, '→ CAS', () => exportClean('cas'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .CAS LIMPO e minúsculo só com os dados decodificados (padrão CoCo/Dragon)', 'NORMALIZE: save a CLEAN, tiny .CAS with just the decoded data (standard CoCo/Dragon)'))}
         {tool(<AudioWaveform size={14} />, '→ WAV', () => exportClean('wav'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .WAV LIMPO a 11 kHz, bem menor que a captura original, que lê confiável no hardware', 'NORMALIZE: save a CLEAN 11 kHz .WAV, much smaller than the original capture, reliable on real hardware'))}
-        {tool(<Download size={14} />, t('→ Fita completa', '→ Full tape'), exportFullWav, !!audio && !exporting, t('Salvar a FITA COMPLETA (.wav do áudio original) — captura TUDO: header, tela, loader e jogo turbo. Use p/ fitas com tela de abertura, que rodam inteiras no XRoar.', 'Save the FULL TAPE (.wav of the original audio) — captures EVERYTHING: header, screen, loader and turbo game. Use for tapes with an opening screen that run fully in XRoar.'))}
+        {tool(<Download size={14} />, t('→ Toda K7', '→ Whole tape'), exportFullWav, !!audio && !exporting, t('Salvar a FITA COMPLETA (.wav do áudio original) — captura TUDO: header, tela, loader e jogo turbo. Use p/ fitas com tela de abertura, que rodam inteiras no XRoar.', 'Save the WHOLE TAPE (.wav of the original audio) — captures EVERYTHING: header, screen, loader and turbo game. Use for tapes with an opening screen that run fully in XRoar.'))}
         {tool(<FileCode2 size={14} />, '', openInBasic, !!decoded?.files?.some((f: any) => f.ftype === 0), t('Abrir o programa BASIC lido da fita no editor BASIC (detokeniza automaticamente)', 'Open the BASIC program read from the tape in the BASIC editor (auto-detokenizes)'))}
         {tool(<><ArrowRightLeft size={14} /><Save size={13} /></>, '', onDskClick, !!(rawRef.current && fileMeta && onSendToDsk), t('Gravar o arquivo lido (BASIC/ML) num painel DSK. Fita com tela+loader → use "→ Sem loader".', 'Write the read file (BASIC/ML) into a DSK pane. Screen+loader tape → use "→ No loader".'))}
         {tool(<MonitorPlay size={14} />, '', onXroarClick, !!(rawRef.current && audio && onSendToXroar), t('Carregar esta fita no emulador XRoar (fita com loader → use "→ Sem loader" ou o mini-XRoar)', 'Load this tape into the XRoar emulator (loader tape → use "→ No loader" or the mini-XRoar)'))}
         {tool(<Rocket size={14} />, t('→ Sem loader', '→ No loader'), openLoaderDlg, !!rawRef.current && !skBusy, t('Fitas SoftKristian (tela + loader): gera um .BIN/.DSK que RODA SOZINHO com LOADM (autostart, sem :EXEC) — remove o loader de fita e mantém a tela de abertura', 'SoftKristian tapes (screen + loader): build a .BIN/.DSK that AUTOSTARTS with LOADM (no :EXEC) — removes the tape loader and keeps the opening screen'))}
         {tool(<Undo2 size={14} />, t('Reverter', 'Revert'), revertCdcu, !skBusy, t('Abrir um .BIN nosso (assinatura CoCo DCU) e recuperar o PROGRAMA PURO em .CAS/.WAV (sem a tela/stub de disco)', 'Open one of our .BIN files (CoCo DCU signature) and recover the PURE PROGRAM as .CAS/.WAV (without the screen/disk stub)'))}
-        {mirrorXroar && <button onClick={() => setFastLoad(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: fastLoad ? ACCENT : GREEN, fontWeight: fastLoad ? 700 : 400 }} title={t('Leitura rápida da mini-XRoar: LIGADO = carrega o .cas com fast-load (sem animação, p/ arquivos digitais). DESLIGADO = WAV em tempo real (com os gaps reais, p/ fitas com loader). Liga sozinho ao abrir um .cas.', 'mini-XRoar fast read: ON = loads the .cas with fast-load (no animation, for digital files). OFF = real-time WAV (with real gaps, for loader tapes). Auto-on when opening a .cas.')}>{fastLoad ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}<span className="text-[11px]">{t('Leitura rápida', 'Fast read')}</span></button>}
+        {mirrorXroar && <button onClick={() => setFastLoad(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: fastLoad ? ACCENT : GREEN, fontWeight: fastLoad ? 700 : 400 }} title={t('Leitura da mini-XRoar: "Ler rápido" = carrega o .cas com fast-load (sem animação, p/ arquivos digitais). "Ler normal" = WAV em tempo real (com os gaps reais, p/ fitas com loader). Liga sozinho ao abrir um .cas.', 'mini-XRoar read: "Fast read" = loads the .cas with fast-load (no animation, for digital files). "Normal read" = real-time WAV (with real gaps, for loader tapes). Auto-on when opening a .cas.')}>{fastLoad ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}<span className="text-[11px]">{fastLoad ? t('Ler rápido', 'Fast read') : t('Ler normal', 'Normal read')}</span></button>}
         {sep}
         {tool(<Undo2 size={14} />, '', undo, undoRef.current.length > 0, t('Desfazer a última edição da onda', 'Undo the last waveform edit'))}
         {tool(<Redo2 size={14} />, '', redo, redoRef.current.length > 0, t('Refazer a edição desfeita', 'Redo the undone edit'))}
@@ -1114,8 +1115,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             <svg width={132} height={66} viewBox="0 0 88 44" style={{ flexShrink: 0 }}>
               <rect x={1} y={1} width={86} height={42} rx={5} fill="#0b1220" stroke="rgba(148,163,184,0.35)" />
               <rect x={10} y={30} width={68} height={9} rx={2} fill="#060a12" stroke="rgba(148,163,184,0.2)" />
-              {reel(28, rTake, reelL.current)}
-              {reel(60, rSupply, reelR.current)}
+              {reel(28, rSupply, reelL.current)}{/* esq = alimentação: cheio no início, encolhe */}
+              {reel(60, rTake, reelR.current)}{/* dir = recolhimento: vazio no início, cresce */}
               {/* A fita corre por BAIXO: desce do fundo de cada rolo e atravessa a abertura inferior. */}
               <polyline points={`28,${16 + rTake} 28,31 60,31 60,${16 + rSupply}`} fill="none" stroke={ACCENT_DIM} strokeWidth={1.2} />
             </svg>
@@ -1294,7 +1295,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             <div className="mt-2 flex flex-col gap-0.5">
               <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ CAS (limpo)', '→ CAS (clean)')}</span><span className="font-mono" style={{ color: '#34d399' }}>{sizes ? fmtSz(sizes.casSize) : '—'}</span></div>
               <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ WAV (limpo)', '→ WAV (clean)')}</span><span className="font-mono" style={{ color: '#34d399' }}>{sizes ? fmtSz(sizes.wavSize) : '—'}</span></div>
-              <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ Fita completa', '→ Full tape')}</span><span className="font-mono" style={{ color: ACCENT }}>{sizes ? fmtSz(sizes.fullSize) : '—'}</span></div>
+              <div className="flex justify-between text-[11px]" style={{ color: 'var(--text-secondary)' }}><span className="text-[var(--text-muted)]">{t('→ Toda K7', '→ Whole tape')}</span><span className="font-mono" style={{ color: ACCENT }}>{sizes ? fmtSz(sizes.fullSize) : '—'}</span></div>
               {srcSize > 0 && <div className="flex justify-between text-[10px] mt-0.5 pt-0.5 border-t border-[var(--border)]" style={{ color: 'var(--text-muted)' }}><span>{t('original', 'original')}</span><span className="font-mono">{fmtSz(srcSize)}</span></div>}
             </div>
             <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t('Tamanhos calculados em tempo real. A taxa só afeta os .WAV; o .CAS depende só do programa.', 'Sizes computed in real time. The rate only affects .WAV; the .CAS depends only on the program.')}</div>

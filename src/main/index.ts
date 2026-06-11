@@ -383,13 +383,22 @@ ipcMain.handle('read-dsk-directory', async (_, dskUint8Array: Uint8Array) => {
 });
 
 // 2b2. Normaliza bytes de imagem vindos do renderer (ex.: arrastar-e-soltar): se for DMK
-// (imagem de trilha), decodifica para imagem RAW de setores; senão devolve igual. Idempotente.
+// (imagem de trilha), decodifica para imagem RAW de setores; se for JVC (.dsk com CABEÇALHO de
+// 1–5 bytes), remove o cabeçalho; senão devolve igual. Idempotente.
+// JVC (C8): o cabeçalho tem tamanho = (arquivo mod 256). Bytes: [0]=setores/trilha [1]=lados
+// [2]=tamanho-de-setor(código) [3]=1º ID [4]=flag. Um .dsk RAW é sempre múltiplo de 256 → mod 256 = 0
+// (sem cabeçalho). Se o resto for 1..5, é um cabeçalho JVC → removemos para alinhar os setores.
 ipcMain.handle('normalize-image', async (_, bytes: Uint8Array) => {
   try {
-    const buf = Buffer.from(bytes);
-    if (!isDmk(buf)) return { success: true, isDmk: false, image: bytes };
-    const { raw, geom } = dmkToRaw(buf);
-    return { success: true, isDmk: true, image: new Uint8Array(raw), geom };
+    let buf = Buffer.from(bytes);
+    if (isDmk(buf)) { const { raw, geom } = dmkToRaw(buf); return { success: true, isDmk: true, image: new Uint8Array(raw), geom }; }
+    const headerLen = buf.length % 256;
+    if (headerLen >= 1 && headerLen <= 5 && buf.length - headerLen >= 256) {
+      const sectorsPerTrack = buf[0] || 18, sides = headerLen >= 2 ? (buf[1] || 1) : 1;
+      buf = buf.subarray(headerLen);
+      return { success: true, isDmk: false, jvc: true, jvcHeaderLen: headerLen, jvcSectors: sectorsPerTrack, jvcSides: sides, image: new Uint8Array(buf) };
+    }
+    return { success: true, isDmk: false, image: bytes };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
@@ -479,6 +488,24 @@ ipcMain.handle('cas-fix', async (_, casBytes: Uint8Array) => {
   try {
     const { output, report } = fixCas(Buffer.from(casBytes));
     return { success: true, data: new Uint8Array(output), report };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2b1d. B6/B7 — extrai o 1º programa BASIC de um .CAS DIGITAL (parseCas, sem FSK): devolve o payload
+// tokenizado/ASCII + nome + flag, p/ o editor BASIC abrir e detokenizar. (Para .cas vindo de áudio,
+// a aba K7 já faz o decode FSK e o "Abrir no BASIC".)
+ipcMain.handle('cas-extract-basic', async (_, casBytes: Uint8Array) => {
+  try {
+    const parsed = parseCas(Buffer.from(casBytes));
+    if (!parsed.files.length) return { success: true, found: false, error: 'no-blocks' };
+    const basic = parsed.files.find(f => f.fileType === 0) || parsed.files[0];
+    return {
+      success: true, found: basic.fileType === 0, data: new Uint8Array(basic.payload),
+      name: basic.name, asciiFlag: basic.asciiFlag, fileType: basic.fileType, fileTypeName: basic.fileTypeName,
+      count: parsed.files.length,
+    };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
@@ -1636,6 +1663,107 @@ ipcMain.handle('os9-save-buffer', async (_, bufU8: Uint8Array, defaultName: stri
 //   CF leftovers/2nd copy the HDBDOS firmware may keep). So we DON'T re-double blindly — we read the
 //   current slot and overwrite ONLY the EVEN 256-byte sub-sectors (the actual CoCo sectors that
 //   de-double reads), preserving every odd sub-sector byte-for-byte. Minimal, reversible change.
+// ───────── GRAVAR .img em CARTÃO CF (reflash) — só drives REMOVÍVEIS, salvaguardas fortes ─────────
+// Enumera/grava via PowerShell (sem dependência nativa → sem risco ao build de release). A gravação CRUA
+// num disco físico exige o app rodando como ADMINISTRADOR (senão fs.open do \\.\PhysicalDrive dá EPERM).
+function runPwsh(script: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const p = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
+    let out = '', err = '';
+    p.stdout.on('data', d => out += d.toString()); p.stderr.on('data', d => err += d.toString());
+    p.on('error', reject);
+    p.on('close', code => code === 0 ? resolve(out) : reject(new Error(err.trim() || `powershell saiu com código ${code}`)));
+  });
+}
+// Igual ao runPwsh, mas entrega cada LINHA do stdout ao callback em tempo real (p/ barra de progresso).
+function runPwshStream(script: string, onLine: (line: string) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const p = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true });
+    let err = '', buf = '';
+    p.stdout.on('data', d => {
+      buf += d.toString(); let i;
+      while ((i = buf.indexOf('\n')) >= 0) { const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (line) onLine(line); }
+    });
+    p.stderr.on('data', d => err += d.toString());
+    p.on('error', reject);
+    p.on('close', code => code === 0 ? resolve() : reject(new Error(err.trim() || `powershell saiu com código ${code}`)));
+  });
+}
+// O processo está ELEVADO (Administrador)? A gravação crua em \\.\PhysicalDrive exige elevação no Windows.
+async function isElevated(): Promise<boolean> {
+  if (process.platform !== 'win32') return false;
+  try {
+    const r = (await runPwsh(`[bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)`)).trim();
+    return /true/i.test(r);
+  } catch { return false; }
+}
+ipcMain.handle('cf-is-admin', async () => ({ admin: await isElevated() }));
+// Lista discos REMOVÍVEIS (USB/SD/MMC), JÁ excluindo sistema/boot — para o modal "Gravar em cartão CF".
+ipcMain.handle('cf-list-removable', async () => {
+  if (process.platform !== 'win32') return { success: false, error: 'Gravação de cartão CF disponível só no Windows.' };
+  try {
+    const json = await runPwsh(`Get-Disk | Where-Object { ($_.BusType -in 'USB','SD','MMC') -or $_.IsRemovable } | Select-Object Number,FriendlyName,Size,BusType,IsSystem,IsBoot | ConvertTo-Json -Compress`);
+    let arr: any = json.trim() ? JSON.parse(json) : [];
+    if (!Array.isArray(arr)) arr = [arr];
+    const drives = arr.filter((d: any) => !d.IsSystem && !d.IsBoot).map((d: any) => ({ number: d.Number, name: d.FriendlyName, size: Number(d.Size) || 0, busType: d.BusType }));
+    return { success: true, drives };
+  } catch (e: any) { return { success: false, error: e.message }; }
+});
+// Grava a .img (filePath) no disco físico removível `diskNumber`. Revalida removível/não-sistema ANTES de
+// escrever (segurança redundante). Progresso por 'cf-flash-progress'. Tira o disco offline p/ destravar.
+ipcMain.handle('cf-flash', async (e, filePath: string, diskNumber: number) => {
+  if (process.platform !== 'win32') return { success: false, error: 'Disponível só no Windows.' };
+  try {
+    // Falha RÁPIDA e clara se o app não estiver elevado (senão Set-Disk/abertura do disco dá erro críptico).
+    if (!(await isElevated())) return { success: false, error: 'NÃO ESTÁ COMO ADMINISTRADOR. Feche o app e reabra com "Executar como administrador" para gravar no cartão.' };
+    const d = JSON.parse(await runPwsh(`Get-Disk -Number ${diskNumber} | Select-Object Size,BusType,IsSystem,IsBoot,IsRemovable | ConvertTo-Json -Compress`));
+    if (d.IsSystem || d.IsBoot) return { success: false, error: 'ABORTADO: o disco alvo é do sistema/boot.' };
+    if (!(d.IsRemovable || ['USB', 'SD', 'MMC'].includes(d.BusType))) return { success: false, error: 'ABORTADO: o disco alvo não é removível.' };
+    const st = fs.statSync(filePath);
+    if (Number(d.Size) > 0 && st.size > Number(d.Size)) return { success: false, error: `A imagem (${st.size} B) é MAIOR que o cartão (${d.Size} B).` };
+    // Mídia REMOVÍVEL não pode ir offline (Set-Disk -IsOffline dá "Removable media cannot be set to offline").
+    // Então a escrita é ONLINE: liberamos o read-only e LIMPAMOS a tabela de partições — isso desmonta/elimina
+    // os volumes que o Explorer mantém montados (a trava de volume é a causa do "EIO"). Sem volumes montados,
+    // a escrita crua dos primeiros setores é permitida. Ignora erro se o disco já estiver RAW.
+    await runPwsh(`Set-Disk -Number ${diskNumber} -IsReadOnly $false -ErrorAction SilentlyContinue`).catch(() => {});
+    await runPwsh(`Clear-Disk -Number ${diskNumber} -RemoveData -RemoveOEM -Confirm:$false`).catch(() => {});
+    // A escrita CRUA é feita por .NET FileStream DENTRO do PowerShell — o fs.openSync do Node CORROMPE o
+    // caminho do dispositivo (\\.\PhysicalDriveN vira "\\.\PhysicalDriveN\" / "C:\.PhysicalDriveN") → EIO.
+    // O .NET abre o device corretamente. Cópia em blocos de 4 MB alinhados a 512 B; progresso por linha.
+    const imgPs = filePath.replace(/'/g, "''");
+    const flashScript = [
+      `$ErrorActionPreference='Stop'`,
+      `$src=[System.IO.File]::Open('${imgPs}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read)`,
+      `$dst=New-Object System.IO.FileStream('\\\\.\\PhysicalDrive${diskNumber}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::ReadWrite)`,
+      `try{`,
+      `  $total=$src.Length; $chunk=4194304; $buf=New-Object byte[] $chunk; [long]$pos=0`,
+      `  while($pos -lt $total){`,
+      `    $want=[int][Math]::Min([long]$chunk,$total-$pos); $got=0`,
+      `    while($got -lt $want){ $r=$src.Read($buf,$got,$want-$got); if($r -le 0){break}; $got+=$r }`,
+      `    if($got -le 0){break}`,
+      `    $wlen=$got; if($wlen % 512 -ne 0){ $wlen=[int]([Math]::Ceiling($got/512)*512); [Array]::Clear($buf,$got,$wlen-$got) }`,
+      `    $dst.Write($buf,0,$wlen); $pos+=$got`,
+      `    [Console]::Out.WriteLine('PROGRESS '+$pos+' '+$total)`,
+      `  }`,
+      `  $dst.Flush($true); [Console]::Out.WriteLine('DONE '+$total)`,
+      `} finally { $src.Close(); $dst.Close() }`,
+    ].join('\n');
+    await runPwshStream(flashScript, (line) => {
+      const m = /^PROGRESS (\d+) (\d+)/.exec(line);
+      if (m) e.sender.send('cf-flash-progress', { written: Number(m[1]), total: Number(m[2]) });
+    });
+    // Força o Windows a reler a nova tabela de partições da .img recém-gravada (remonta o volume no Explorer).
+    await runPwsh(`Update-Disk -Number ${diskNumber} -ErrorAction SilentlyContinue`).catch(() => {});
+    return { success: true, bytes: st.size };
+  } catch (e2: any) {
+    const raw = e2?.message || String(e2);
+    const msg = /EPERM|EACCES|access is denied|acesso negado|negado|denied|elevat|administrador/i.test(raw)
+      ? `Acesso negado — rode o aplicativo como ADMINISTRADOR para gravar no cartão. (${raw})`
+      : raw;
+    return { success: false, error: msg };
+  }
+});
+
 ipcMain.handle('image-write-slot', async (_, filePath: string, offset: number, diskUint8Array: Uint8Array) => {
   try {
     const disk = Buffer.from(diskUint8Array);

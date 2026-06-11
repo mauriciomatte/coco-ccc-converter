@@ -102,9 +102,11 @@ granules ocupa), **Trilhas** (em quais trilhas está, em faixas tipo "0-2, 4") e
 - **Renomear** (1 selecionado, ícone de lápis) — abre um modal com os campos **NOME (8)** e **EXT (3)**.
   Só a entrada de diretório muda; os dados ficam no lugar.
 - **Excluir** (ou tecla **Delete**) — apaga os selecionados e libera os granules.
-- **Visualização rápida .BAS** (lupa) — abre um **visualizador somente-leitura** que **detokeniza** o
-  BASIC na hora, sem sair da aba. Ótimo para espiar um programa antes de extrair.
-- **Editar .BAS** — manda o `.BAS` (em ASCII) para a **aba BASIC** para edição completa.
+- **Visualização rápida** (lupa) — abre um **visualizador somente-leitura** que **detokeniza** o
+  BASIC na hora, sem sair da aba. Ótimo para espiar um programa antes de extrair. (Recusa Linguagem de Máquina.)
+- **Editar** — manda um **programa BASIC** para a **aba BASIC** para edição completa, **independente da
+  extensão** (`.BAS`/`.BAT`/`.TXT`…), preservando o **nome e a extensão originais**; detokeniza se necessário.
+  **Linguagem de Máquina é recusada** (use o **HEX/DISASM** na aba Geral).
 - **Extrair para o PC** (seta para baixo) — salva o(s) arquivo(s) selecionado(s) numa pasta do Windows.
 - **Comparar** (1 selecionado) — abre um **diff hexadecimal** entre o arquivo do disco e um arquivo do PC:
   diz se são **idênticos** ou mostra quantos bytes diferem, a 1ª diferença e os trechos divergentes em
@@ -137,6 +139,14 @@ Ao abrir um contêiner (DriveWire/MiniIDE/CoCoSDC), o painel ganha um seletor de
   mídia real).
 - **OS-9 · {volume}** — abre a partição OS-9 do contêiner na aba OS-9 (somente-leitura por segurança).
 - **Nomear/Renomear** (MiniIDE) — dá/edita o nome de catálogo SIDEKICK do drive.
+- **Gravar em cartão CF** (ícone laranja de banco de dados — só quando o painel é um contêiner aberto de
+  arquivo `.img`/`.vhd`) — grava a imagem do contêiner **direto num cartão CF/SD/USB**. ⚠️ **APAGA o cartão.**
+  Exige o app rodando como **ADMINISTRADOR**, mostra **só drives removíveis** (nunca o disco do sistema) e
+  pede **confirmação digitando o nº do disco**, com barra de progresso. Ao terminar, se o Windows oferecer
+  "formatar", **ignore** (o conteúdo é RS-DOS/OS-9, não FAT). Alternativa: balenaEtcher na `.img` salva.
+
+> **Limpar painel** com um programa em **edição na aba BAS** vindo dele e **não salvo** → o app **avisa** antes
+> de fechar (o texto continua na aba BAS).
 
 Cada disco é lido **sob demanda** — abrir um contêiner de gigabytes é instantâneo. Ao abrir um contêiner
 grande aparece uma **barra de progresso** ("Analisando discos…" / "Lendo diretório FAT…").

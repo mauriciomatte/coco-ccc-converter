@@ -131,6 +131,19 @@ const api = {
   fixCas: (casBytes: Uint8Array) =>
     ipcRenderer.invoke('cas-fix', casBytes),
 
+  // B6/B7 — extrai o 1º programa BASIC de um .CAS digital (para abrir no editor BASIC).
+  casExtractBasic: (casBytes: Uint8Array) =>
+    ipcRenderer.invoke('cas-extract-basic', casBytes),
+
+  // Gravar .img em cartão CF (reflash): checar Administrador, listar removíveis, gravar e ouvir o progresso.
+  cfIsAdmin: () => ipcRenderer.invoke('cf-is-admin'),
+  cfListRemovable: () => ipcRenderer.invoke('cf-list-removable'),
+  cfFlash: (filePath: string, diskNumber: number) => ipcRenderer.invoke('cf-flash', filePath, diskNumber),
+  onCfFlashProgress: (cb: (p: { written: number; total: number }) => void) => {
+    const h = (_: any, p: any) => cb(p); ipcRenderer.on('cf-flash-progress', h);
+    return () => ipcRenderer.removeListener('cf-flash-progress', h);
+  },
+
   dskAddBytes: (dskBuffer: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, data: Uint8Array) =>
     ipcRenderer.invoke('dsk-add-bytes', dskBuffer, name, ext, fileType, asciiFlag, data),
 

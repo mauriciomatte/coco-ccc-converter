@@ -10,6 +10,40 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.62 — 2026-06-11
+--------------------------------------------------------------------------------
+Write .img to a CF card from the app, sturdier BASIC editing, and open BASIC of any extension
+
+ADDED
+  • WRITE .IMG TO A CF/SD/USB CARD straight from the app: orange button on the DSK toolbar (only when the
+    pane is an .img/.vhd container). Shows ONLY removable drives (never the system disk), checks for
+    ADMINISTRATOR, asks for confirmation by typing the disk number, and shows a progress bar. When done, if
+    Windows offers to "format", ignore it (the content is RS-DOS/OS-9, not FAT).
+  • EDIT A BASIC PROGRAM OF ANY EXTENSION (.BAS/.BAT/.TXT...): the DSK tab's "Edit" button confirms the file
+    type and opens BASIC programs (tokenized or ASCII, auto-detokenizing) keeping the ORIGINAL name and
+    extension. Machine Language is refused (use HEX/DISASM).
+  • OCCURRENCE COUNT in the BASIC tab search (e.g. "3/7 match."); the search is now case-insensitive.
+  • WARNING when "Clear pane" (DSK) is used while a program from that pane is being edited in the BAS tab with
+    UNSAVED changes (confirmation modal; the text stays in the BAS tab).
+  • M2 "Send to device": injects the file downloaded from FujiNet into the active image.
+
+CHANGED
+  • "Unsaved" indicator in the BASIC tab: the tab NAME turns RED (with "●") when there are pending changes;
+    the "Save" button only lights up when there are changes and dims after saving (replaces the "Editing" badge).
+  • "BASIC" tab renamed to "BAS"; the "HEX/DISASM" button is now icon-only (with a tooltip).
+  • "RUN WITH RESET" -> "RESET+RUN"; "NEW DSK+SAVE" -> "NEW DSK ON"; the "Run in XRoar" hint only mentions NEW
+    when the "NEW before injecting" option is checked.
+  • XRoar controls are now icon-only (Pause/Reset/Full reset); the COLUMNS panel only shows on CoCo3.
+  • FujiNet: list uses 1 click to select and 2 clicks to open/act.
+
+FIXED
+  • BASIC editor cursor in VDG mode: it drifted and "sank" below the typed text on long programs. The position
+    is now MEASURED (a mirror with the same CSS), following the line wrapping.
+  • CF card writing: the error was hidden (log only); removable media cannot go offline; and the device path was
+    mangled by Node. Writing now uses Clear-Disk + .NET FileStream and the error is shown in the modal itself.
+  • JVC header (C8): .jvc/.dsk images with a 1-5 byte header now open aligned.
+
+--------------------------------------------------------------------------------
 v1.0.61 — 2026-06-10
 --------------------------------------------------------------------------------
 Tabbed BASIC editor, PERIOD-CORRECT .WAV tape exporter, full CoCo 1/2/3 token tables and a tokenizer

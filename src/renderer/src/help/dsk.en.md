@@ -100,9 +100,11 @@ it uses), **Tracks** (which tracks it lives on, as ranges like "0-2, 4") and **F
 - **Rename** (1 selected, pencil icon) — opens a modal with **NAME (8)** and **EXT (3)** fields. Only the
   directory entry changes; the data stays in place.
 - **Delete** (or **Delete** key) — removes the selection and frees its granules.
-- **Quick .BAS view** (magnifier) — opens a **read-only viewer** that **detokenizes** the BASIC on the spot,
-  without leaving the tab. Great to peek at a program before extracting it.
-- **Edit .BAS** — sends the (ASCII) `.BAS` to the **BASIC tab** for full editing.
+- **Quick view** (magnifier) — opens a **read-only viewer** that **detokenizes** the BASIC on the spot,
+  without leaving the tab. Great to peek at a program before extracting it. (Machine Language is refused.)
+- **Edit** — sends a **BASIC program** to the **BASIC tab** for full editing, **regardless of the extension**
+  (`.BAS`/`.BAT`/`.TXT`…), keeping the **original name and extension**; auto-detokenizes if needed.
+  **Machine Language is refused** (use **HEX/DISASM** on the General tab).
 - **Extract to PC** (down arrow) — saves the selected file(s) to a Windows folder.
 - **Compare** (1 selected) — opens a **hex diff** between the disk file and a PC file: tells you if they are
   **identical** or shows how many bytes differ, the first difference, and the divergent runs in red. Use it
@@ -135,6 +137,14 @@ When you open a container (DriveWire/MiniIDE/CoCoSDC), the pane gains a disk sel
   media).
 - **OS-9 · {volume}** — opens the container's OS-9 partition in the OS-9 tab (read-only for safety).
 - **Name/Rename** (MiniIDE) — sets/edits the drive's SIDEKICK catalog name.
+- **Write to CF card** (orange database icon — only when the pane is a file-backed `.img`/`.vhd` container) —
+  writes the container image **straight to a CF/SD/USB card**. ⚠️ **ERASES the card.** Requires the app
+  running as **ADMINISTRATOR**, shows **only removable** drives (never the system disk) and asks for
+  **confirmation by typing the disk number**, with a progress bar. When done, if Windows offers to "format",
+  **ignore it** (the content is RS-DOS/OS-9, not FAT). Alternative: balenaEtcher on the saved `.img`.
+
+> **Clear pane** with a program being **edited in the BAS tab** from it and **unsaved** → the app **warns** you
+> before closing (the text stays in the BAS tab).
 
 Each disk is read **on demand** — opening a gigabyte container is instant. Opening a large container shows a
 **progress bar** ("Scanning disks…" / "Reading FAT directory…").

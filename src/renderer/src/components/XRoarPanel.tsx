@@ -564,7 +564,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           </div>
         </div>
 
-        <div className="glass-panel p-2.5 flex flex-col gap-1.5">
+        <div className="glass-panel p-3 flex flex-col gap-2.5">
           <div className={sectionTitle}>{t('Imagem', 'Picture')}</div>
           {pic.map(s => (
             <label key={s.key} className="flex items-center gap-2 text-[10px] text-[var(--text-secondary)]">
@@ -574,13 +574,17 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
                 className="flex-1" style={{ minWidth: 0, width: '100%' }} />
             </label>
           ))}
+          <div style={{ height: 2 }} />{/* folga extra entre o Contraste e a borda inferior do painel */}
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
           <div className={sectionTitle}>{t('Controles', 'Controls')}</div>
-          <button onClick={togglePause} disabled={!ready} className="dsk-tool justify-center">{paused ? <Play size={13} /> : <Pause size={13} />} {paused ? t('Continuar', 'Resume') : t('Pausar', 'Pause')}</button>
-          <button onClick={() => sendCmd('soft_reset')} disabled={!ready} className="dsk-tool justify-center"><RotateCcw size={13} /> {t('Reset', 'Reset')}</button>
-          <button onClick={() => sendCmd('hard_reset')} disabled={!ready} className="dsk-tool justify-center"><Power size={13} /> {t('Reset total', 'Hard reset')}</button>
+          {/* Só ícones (hint no tooltip) e em LINHA → libera espaço vertical p/ os demais componentes. */}
+          <div className="flex gap-1.5">
+            <button onClick={togglePause} disabled={!ready} className="dsk-tool justify-center flex-1" title={paused ? t('Continuar', 'Resume') : t('Pausar', 'Pause')}>{paused ? <Play size={15} /> : <Pause size={15} />}</button>
+            <button onClick={() => sendCmd('soft_reset')} disabled={!ready} className="dsk-tool justify-center flex-1" title={t('Reset', 'Reset')}><RotateCcw size={15} /></button>
+            <button onClick={() => sendCmd('hard_reset')} disabled={!ready} className="dsk-tool justify-center flex-1" title={t('Reset total', 'Hard reset')}><Power size={15} /></button>
+          </div>
         </div>
 
         {/* TEXTO — toggle 80/32 colunas (só CoCo 3): WIDTH 80 mostra as minúsculas reais do GIME */}

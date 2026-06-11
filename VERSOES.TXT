@@ -10,6 +10,41 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.62 — 2026-06-11
+--------------------------------------------------------------------------------
+Gravar .img em cartao CF pelo app, edicao BASIC mais robusta e abrir BASIC de qualquer extensao
+
+ADICIONADO
+  • GRAVAR .IMG EM CARTAO CF/SD/USB direto do app: botao laranja na barra DSK (so quando o painel e um
+    container .img/.vhd). Mostra SO drives removiveis (nunca o disco do sistema), checa ADMINISTRADOR,
+    pede confirmacao digitando o numero do disco e mostra barra de progresso. Ao final, se o Windows
+    oferecer "formatar", ignore (o conteudo e RS-DOS/OS-9, nao FAT).
+  • EDITAR PROGRAMA BASIC DE QUALQUER EXTENSAO (.BAS/.BAT/.TXT...): o botao "Editar" da aba DSK confirma
+    o tipo do arquivo e abre programas BASIC (tokenizados ou ASCII, detokenizando se preciso) preservando
+    o NOME e a EXTENSAO originais. Linguagem de Maquina e recusada (use o HEX/DISASM).
+  • CONTAGEM DE OCORRENCIAS na busca da aba BASIC (ex.: "3/7 ocorr."); a busca agora ignora maiuscula/minuscula.
+  • AVISO ao "Limpar painel" da DSK quando ha um programa em edicao na aba BAS, vindo dele, com alteracoes
+    NAO salvas (modal de confirmacao; o texto continua na aba BAS).
+  • M2 "Enviar para dispositivo": injeta o arquivo baixado da FujiNet na imagem ativa.
+
+ALTERADO
+  • Indicador de "nao salvo" na aba BASIC: o NOME da aba fica em VERMELHO (com "●") quando ha alteracoes
+    pendentes; o botao "Salvar" so acende quando ha mudancas e esmaece apos salvar (substitui o selo "Editando").
+  • Aba "BASIC" renomeada para "BAS"; botao "HEX/DISASM" virou so o icone (com dica).
+  • Botao "RODAR COM RESET" -> "RESET+RODAR"; "NOVO DSK+SALVAR" -> "NOVO DSK EM"; a dica de "Rodar no XRoar"
+    so menciona o NEW se a opcao "NEW antes de injetar" estiver marcada.
+  • Controles do XRoar viraram so icones (Pausar/Reset/Reset total); painel COLUNAS so aparece no CoCo3.
+  • FujiNet: lista com 1 clique para selecionar e 2 cliques para abrir/agir.
+
+CORRIGIDO
+  • Cursor do editor BASIC no modo VDG: ficava desalinhado e "afundava" para baixo do texto digitado em
+    textos longos. Agora a posicao e MEDIDA (espelho com o mesmo CSS), acompanhando a quebra de linha.
+  • Gravacao de cartao CF: erro nao aparecia (so ia para o log); midia removivel nao aceita ficar offline;
+    e o caminho do dispositivo era corrompido pelo Node. Agora a escrita usa Clear-Disk + .NET FileStream
+    e o erro e exibido no proprio modal.
+  • Cabecalho JVC (C8): imagens .jvc/.dsk com 1-5 bytes de cabecalho passam a abrir alinhadas.
+
+--------------------------------------------------------------------------------
 v1.0.61 — 2026-06-10
 --------------------------------------------------------------------------------
 Editor BASIC com ABAS, exportador de fita .WAV no PADRÃO DA ÉPOCA, tabelas de tokens CoCo 1/2/3 e tokenizador
