@@ -42,12 +42,18 @@ export function encodeCas(files: CasFileInput[]): Buffer {
   };
 
   for (const f of files) {
-    // Namefile (15-byte payload): name(8) type(1) ascii(1) gap(1) exec(2 BE) load(2 BE)
+    // Namefile (15-byte payload): name(8) type(1) ascii(1) gap(1) exec(2 BE) load(2 BE).
+    // GAP FLAG (byte 10) é CRÍTICO: o CLOAD do Color BASIC lê CASBUF+10 e, se ZERO, trata o arquivo
+    // como IMAGEM TOKENIZADA (binária) — IGNORANDO o flag ASCII. Um BASIC ASCII (flag 0xFF) com gap=0
+    // era carregado byte-a-byte como tokens (ex.: "5 CLS" → linha 17228 lixo). Arquivos ASCII (e de
+    // dados) são GAPPED: gap=0xFF e cada bloco ganha um LEADER COMPLETO p/ o CoCo re-sincronizar após
+    // a parada do motor entre blocos. ML/tokenizado (flag 0) seguem contíguos (gap=0, leader curto).
+    const gapped = (f.asciiFlag & 0xFF) !== 0x00;
     const nf = Buffer.alloc(15);
     nameField(f.name).copy(nf, 0);
     nf[8] = f.fileType & 0xFF;
     nf[9] = f.asciiFlag & 0xFF;
-    nf[10] = 0x00; // gap flag: no gaps
+    nf[10] = gapped ? 0xFF : 0x00; // gap flag (gapped p/ ASCII/dados; sem gaps p/ binário)
     nf.writeUInt16BE(f.execAddr & 0xFFFF, 11);
     nf.writeUInt16BE(f.loadAddr & 0xFFFF, 13);
 
@@ -55,11 +61,12 @@ export function encodeCas(files: CasFileInput[]): Buffer {
     pushBlock(0x00, nf);
     leader(LEADER_LEN); // gap between namefile and data
 
-    // Data blocks: up to 255 bytes each, com um leader curto ENTRE eles (formato canônico que o
-    // XRoar lê; blocos colados quebravam o load em arquivos multi-bloco).
+    // Data blocks: até 255 bytes cada. Entre blocos: leader COMPLETO se gapped (o CoCo desliga o motor
+    // e precisa re-sincronizar), ou curto se contíguo (formato canônico que o XRoar lê em sequência).
+    const interBlock = gapped ? LEADER_LEN : 2;
     for (let i = 0; i < f.payload.length; i += 255) {
       pushBlock(0x01, f.payload.subarray(i, Math.min(i + 255, f.payload.length)));
-      leader(2);
+      leader(interBlock);
     }
 
     // EOF block

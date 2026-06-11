@@ -65,7 +65,9 @@ export default function MiniXRoar({ lang, platform, active, load, fast, flexGrow
       timers.push(window.setTimeout(() => { sendCmd('load_file', { fileName: load.name, fileData: arr, loadType: 1, drive: 0 }); }, 2200)); // loadType 1 = autorun (CLOAD/CLOADM)
     } else {
       const isDragon = machine.startsWith('dragon');
-      const primed = (isDragon ? ' ' : '') + (load.ftype === 2 ? 'CLOADM' : 'CLOAD') + '\r';
+      // Comando conforme o TIPO do arquivo: ML (tipo 2) = CLOADM + EXEC; BASIC (e demais) = CLOAD + RUN.
+      const cmd = load.ftype === 2 ? 'CLOADM:EXEC' : 'CLOAD:RUN';
+      const primed = (isDragon ? ' ' : '') + cmd + '\r';
       sendCmd('hard_reset');
       timers.push(window.setTimeout(() => {
         sendCmd('load_file', { fileName: load.name, fileData: arr, loadType: 0, drive: 0 }); // anexa (sem autorun)
@@ -74,7 +76,7 @@ export default function MiniXRoar({ lang, platform, active, load, fast, flexGrow
           const typeMs = primed.length * 25 + 400;
           timers.push(window.setTimeout(() => onCommandIssued?.(), typeMs));
         }, 600));
-      }, 2800));
+      }, 1800)); // espera o boot (≈2 s play→comando; era 2800)
     }
     return () => timers.forEach(clearTimeout);
   }, [load, ready, machine]);

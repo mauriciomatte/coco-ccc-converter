@@ -32,15 +32,16 @@ const api = {
   xroarPickFile: (kind?: string) =>
     ipcRenderer.invoke('xroar-pick-file', kind),
   k7Decode: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('k7-decode', wavBytes, opts),
-  k7ExportClean: (wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string) => ipcRenderer.invoke('k7-export-clean', wavBytes, opts, format, sampleRate, defaultName),
+  k7ExportClean: (wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string, tapeName?: string) => ipcRenderer.invoke('k7-export-clean', wavBytes, opts, format, sampleRate, defaultName, tapeName),
   k7ExtractFile: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-extract-file', wavBytes, opts, fileIndex),
   k7FileBytes: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-bytes', wavBytes, opts, fileIndex),
   k7Stream: (wavBytes: Uint8Array, opts: any) => ipcRenderer.invoke('k7-stream', wavBytes, opts),
-  k7CasBytes: (wavBytes: Uint8Array, opts: any) => ipcRenderer.invoke('k7-cas-bytes', wavBytes, opts),
+  k7CasBytes: (wavBytes: Uint8Array, opts: any, tapeName?: string) => ipcRenderer.invoke('k7-cas-bytes', wavBytes, opts, tapeName),
   k7ExportSizes: (wavBytes: Uint8Array, opts: any, rate: number) => ipcRenderer.invoke('k7-export-sizes', wavBytes, opts, rate),
   k7ResampleWav: (wavBytes: Uint8Array, rate: number) => ipcRenderer.invoke('k7-resample-wav', wavBytes, rate),
   k7FileForDsk: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-for-dsk', wavBytes, opts, fileIndex),
   k7CasToWav: (casBytes: Uint8Array, sampleRate?: number) => ipcRenderer.invoke('k7-cas-to-wav', casBytes, sampleRate),
+  buildBasicTapeWav: (name: string, payload: Uint8Array, ascii: boolean, sampleRate?: number) => ipcRenderer.invoke('build-basic-tape-wav', name, payload, ascii, sampleRate),
   loaderScan: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('loader-scan', wavBytes, opts),
   loaderBuild: (wavBytes: Uint8Array, opts: any, params: any) => ipcRenderer.invoke('loader-build', wavBytes, opts, params),
   loaderStrip: (binBytes: Uint8Array, name?: string) => ipcRenderer.invoke('loader-strip', binBytes, name),
@@ -121,6 +122,14 @@ const api = {
 
   dskExtractRaw: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-extract-raw', dskBuffer, fileEntry),
+
+  // W3 — disco → fita: empacota o arquivo selecionado num .CAS tocável (a K7 carrega via pipeline).
+  dskFileToCas: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
+    ipcRenderer.invoke('dsk-file-to-cas', dskBuffer, fileEntry),
+
+  // W5 — FIXCAS: valida/repara um .CAS (checksums, leader/sync, EOF).
+  fixCas: (casBytes: Uint8Array) =>
+    ipcRenderer.invoke('cas-fix', casBytes),
 
   dskAddBytes: (dskBuffer: Uint8Array, name: string, ext: string, fileType: number, asciiFlag: number, data: Uint8Array) =>
     ipcRenderer.invoke('dsk-add-bytes', dskBuffer, name, ext, fileType, asciiFlag, data),

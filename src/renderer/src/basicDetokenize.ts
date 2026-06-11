@@ -12,8 +12,11 @@
 // tabelas saem como [?XX] para não corromper silenciosamente — se algo aparecer assim, é só
 // reportar o código que a tabela é ajustada.
 
-// Comandos: índice 0 = 0x80. Tabelas VERIFICADAS contra os disassemblies oficiais
-// (Color/Extended/Disk BASIC Unravelled II, Spectral Associates / W. Zydhek).
+// Comandos (tokens PRIMÁRIos): índice 0 = 0x80. Tabelas VERIFICADAS BYTE-A-BYTE contra os
+// disassemblies oficiais *Unravelled II* (Spectral Associates / Walter K. Zydhek): Color BASIC 1.2,
+// Extended BASIC 1.1, Disk BASIC 1.0/1.1 e Super Extended BASIC 2.0 (CoCo 3). Os valores vêm das
+// DISPATCH TABLES (FDB sequencial), não dos comentários ao lado dos FCC (que o pdftotext desalinha).
+// Faixas: Color 0x80–0xB4 · Extended 0xB5–0xCD · Disk 0xCE–0xE1 · Super Extended/CoCo3 0xE2–0xF8.
 const CMD: string[] = [
   // Color BASIC (0x80–0xB4)
   'FOR', 'GO', 'REM', "'", 'ELSE', 'IF', 'DATA', 'PRINT', 'ON', 'INPUT', 'END', 'NEXT',
@@ -28,9 +31,14 @@ const CMD: string[] = [
   // Disk Extended Color BASIC (0xCE–0xE1) — DIR começa em 0xCE; DOS=0xE1
   'DIR', 'DRIVE', 'FIELD', 'FILES', 'KILL', 'LOAD', 'LSET', 'MERGE', 'RENAME', 'RSET',
   'SAVE', 'WRITE', 'VERIFY', 'UNLOAD', 'DSKINI', 'BACKUP', 'COPY', 'DSKI$', 'DSKO$', 'DOS',
+  // Super Extended Color BASIC — CoCo 3 / BASIC 2.0 (0xE2–0xF8). WIDTH começa em 0xE2; ATTR=0xF8.
+  'WIDTH', 'PALETTE', 'HSCREEN', 'LPOKE', 'HCLS', 'HCOLOR', 'HPAINT', 'HCIRCLE', 'HLINE', 'HGET',
+  'HPUT', 'HBUFF', 'HPRINT', 'ERR', 'BRK', 'LOCATE', 'HSTAT', 'HSET', 'HRESET', 'HDRAW',
+  'CMP', 'RGB', 'ATTR',
 ];
 
-// Funções (após 0xFF): índice 0 = 0x80. Verificadas contra os mesmos disassemblies.
+// Funções (tokens SECUNDÁRIos, após 0xFF): índice 0 = 0x80. Mesmas fontes/método das DISPATCH TABLES.
+// Faixas: Color 0x80–0x93 · Extended 0x94–0xA1 · Disk 0xA2–0xA7 · (0xA8 vago) · CoCo3 0xA9–0xAD.
 const FUN: string[] = [
   // Color BASIC (0x80–0x93)
   'SGN', 'INT', 'ABS', 'USR', 'RND', 'SIN', 'PEEK', 'LEN', 'STR$', 'VAL', 'ASC', 'CHR$',
@@ -40,6 +48,10 @@ const FUN: string[] = [
   'TIMER', 'PPOINT', 'STRING$',
   // Disk (0xA2–0xA7)
   'CVN', 'FREE', 'LOC', 'LOF', 'MKN$', 'AS',
+  // 0xA8 — slot reservado/vago entre Disk e Super Extended (o dispatch do CoCo3 começa em 0xA9).
+  '',
+  // Super Extended Color BASIC — CoCo 3 / BASIC 2.0 (0xA9–0xAD)
+  'LPEEK', 'BUTTON', 'HPOINT', 'ERNO', 'ERLIN',
 ];
 
 // ── Dragon 32/64 BASIC (Microsoft) — token VALUES differ from CoCo. Verified against
@@ -103,6 +115,109 @@ function findBasicStart(bytes: Uint8Array): number {
   return bestN >= 2 ? best : std;
 }
 
+// ─────────────────────────── TOKENIZADOR (crunch: texto → imagem tokenizada) ───────────────────────────
+// Espelha o CRUNCH do ROM (Color BASIC $B821): tokeniza palavras reservadas FORA de strings/REM/'/DATA,
+// com a flag "illegal token" que impede casar keyword NO MEIO de um identificador (ex.: "XOR" fica literal),
+// mas casa no INÍCIO da palavra (ex.: "GOTO" → GO+TO). Os ponteiros de link são placeholders: o CoCo os
+// RECALCULA no CLOAD/LOAD (rotina LACEF "compute start of next line addresses"), varrendo os terminadores.
+// Validado por round-trip com `detokenizeBasic`; o chamador deve cair p/ ASCII se o round-trip falhar.
+
+interface KwMatch { word: string; bytes: number[]; token: number }
+function buildMatchList(cmd: string[], fun: string[]): KwMatch[] {
+  const list: KwMatch[] = [];
+  cmd.forEach((w, i) => { if (w) list.push({ word: w, bytes: [0x80 + i], token: 0x80 + i }); });
+  fun.forEach((w, i) => { if (w) list.push({ word: w, bytes: [0xFF, 0x80 + i], token: 0x80 + i }); });
+  // Ordena por comprimento DECRESCENTE → casamento mais longo primeiro (evita casar prefixo curto).
+  return list.sort((a, b) => b.word.length - a.word.length);
+}
+const isUpperAlpha = (c: number) => c >= 0x41 && c <= 0x5A;
+const isAlnum = (c: number) => isUpperAlpha(c) || (c >= 0x30 && c <= 0x39);
+
+function crunchStatement(s: string, matches: KwMatch[]): number[] {
+  const out: number[] = [];
+  let illegal = false; // V43 — suprime casamento no meio de identificador
+  let inData = false;  // V44 — após DATA, literal até ':'
+  let i = 0;
+  while (i < s.length) {
+    const code = s.charCodeAt(i) & 0xFF;
+    if (illegal) {                                   // dentro de um identificador não-keyword: copia alnum
+      if (isAlnum(code)) { out.push(code); i++; continue; }
+      illegal = false;                               // delimitador zera a flag
+    }
+    if (code === 0x20) { out.push(0x20); i++; continue; }      // espaço: preservado (ROM não remove)
+    if (code === 0x22) {                                       // string: copia literal até a aspas final
+      out.push(0x22); i++;
+      while (i < s.length && s.charCodeAt(i) !== 0x22) { out.push(s.charCodeAt(i) & 0xFF); i++; }
+      if (i < s.length) { out.push(0x22); i++; }
+      continue;
+    }
+    if (inData) {                                              // DATA: literal até ':'
+      if (code !== 0x3A) { out.push(code); i++; continue; }
+      inData = false;                                          // ':' encerra o DATA
+    }
+    // tenta casar uma palavra reservada nesta posição (início de palavra)
+    let m: KwMatch | null = null;
+    for (const k of matches) { if (s.startsWith(k.word, i)) { m = k; break; } }
+    if (m) {
+      // ELSE (0x84) e o apóstrofo-REM ' (0x83) são gravados com um ':' implícito (o LIST o esconde).
+      if ((m.token === 0x84 || m.token === 0x83) && out[out.length - 1] !== 0x3A) out.push(0x3A);
+      for (const b of m.bytes) out.push(b);
+      i += m.word.length;
+      if (m.token === 0x82 || m.token === 0x83) {              // REM / ' → resto da linha literal
+        while (i < s.length) { out.push(s.charCodeAt(i) & 0xFF); i++; }
+      } else if (m.token === 0x86) inData = true;              // DATA → literal até ':'
+    } else {
+      out.push(code); i++;
+      if (isUpperAlpha(code)) illegal = true;                  // começou identificador não-keyword
+      else if (code === 0x3A) { illegal = false; inData = false; } // ':' zera flags (novo sub-statement)
+    }
+  }
+  return out;
+}
+
+// Endereço-base clássico do início do texto BASIC (CoCo 16K). Os LINKS são recalculados pelo CoCo no
+// CLOAD/LOAD (rechain), então o valor exato não importa para o hardware — mas devem ser NÃO-ZERO (zero =
+// fim do programa) para o detokenizador e para o loader não pararem na 1ª linha.
+const BASIC_TEXT_BASE = 0x1E01;
+
+/** Tokeniza (crunch) um programa BASIC em texto → imagem de memória `[link:2][nº:2][tokens][0]…[0,0]`. */
+export function tokenizeBasic(text: string, dialect: BasicDialect = 'coco'): Uint8Array {
+  const matches = buildMatchList(dialect === 'dragon' ? DRAGON_CMD : CMD, dialect === 'dragon' ? DRAGON_FUN : FUN);
+  const src = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').toUpperCase();
+  // 1) crunch de cada linha → corpo `[nº:2][tokens][0]` (sem o link ainda)
+  const bodies: number[][] = [];
+  for (const rawLine of src.split('\n')) {
+    const line = rawLine.replace(/\s+$/, '');
+    const m = /^\s*(\d{1,5})\s?/.exec(line);              // nº de linha + 1 espaço opcional (consumido)
+    if (!m) continue;                                    // linha sem número → ignora
+    const lineNo = parseInt(m[1], 10) & 0xFFFF;
+    const toks = crunchStatement(line.slice(m[0].length), matches);
+    bodies.push([(lineNo >> 8) & 0xFF, lineNo & 0xFF, ...toks, 0x00]);
+  }
+  // 2) monta com LINKS = endereço da PRÓXIMA linha (cada linha = 2 link + corpo); fim = link 0,0
+  let addr = BASIC_TEXT_BASE;
+  const image: number[] = [];
+  for (const body of bodies) {
+    const next = (addr + 2 + body.length) & 0xFFFF;     // endereço da próxima linha (ou do marcador final)
+    image.push((next >> 8) & 0xFF, next & 0xFF, ...body);
+    addr = next;
+  }
+  image.push(0x00, 0x00);                                // fim do programa (link zero)
+  return Uint8Array.from(image);
+}
+
+/** Round-trip de segurança: o crunch é fiel SE detokenizar a imagem reproduz o texto (normalizado). */
+export function tokenizeRoundTripOk(text: string, dialect: BasicDialect = 'coco'): boolean {
+  try {
+    const img = tokenizeBasic(text, dialect);
+    const back = detokenizeBasic(img, dialect);
+    if (!back.ok) return false;
+    const norm = (s: string) => s.replace(/\r\n/g, '\n').replace(/\r/g, '\n').toUpperCase()
+      .split('\n').map(l => l.replace(/\s+$/, '')).filter(l => /^\s*\d/.test(l)).join('\n').trim();
+    return norm(back.text) === norm(text);
+  } catch { return false; }
+}
+
 export interface DetokResult { text: string; ok: boolean }
 
 export type BasicDialect = 'coco' | 'dragon';
@@ -125,8 +240,23 @@ export function detokenizeBasic(bytes: Uint8Array, dialect: BasicDialect = 'coco
     const lineNo = u16(p + 2);
     p += 4;
     let line = `${lineNo} `;
+    // O CRUNCH do BASIC só tokeniza FORA de texto literal. Dentro de aspas ("…"), após REM/' (resto
+    // da linha) e após DATA (até o próximo ':'), os bytes ficam LITERAIS — inclusive os ≥0x80 (ex.:
+    // caracteres gráficos digitados num PRINT"…"). Sem rastrear esse estado, um byte ≥0x80 literal
+    // seria confundido com um token e a linha sairia com lixo. Rastreamos os três contextos:
+    let inStr = false;       // dentro de "…"
+    let restLiteral = false; // após REM (0x82) ou ' (0x83) → resto da linha é literal
+    let inData = false;      // após DATA (0x86) → literal até o ':' (fora de aspas)
+    const lit = (b: number) => { line += String.fromCharCode(b); }; // byte cru (literal)
     while (p < bytes.length && bytes[p] !== 0x00) {
       const b = bytes[p];
+      if (restLiteral) { lit(b); p += 1; continue; }          // REM/' : tudo literal até o fim da linha
+      if (b === 0x22) { inStr = !inStr; line += '"'; p += 1; continue; } // alterna aspas
+      if (inStr) { lit(b); p += 1; continue; }                // dentro de string: literal
+      if (inData) {
+        if (b !== 0x3A) { lit(b); p += 1; continue; }         // DATA: literal até o ':'
+        inData = false;                                       // ':' encerra o DATA → trata normalmente
+      }
       // O ':' (0x3A) gravado antes de ELSE (0x84) ou do apóstrofo-REM ' (0x83) é suprimido
       // pelo LIST do CoCo. Ex.: ":ELSE" → "ELSE", ":'" → "'".
       if (b === 0x3A && (bytes[p + 1] === 0x84 || bytes[p + 1] === 0x83)) {
@@ -135,13 +265,15 @@ export function detokenizeBasic(bytes: Uint8Array, dialect: BasicDialect = 'coco
       }
       if (b === 0xFF && p + 1 < bytes.length) {
         const f = bytes[p + 1];
-        line += fun[f - 0x80] ?? `[?FF${hx(f)}]`;
+        line += fun[f - 0x80] || `[?FF${hx(f)}]`;             // '' (slot vago) também cai no desconhecido
         p += 2;
       } else if (b >= 0x80) {
-        line += cmd[b - 0x80] ?? `[?${hx(b)}]`;
+        line += cmd[b - 0x80] || `[?${hx(b)}]`;
+        if (b === 0x82 || b === 0x83) restLiteral = true;     // REM ou ' → resto literal
+        else if (b === 0x86) inData = true;                   // DATA → literal até ':'
         p += 1;
       } else {
-        line += String.fromCharCode(b);
+        lit(b);
         p += 1;
       }
     }

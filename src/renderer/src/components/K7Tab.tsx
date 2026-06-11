@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2,
   Play, Pause, Square, Circle, Rewind, FastForward, AudioLines, ZoomIn, ZoomOut, FileCode2,
-  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles,
+  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles, Wrench, HardDrive,
 } from 'lucide-react';
 import MiniXRoar from './MiniXRoar';
 import { HelpButton, TabHelpModal } from './TabHelp';
@@ -146,7 +146,7 @@ const WAVE_COLOR = 'rgba(255,140,26,0.5)';   // forma de onda
 const ACCENT = 'rgba(255,140,26,0.65)';      // detalhes (cassete, contador, drag)
 const ACCENT_DIM = 'rgba(255,140,26,0.4)';
 
-export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendToXroar, onSendToDsk, onLoaderToDsk, onLog }: {
+export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendToXroar, onSendToDsk, onLoaderToDsk, onPullFromPanel, onLog }: {
   lang: string;
   active?: boolean;
   platform?: 'coco' | 'dragon';
@@ -155,6 +155,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   onSendToXroar?: (wavBytes: Uint8Array, name: string) => void;
   onSendToDsk?: (wavBytes: Uint8Array, opts: any, fileIndex: number) => void;
   onLoaderToDsk?: (data: Uint8Array, name: string) => void; // grava um .bin pronto (sem loader) num painel DSK
+  // W3 — puxa o arquivo selecionado num painel DSK como fita (.cas). null = nada selecionado.
+  onPullFromPanel?: () => Promise<{ data: Uint8Array; name: string } | { error: string } | null>;
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
 }) {
   const pt = lang === 'pt-br';
@@ -187,6 +189,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [panelW, setPanelW] = useState<{ basic: number; hex: number; mini: number }>(cfg.panelW ?? { basic: 1, hex: 1, mini: 2 });
   const panelsRowRef = useRef<HTMLDivElement | null>(null);
   const splitDrag = useRef<null | { leftK: 'basic' | 'hex'; rightK: 'hex' | 'mini'; x0: number; pairPx: number; l0Px: number; sum: number }>(null);
+  const [splitting, setSplitting] = useState(false);                       // arraste de splitter em curso (mostra a camada de captura)
   const [revealN, setRevealN] = useState(0);                               // bytes "revelados" (efeito de carga), atualizado por intervalo
   const [srcSize, setSrcSize] = useState(0);                               // tamanho do arquivo carregado no SISTEMA (bytes do .wav/.cas/.voc)
   const [mirrorXroar, setMirrorXroar] = useState(!!cfg.mirror);            // espelhar no mini-XRoar (opt-in)
@@ -209,6 +212,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [decoding, setDecoding] = useState(false);
   const [dec, setDec] = useState<{ midUs: number; minAmp: number; recover?: boolean }>({ midUs: cfg.midUs ?? 600, minAmp: cfg.minAmp ?? 0 }); // K8: parâmetros de ajuste fino (+ recover R1)
   const [exporting, setExporting] = useState(false);
+  const [fixing, setFixing] = useState(false);                     // W5 — FIXCAS em andamento
+  const [tapeName, setTapeName] = useState('');                    // nome interno da fita (namefile) — editável
   const rawRef = useRef<Uint8Array | null>(null);                  // bytes crus do WAV (p/ decode/export)
   const [sel, setSel] = useState<{ a: number; b: number } | null>(null); // K3: seleção (índices de amostra)
   const [, setHist] = useState(0);                                 // bump p/ re-render dos botões de edição
@@ -254,7 +259,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const cas = ext === 'cas' || ext === 'c10';                            // .cas/.c10 = digital → liga fast-load na mini (auto)
     // A aba K7 SEMPRE toca o waveform (mesmo de um .cas convertido em WAV) → manter a animação do hex.
     srcBytesRef.current = bytes; setSrcExt(ext); instantRef.current = false; setFastLoad(cas);
-    reset(); setErr(''); setDecoded(null); setFileBytes(null); setFileMeta(null); setStreamBytes(null); streamRef.current = null; setHexRevealN(0); setSrcSize(bytes.length); setLoading(true); setProgress(0);
+    reset(); setErr(''); setDecoded(null); setFileBytes(null); setFileMeta(null); setTapeName(''); setStreamBytes(null); streamRef.current = null; setHexRevealN(0); setSrcSize(bytes.length); setLoading(true); setProgress(0);
     // K2 — normaliza qualquer formato de fita para bytes de WAV e segue pelo MESMO pipeline.
     let wavBytes: Uint8Array;
     if (ext === 'wav') {
@@ -301,7 +306,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       setDecoded(r?.success ? r : null);
       if (r?.success && r.foundSync && r.files.length) {
         const fb = await window.cocoApi.k7FileBytes(rawRef.current, params, 0);
-        if (fb?.success) { setFileBytes(new Uint8Array(fb.data)); setFileMeta({ ftype: fb.ftype, name: fb.name }); }
+        if (fb?.success) { setFileBytes(new Uint8Array(fb.data)); setFileMeta({ ftype: fb.ftype, name: fb.name }); setTapeName(prev => prev || (fb.name || '').trim()); }
         else { setFileBytes(null); setFileMeta(null); }
         // stream cru completo (p/ o hex revelar a fita inteira)
         const st = await window.cocoApi.k7Stream(rawRef.current, params);
@@ -316,7 +321,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (!rawRef.current || !decoded?.foundSync) return;
     setExporting(true);
     try {
-      const r = await window.cocoApi.k7ExportClean(rawRef.current, dec, format, format === 'wav' ? wavRate : 0, audio?.name || 'fita');
+      const r = await window.cocoApi.k7ExportClean(rawRef.current, dec, format, format === 'wav' ? wavRate : 0, audio?.name || 'fita', tapeName.trim() || undefined);
       if (r?.cancelled) return;
       if (!r?.success) { setErr('Export: ' + r?.error); return; }
       const extra = hasTurbo ? t(' — ATENÇÃO: parte da fita não decodificou (ajuste o som ou use "→ Fita completa").', ' — NOTE: part of the tape did not decode (adjust the sound or use "→ Full tape").') : '';
@@ -416,6 +421,41 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     } catch { /* ignore */ }
     onSendToXroar(rawRef.current, audio.name);
   };
+  // W3 — Carregar do Painel A/B: puxa o arquivo selecionado num disco, empacota em .cas (main) e o carrega
+  // no deck de fita (vira WAV tocável/editável). Daí dá p/ tocar, editar e exportar .CAS/.WAV.
+  const onPullClick = async () => {
+    if (!onPullFromPanel) return;
+    const r = await onPullFromPanel();
+    if (r === null) { setErr(t('Selecione um arquivo num painel de disco (A ou B) antes de carregar para a fita.', 'Select a file in a disk pane (A or B) before loading it to tape.')); return; }
+    if ('error' in r) { setErr(t('Carregar do painel: ', 'Load from pane: ') + r.error); return; }
+    await loadBytes(r.data, r.name);
+  };
+  // W5 — FIXCAS: abre um .cas do PC, valida/repara (checksums, leader/sync, EOF) e salva um .cas íntegro.
+  const onFixCasClick = async () => {
+    if (fixing) return;
+    setFixing(true);
+    try {
+      const picked = await window.cocoApi.xroarPickFile('tape');
+      if (picked?.cancelled) return;
+      if (!picked?.success) { setErr('FIXCAS: ' + (picked?.error || '?')); return; }
+      const ext = (picked.ext || (picked.name || '').split('.').pop() || '').toLowerCase();
+      if (ext !== 'cas' && ext !== 'c10') { setErr(t('FIXCAS só repara arquivos .CAS/.C10.', 'FIXCAS only repairs .CAS/.C10 files.')); return; }
+      const r = await window.cocoApi.fixCas(new Uint8Array(picked.data));
+      if (!r?.success) { setErr('FIXCAS: ' + (r?.error || '?')); return; }
+      const rep = r.report;
+      if (!rep.blocks) { setErr(t('FIXCAS: nenhum bloco de fita reconhecido neste arquivo.', 'FIXCAS: no tape blocks recognized in this file.')); return; }
+      const base = (picked.name || 'fita').replace(/\.[^.]+$/, '') || 'fita';
+      const sv = await window.cocoApi.saveCartridgeFile(new Uint8Array(r.data), base + '_fixed.cas', t('Salvar .CAS reparado', 'Save repaired .CAS'), [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'All Files', extensions: ['*'] }]);
+      if (sv?.cancelled || (!sv?.success && !sv?.error)) return;
+      if (!sv?.success) { setErr('FIXCAS: ' + sv.error); return; }
+      const msg = t(
+        `FIXCAS: ${rep.files} arquivo(s), ${rep.blocks} blocos — ${rep.checksumsFixed} checksum(s) corrigido(s), ${rep.falseSyncsSkipped} sync(s) falso(s) ignorado(s), ${rep.eofAdded} EOF adicionado(s) (${rep.bytesIn}→${rep.bytesOut} B). ${rep.changed ? 'Reparado' : 'Já estava íntegro — recodificado'}: ${sv.filePath}`,
+        `FIXCAS: ${rep.files} file(s), ${rep.blocks} blocks — ${rep.checksumsFixed} checksum(s) fixed, ${rep.falseSyncsSkipped} false sync(s) skipped, ${rep.eofAdded} EOF added (${rep.bytesIn}→${rep.bytesOut} B). ${rep.changed ? 'Repaired' : 'Already intact — re-encoded'}: ${sv.filePath}`);
+      setErr(msg);
+      onLog?.(msg, msg, 'success');
+    } catch (e: any) { setErr('FIXCAS: ' + (e?.message || e)); }
+    finally { setFixing(false); }
+  };
   // K5/K6 — extrai um arquivo decodificado da fita → PC, no formato escolhido (BIN cru / BAS texto / CAS fita).
   const extractFile = async (index: number) => {
     if (!rawRef.current || !decoded?.foundSync) return;
@@ -447,7 +487,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         if (r?.success) setErr(t(`Extraído: ${r.filePath}`, `Extracted: ${r.filePath}`));
         else if (r?.error) setErr('Extrair: ' + r.error);
       } else { // cas — usa o MESMO .cas canônico do "→ CAS" (buildCleanCas), que abre no XRoar
-        const built = await window.cocoApi.k7CasBytes(rawRef.current, dec);
+        const built = await window.cocoApi.k7CasBytes(rawRef.current, dec, tapeName.trim() || undefined);
         if (!built?.success) { setErr('Extrair: ' + built?.error); return; }
         const r = await window.cocoApi.saveCartridgeFile(new Uint8Array(built.data), `${safe}.cas`, t('Extrair como fita (.cas)', 'Extract as tape (.cas)'), [{ name: 'CoCo Cassette (.cas)', extensions: ['cas'] }, { name: 'All Files', extensions: ['*'] }]);
         if (r?.success) setErr(t(`Extraído: ${r.filePath}`, `Extracted: ${r.filePath}`));
@@ -837,7 +877,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const triggerMini = async () => {
     if (!rawRef.current) return;
     const base = (audio?.name || 'fita').replace(/\.[^.]+$/, '') || 'fita';
-    const ftype = decoded?.files?.[0]?.ftype ?? 2;
+    // Tipo do arquivo (define CLOAD:RUN x CLOADM:EXEC na mini): usa a namefile decodificada; se não houver,
+    // o tipo do 1º arquivo lido; por fim BASIC (0) — CLOAD:RUN é o default mais seguro que CLOADM:EXEC.
+    const ftype = decoded?.files?.[0]?.ftype ?? fileMeta?.ftype ?? 0;
     if (fastLoad) {
       let casData = (srcExt === 'cas' || srcExt === 'c10') ? srcBytesRef.current : null; // .cas original
       if (!casData && decoded?.foundSync) { const r = await window.cocoApi.k7CasBytes(rawRef.current, dec); if (r?.success) casData = new Uint8Array(r.data); }
@@ -872,6 +914,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const totalPx = row.clientWidth;
     const sum = panelW[leftK] + panelW[rightK];
     splitDrag.current = { leftK, rightK, x0: e.clientX, pairPx: (sum / totalW) * totalPx, l0Px: (panelW[leftK] / totalW) * totalPx, sum };
+    setSplitting(true); // ativa a camada que captura o mouse SOBRE o iframe do mini-XRoar (senão o drag "gruda")
   };
   useEffect(() => {
     const move = (e: MouseEvent) => {
@@ -881,7 +924,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       const leftW = (newLeftPx / d.pairPx) * d.sum;
       setPanelW(w => ({ ...w, [d.leftK]: leftW, [d.rightK]: d.sum - leftW }));
     };
-    const up = () => { splitDrag.current = null; };
+    const up = () => { if (splitDrag.current) { splitDrag.current = null; setSplitting(false); } };
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
   }, []);
@@ -910,6 +953,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
 
   return (
     <div className="h-full flex flex-col" style={{ minHeight: 0, position: 'relative' }} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+      {/* Camada que captura o mouse durante o arraste de um splitter — fica SOBRE o iframe do mini-XRoar
+          (que senão engole o mousemove/mouseup e faz o splitter "grudar"). */}
+      {splitting && <div style={{ position: 'fixed', inset: 0, zIndex: 9999, cursor: 'col-resize' }} />}
       {dragOver && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(255,140,26,0.08)', border: `2px dashed ${ACCENT}`, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
           <div style={{ background: 'rgba(2,6,12,0.9)', padding: '10px 18px', borderRadius: 8, color: ACCENT, fontWeight: 700, fontSize: 13 }}><AudioLines size={16} style={{ display: 'inline', marginRight: 8, verticalAlign: '-3px' }} />{t('Solte a fita (.wav/.cas/.voc/.c10) para abrir', 'Drop the tape (.wav/.cas/.voc/.c10) to open')}</div>
@@ -982,6 +1028,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       {/* BARRA DE FERRAMENTAS */}
       <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border)] flex-wrap flex-shrink-0">
         {tool(<FolderOpen size={14} />, t('Abrir', 'Open'), openDialog, true, t('Abrir uma fita do PC (.wav, .cas, .voc, .c10) — também pode arrastar e soltar na onda', 'Open a tape from the PC (.wav, .cas, .voc, .c10) — you can also drag-and-drop onto the wave'))}
+        {onPullFromPanel && tool(<HardDrive size={14} />, t('Do disco', 'From disk'), onPullClick, true, t('Carregar o arquivo SELECIONADO num painel de disco (A/B) como fita: empacota em .CAS e abre aqui p/ tocar, editar e exportar .CAS/.WAV (disco → fita).', 'Load the file SELECTED in a disk pane (A/B) as a tape: packs it into .CAS and opens it here to play, edit and export .CAS/.WAV (disk → tape).'))}
+        {tool(<Wrench size={14} />, 'FIXCAS', onFixCasClick, !fixing, t('Validar/reparar um .CAS do PC: recalcula checksums, refaz o leader/sync e garante o EOF — salva um .CAS íntegro (não altera o arquivo carregado na onda).', 'Validate/repair a .CAS from the PC: recomputes checksums, rebuilds leader/sync and ensures EOF — saves a clean .CAS (does not touch the waveform loaded here).'))}
         {tool(<CassetteTape size={14} />, '→ CAS', () => exportClean('cas'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .CAS LIMPO e minúsculo só com os dados decodificados (padrão CoCo/Dragon)', 'NORMALIZE: save a CLEAN, tiny .CAS with just the decoded data (standard CoCo/Dragon)'))}
         {tool(<AudioWaveform size={14} />, '→ WAV', () => exportClean('wav'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .WAV LIMPO a 11 kHz, bem menor que a captura original, que lê confiável no hardware', 'NORMALIZE: save a CLEAN 11 kHz .WAV, much smaller than the original capture, reliable on real hardware'))}
         {tool(<Download size={14} />, t('→ Fita completa', '→ Full tape'), exportFullWav, !!audio && !exporting, t('Salvar a FITA COMPLETA (.wav do áudio original) — captura TUDO: header, tela, loader e jogo turbo. Use p/ fitas com tela de abertura, que rodam inteiras no XRoar.', 'Save the FULL TAPE (.wav of the original audio) — captures EVERYTHING: header, screen, loader and turbo game. Use for tapes with an opening screen that run fully in XRoar.'))}
@@ -1225,6 +1273,17 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
           {/* EXPORTAR — taxa do WAV + tamanhos finais EM TEMPO REAL (atualizam ao mexer no som/kHz) */}
           <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>
             <div className={panelTitle}>{t('Exportar', 'Export')}</div>
+            <label className="block text-[10px] mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+              <div className="mb-0.5">{t('Nome da fita (8 ca-)', 'Tape name (8 chars)')}</div>
+              <input
+                type="text" value={tapeName} maxLength={8} disabled={!decoded?.foundSync}
+                onChange={e => setTapeName(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                placeholder={fileMeta?.name || 'PROGRAMA'} spellCheck={false}
+                className="input-text text-[11px] font-mono"
+                style={{ padding: '2px 6px', width: '100%', textTransform: 'uppercase', opacity: decoded?.foundSync ? 1 : 0.5 }}
+                title={t('Nome gravado na namefile da fita (o que o CoCo mostra no LIST e a aba mostra). Editável: máx. 8 caracteres A-Z/0-9. Aplicado ao salvar "→ CAS"/"→ WAV" e ao Extrair .cas.', 'Name written into the tape namefile (what the CoCo shows on LIST). Editable: max 8 chars A-Z/0-9. Applied when saving "→ CAS"/"→ WAV" and Extract .cas.')}
+              />
+            </label>
             <label className="block text-[10px]" style={{ color: 'var(--text-secondary)' }}>
               <div className="flex justify-between mb-0.5"><span>{t('Taxa do WAV (kHz)', 'WAV rate (kHz)')}</span><span className="text-[var(--text-muted)]">{t('menor = menor', 'lower = smaller')}</span></div>
               <select value={wavRate} onChange={e => setWavRate(Number(e.target.value))} disabled={!audio} className="input-select text-[10px]" style={{ padding: '2px 4px', width: '100%' }}

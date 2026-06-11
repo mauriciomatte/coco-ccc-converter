@@ -38,7 +38,11 @@
 > **AINDA PENDENTE:** **M2** "Enviar p/ dispositivo" (CoCoSDC=cópia p/ drive Windows; GW já existe; MiniIDE
 > write-back+reflash); fluxo "baixar ARQUIVO avulso → INJETAR na imagem ativa"; **M4** (opc.) DriveWire serial
 > (`serialport` = módulo nativo); **boot/validação REAIS na placa do usuário** (humano — em andamento, já lista,
-> monta o arquivo certo e o DIR funciona após o fix do LSEEK); login TNFS (user/senha) e SD da placa = fora de escopo.
+> monta o arquivo certo e o DIR funciona após o fix do LSEEK).
+>
+> **DESCARTADO (2026-06-10):** **autenticação TNFS por usuário/senha** — a placa FujiNet REAL monta o nosso
+> servidor de forma **anônima** sem problema, então o login por senha saiu do roadmap. O servidor continua
+> ignorando os campos user/senha do MOUNT (anônimo). SD da placa também segue fora de escopo.
 
 ---
 

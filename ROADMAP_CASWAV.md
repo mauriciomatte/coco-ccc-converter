@@ -5,8 +5,15 @@
 > original inteiro), leitura de **VOC**, **REC** line-in, preview de tamanhos. O núcleo deste roadmap foi
 > entregue.
 >
-> **PENDENTE:** **A4 — "FIXCAS"** (validar/reparar `.CAS`: inserir SYNC faltante, recalcular checksums,
-> refazer leader); **D11 — sabor Dragon** (auto-switch da máquina XRoar p/ Dragon ao testar); famílias de
+> **ATUALIZAÇÃO 2026-06-10 — suíte WAV/CAS concluída (W1–W5):** os checkboxes A1–A4 abaixo estavam
+> defasados — A1 (WAV→CAS), A2 (CAS→WAV) e A3 (VOC) já estavam prontos na aba K7. Nesta rodada foram
+> entregues os dois gaps reais: **W3 — disco → fita** (botão **"Do disco"** na K7: empacota o arquivo
+> selecionado num painel A/B em `.CAS` via `dsk-file-to-cas` e carrega no deck) e **W5 — FIXCAS** (botão
+> **"FIXCAS"**: `fixCas` em `cas.ts` — varredura tolerante, recalcula checksums, refaz leader/sync, garante
+> EOF; IPC `cas-fix`). Validado por `tools/casfixtest.ts` (24/24: íntegro, checksum corrompido, EOF ausente,
+> lixo/falso-sync, multi-arquivo, e disco→cas com load/exec do LOADM).
+>
+> **PENDENTE:** **D11 — sabor Dragon** (auto-switch da máquina XRoar p/ Dragon ao testar); famílias de
 > loader além de SoftKristian.
 
 Recurso **futuro**. Origem: análise do material de preservação do worldofdragon.org, PyDragon32/PyDC,
@@ -36,12 +43,14 @@ Já temos `decodeWav` (FSK→bytes) e o `basicDetokenize.ts`/editor BASIC.
 ## Funcionalidades (relação priorizada)
 
 ### A. Áudio de fita ↔ CAS (maior valor — fecha o ROADMAP_WAV; CoCo + Dragon)
-- [ ] **A1. WAV → CAS**: já decodificamos o FSK; falta EMPACOTAR como `.CAS` válido (leader `$55`,
-      namefile block com nome/tipo/load/exec, data blocks, EOF, checksum por bloco).
-- [ ] **A2. CAS → WAV** (`encodeWav`, do ROADMAP_WAV): leader `$55`, sync `$3C`, bit 1 = 1 ciclo de
-      2400 Hz, bit 0 = 1 ciclo de 1200 Hz; opções 44/22/11 kHz, leader truncado, onda senoide/quadrada.
-- [ ] **A3. Importar `.VOC`** (Creative Voice) além de WAV — parser de header → PCM → mesmo FSK.
-- [ ] **A4. "FIXCAS"**: validar/reparar `.CAS` (inserir SYNC faltante, recalcular checksums, leader).
+- [x] **A1 (W1). WAV → CAS — FEITO.** `buildCleanCas`/`buildFaithfulCas` em `wav.ts`; "→ CAS (limpo)" + Extrair `.cas`.
+- [x] **A2 (W2). CAS → WAV — FEITO.** `encodeCasToWav`/`buildCleanWav` em `wav.ts`; "→ WAV (limpo)" 44/22/11/8 kHz.
+      (Onda quadrada; opção senoide e leader truncável ficam como refinamento futuro opcional.)
+- [x] **A3 (W4). Importar `.VOC` — FEITO.** Decoder VOC em `K7Tab.tsx` (blocos 1/2/3/8/9) → PCM → mesmo FSK.
+- [x] **A4 (W5). "FIXCAS" — FEITO (2026-06-10).** `fixCas` em `cas.ts` (varredura tolerante, recalcula
+      checksums, refaz leader/sync, garante EOF) + IPC `cas-fix` + botão **FIXCAS** na K7. Teste `casfixtest.ts`.
+- [x] **W3. Disco → fita — FEITO (2026-06-10).** Botão **"Do disco"** na K7: o arquivo selecionado num painel
+      A/B vira `.CAS` (`dsk-file-to-cas`: ML via `parseBin`→load/exec+imagem; BASIC/dados crus) e carrega no deck.
 - [ ] **A5. CAS RAW vs padrão** + metadados de frequência/silêncio (jogos/proteção) — avançado.
 
 ### B. CAS ↔ BASIC (reusa nosso tokenizer — vantagem sobre PyDC, que só faz ASCII)

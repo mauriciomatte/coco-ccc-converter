@@ -10,6 +10,48 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.61 — 2026-06-10
+--------------------------------------------------------------------------------
+Tabbed BASIC editor, PERIOD-CORRECT .WAV tape exporter, full CoCo 1/2/3 token tables and a tokenizer
+
+ADDED
+  • TABBED BASIC EDITOR (up to 6): each tab is an independent editor. "+" opens, "×" closes (confirms if it
+    has content). Label = NAME.BAS; DOUBLE-CLICK the name to rename (8 chars, CoCo format). Each tab is born
+    with a UNIQUE name (SEMNOME1…SEMNOME6) — used by "New DSK + Save". Top/save/run buttons act on the ACTIVE
+    tab; footer settings are GLOBAL. Each tab remembers the CURSOR POSITION. Exporting into the editor adopts
+    the file name and lands in an empty/new tab (or a prompt chooses, when all 6 are full). Tabs are persisted.
+  • PERIOD-CORRECT .WAV TAPE EXPORTER (BASIC tab): a new button (audio-waves icon) generates the FSK audio in
+    the real commercial-tape format — mono 8-bit 9600 Hz (exact 1200/2400 Hz FSK), with lead-in silence,
+    leader+header, SILENCE after the header, continuous data and a trailing silence. It loads in XRoar at
+    normal speed (CLOAD) and records to a REAL K7 tape for a physical CoCo, error-free. The ".CAS" button is
+    now text.
+  • ROM-faithful BASIC TOKENIZER (crunch): text → tokenized image (like CSAVE), respecting strings/REM/DATA
+    and the word rule (GOTO=GO+TO, but identifiers don't tokenize mid-word). BASIC-tab tape content is now
+    tokenized (with a safe ASCII fallback). Validated by automated tests.
+  • COMPLETE CoCo 1/2/3 TOKEN TABLES: added the Super Extended/CoCo 3 commands (HSCREEN, PALETTE, HCOLOR,
+    HDRAW, HPRINT, WIDTH, LOCATE…) and functions (LPEEK, BUTTON, HPOINT…) — they used to come out as garbage.
+    The detokenizer now respects literal text in strings/REM/DATA. Verified byte-by-byte vs the "Unravelled"
+    disassemblies.
+  • W3 — DISK → TAPE (K7 tab, "From disk" button): packs the file selected in a pane A/B as a tape and opens
+    it in the deck (playable/editable) to export .CAS/.WAV.
+  • W5 — FIXCAS (K7 tab): validates/repairs a .CAS (recomputes checksums, rebuilds leader/sync, ensures EOF).
+  • EDITABLE TAPE-NAME field in K7 (rewrites the namefile when saving .CAS/.WAV).
+  • App ICON in the title bar, taskbar and installers.
+  • Blinking green BLOCK cursor (Dragon/CoCo style) in the BASIC editor's VDG modes, always visible.
+
+IMPROVED
+  • Mini-XRoar (K7 tab): types the command by file TYPE — BASIC → CLOAD:RUN, machine language → CLOADM:EXEC.
+    Play-to-command delay reduced (~2 s).
+
+FIXED
+  • Tape .WAV wouldn't load in real time / gave an I/O error: the last block (EOF) abutted the silence and was
+    unreadable; there's now a closing tone between blocks and after the EOF — it loads in XRoar and on real tape.
+  • K7 tab splitters (BASIC/HEX/mini-XRoar panels) "stuck" while dragging: the mini-XRoar iframe swallowed the
+    mouse; a capture layer during the drag fixes it.
+  • FujiNet: user/password authentication DROPPED from the roadmap — the real board mounts the server
+    anonymously with no issue.
+
+--------------------------------------------------------------------------------
 v1.0.60 — 2026-06-10
 --------------------------------------------------------------------------------
 FujiNet — smarter server access: adaptive timeout + listing progress bar

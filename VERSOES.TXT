@@ -10,6 +10,48 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.61 — 2026-06-10
+--------------------------------------------------------------------------------
+Editor BASIC com ABAS, exportador de fita .WAV no PADRÃO DA ÉPOCA, tabelas de tokens CoCo 1/2/3 e tokenizador
+
+ADICIONADO
+  • EDITOR BASIC COM ABAS (até 6): cada aba é um editor independente. "+" abre, "×" fecha (confirma se houver
+    conteúdo). Rótulo = NOME.BAS; DUPLO-CLIQUE no nome para renomear (8 letras, formato CoCo). Cada aba nasce
+    com nome ÚNICO (SEMNOME1…SEMNOME6) — usado pelo "Novo DSK + Salvar". Botões de cima/salvar/rodar agem na
+    aba ATIVA; ajustes do rodapé são GLOBAIS. Cada aba lembra a POSIÇÃO DO CURSOR. Exportar p/ o editor adota o
+    nome do arquivo e cai numa aba vazia/nova (ou um modal escolhe, com as 6 ocupadas). As abas são persistidas.
+  • EXPORTADOR .WAV DE FITA NO PADRÃO DA ÉPOCA (aba BASIC): novo botão (ícone de ondas) gera o áudio FSK no
+    formato real das fitas comerciais — mono 8-bit 9600 Hz (FSK 1200/2400 Hz exata), com silêncio inicial,
+    leader+cabeçalho, SILÊNCIO após o cabeçalho, dados contínuos e silêncio final. Carrega no XRoar em tempo
+    normal (CLOAD) e grava numa fita K7 REAL para um CoCo físico, sem erros. O botão ".CAS" agora é texto.
+  • TOKENIZADOR BASIC (crunch) fiel ao ROM: texto → imagem tokenizada (como o CSAVE), respeitando strings/REM/
+    DATA e a regra de palavra (GOTO=GO+TO, mas identificadores não tokenizam no meio). Conteúdo das fitas da
+    aba BASIC agora é tokenizado (com fallback ASCII seguro). Validado por testes automatizados.
+  • TABELAS DE TOKENS CoCo 1/2/3 COMPLETAS: adicionados os comandos do Super Extended/CoCo 3 (HSCREEN, PALETTE,
+    HCOLOR, HDRAW, HPRINT, WIDTH, LOCATE…) e as funções (LPEEK, BUTTON, HPOINT…) — antes saíam como lixo.
+    Detokenizador agora respeita texto literal em strings/REM/DATA. Conferido byte-a-byte com os disassemblies
+    "Unravelled".
+  • W3 — DISCO → FITA (aba K7, botão "Do disco"): empacota o arquivo selecionado num painel A/B como fita e o
+    abre no deck (tocável/editável) para exportar .CAS/.WAV.
+  • W5 — FIXCAS (aba K7): valida/repara um .CAS (recalcula checksums, refaz leader/sync, garante EOF).
+  • Campo EDITÁVEL de NOME DA FITA na K7 (reescreve a namefile ao salvar .CAS/.WAV).
+  • ÍCONE do aplicativo na barra de título, barra de tarefas e instaladores.
+  • Cursor em BLOCO verde piscante (estilo Dragon/CoCo) nos modos VDG do editor BASIC, sempre visível.
+
+MELHORADO
+  • Mini-XRoar (aba K7): digita o comando conforme o TIPO do arquivo — BASIC → CLOAD:RUN, código de máquina →
+    CLOADM:EXEC. Tempo entre o play e o comando reduzido (~2 s).
+
+CORRIGIDO
+  • .WAV de fita não carregava em tempo real / dava erro de I/O: o último bloco (EOF) terminava colado no
+    silêncio e ficava ilegível; agora há tom de fechamento entre os blocos e após o EOF — carrega no XRoar e
+    na fita real.
+  • Splitters da aba K7 (painéis BASIC/HEX/mini-XRoar) "grudavam" no arraste: o iframe do mini-XRoar engolia o
+    mouse; uma camada de captura durante o arraste resolve.
+  • FujiNet: autenticação por usuário/senha DESCARTADA do roadmap — a placa real monta o servidor de forma
+    anônima sem problema.
+
+--------------------------------------------------------------------------------
 v1.0.60 — 2026-06-10
 --------------------------------------------------------------------------------
 FujiNet — acesso aos servidores mais inteligente: timeout adaptativo + barra de progresso da listagem

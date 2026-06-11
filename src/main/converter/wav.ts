@@ -505,6 +505,57 @@ export function encodeCasToWav(casBytes: Uint8Array | number[], sampleRate = 220
   return pcm8ToWav(casToPcm(casBytes, sampleRate), sampleRate);
 }
 
+// ─────────────── Exportador de fita com ESTRUTURA DE ÉPOCA (para gravar em K7 física) ───────────────
+// Reproduz a estrutura medida em fitas comerciais reais (pasta amostras/wavdownload): mono 8-bit, 9600 Hz
+// (taxa em que 2400 Hz = 4 amostras e 1200 Hz = 8 amostras, FSK EXATA), com:
+//   silêncio inicial · leader+NAMEFILE · SILÊNCIO (gap do namefile, ~0,85 s) · leader+DADOS+EOF · silêncio.
+// O gap de silêncio após o namefile é o ponto crítico: na leitura em TEMPO REAL o CoCo desliga o motor e
+// processa o cabeçalho — sem esse silêncio (tom de leader contínuo no lugar) a leitura dessincroniza e dá
+// erro. Os DADOS vão contínuos (como num CSAVE tokenizado). Reescreve checksums corretos por bloco.
+function casBlockBytes(type: number, data: number[] | Uint8Array): number[] {
+  const o: number[] = [0x3c, type & 0xff, data.length & 0xff];
+  let s = (type + data.length) & 0xff;
+  for (const b of data) { o.push(b & 0xff); s = (s + b) & 0xff; }
+  o.push(s & 0xff);
+  return o;
+}
+export interface EraTapeOpts { sampleRate?: number; ascii?: boolean; fileType?: number; loadAddr?: number; execAddr?: number; leadSec?: number; nameGapSec?: number; tailSec?: number; leaderBytes?: number; }
+export function buildEraTapeWav(name: string, payload: Uint8Array | number[], opts: EraTapeOpts = {}): Buffer {
+  const sr = opts.sampleRate || 9600;                          // 9600 Hz → FSK 1200/2400 Hz EXATA (4/8 amostras)
+  const ascii = opts.ascii ? 0xff : 0x00;
+  const fileType = opts.fileType ?? 0x00;                      // 0=BASIC, 1=dados, 2=ML
+  const leadSec = opts.leadSec ?? 0.25, nameGapSec = opts.nameGapSec ?? 0.85, tailSec = opts.tailSec ?? 0.3;
+  const leaderN = opts.leaderBytes ?? 128;
+  const cyc1 = Math.max(2, Math.round(sr / 2400)), cyc0 = Math.max(2, Math.round(sr / 1200));
+  const HI = 219, LO = 37;                                     // ≈ ±0,72 (nível medido nas fitas reais)
+  const pcm: number[] = [];
+  const emitByte = (byte: number) => { for (let b = 0; b < 8; b++) { const len = ((byte >> b) & 1) ? cyc1 : cyc0; const half = len >> 1; for (let k = 0; k < len; k++) pcm.push(k < half ? HI : LO); } };
+  const emit = (arr: number[]) => { for (let i = 0; i < arr.length; i++) emitByte(arr[i]); };
+  const leader = (n: number) => { const a: number[] = []; for (let i = 0; i < n; i++) a.push(0x55); return a; };
+  const silence = (sec: number) => { const n = Math.max(0, Math.round(sec * sr)); for (let k = 0; k < n; k++) pcm.push(PCM_SILENCE); };
+
+  // namefile (15 bytes): nome(8) tipo(1) · ascii(1) · gap(1) · exec(2 BE) · load(2 BE)
+  const nf: number[] = new Array(15).fill(0x20);
+  const nm = (name || 'PROGRAM').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  for (let i = 0; i < 8; i++) nf[i] = i < nm.length ? nm.charCodeAt(i) : 0x20;
+  nf[8] = fileType & 0xff; nf[9] = ascii; nf[10] = ascii ? 0xff : 0x00;
+  const exec = (opts.execAddr ?? 0) & 0xffff, load = (opts.loadAddr ?? 0) & 0xffff;
+  nf[11] = (exec >> 8) & 0xff; nf[12] = exec & 0xff; nf[13] = (load >> 8) & 0xff; nf[14] = load & 0xff;
+
+  silence(leadSec);
+  emit(leader(leaderN)); emit(casBlockBytes(0x00, nf)); emit(leader(4)); // leader + namefile + trailing tone
+  silence(nameGapSec);                                         // GAP do namefile (motor parado)
+  emit(leader(leaderN));                                       // re-leader antes dos dados
+  const p = payload instanceof Uint8Array ? payload : Uint8Array.from(payload);
+  // data blocks com um leader CURTO entre eles e antes do EOF (igual ao encodeCas que o XRoar aceita; o
+  // último bloco não pode terminar colado no silêncio, senão o decode do EOF/checksum é cortado).
+  for (let i = 0; i < p.length; i += 255) { emit(casBlockBytes(0x01, p.subarray(i, Math.min(i + 255, p.length)))); emit(leader(2)); }
+  emit(casBlockBytes(0xff, []));                               // EOF
+  emit(leader(4));                                             // trailing tone (fecha os bits do EOF antes do silêncio)
+  silence(tailSec);
+  return pcm8ToWav(pcm, sr);
+}
+
 /** WAV LIMPO com TEMPOS reais (serve p/ fita simples E multi-segmento). Diferente do .cas (que não
  *  guarda tempo), aqui inserimos SILÊNCIO entre os blocos p/ o CoCo ter tempo de processar antes de
  *  ler o próximo — especialmente após o NAMEFILE (onde o BASIC/loader faz alocação) — e o silêncio

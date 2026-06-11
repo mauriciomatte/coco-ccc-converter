@@ -224,6 +224,9 @@ button {
    o texto da seleção a continuar transparente — só o realce aparece. */
 .vdg-input::selection { color: transparent; background: rgba(255, 255, 255, 0.30); }
 .vdg-input::-moz-selection { color: transparent; background: rgba(255, 255, 255, 0.30); }
+/* Cursor em BLOCO piscante (estilo Dragon/CoCo) nos modos VDG do editor BASIC. */
+@keyframes vdgCaretBlink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+.vdg-caret { animation: vdgCaretBlink 1.06s steps(1) infinite; }
 
 /* Tab bar buttons */
 .tab-btn {

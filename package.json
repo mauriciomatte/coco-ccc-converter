@@ -1,6 +1,6 @@
 {
   "name": "coco-file-image-utility",
-  "version": "1.0.60",
+  "version": "1.0.61",
   "description": "TRS-80 Color Computer File Image Utility - CoCo File Image Utility - CoCoFIU",
   "main": "./out/main/index.js",
   "author": "Mauricio Matte",
@@ -57,12 +57,17 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
       }
     ],
     "asarUnpack": [
       "**/xroar/**"
     ],
     "win": {
+      "icon": "resources/icon-512.png",
       "target": [
         "nsis"
       ]
@@ -73,6 +78,7 @@
       "artifactName": "CoCoFIU_Setup ${version}.${ext}"
     },
     "linux": {
+      "icon": "resources/icon-512.png",
       "target": [
         "AppImage",
         "deb"
@@ -81,6 +87,7 @@
       "category": "Development"
     },
     "mac": {
+      "icon": "resources/icon-512.png",
       "target": [
         "dmg",
         "zip"

@@ -61,7 +61,7 @@ import changelogPt from '../../../VERSOES.TXT?raw';
 import changelogEn from '../../../VERSIONS_EN.TXT?raw';
 // Versão exibida no cabeçalho — vem do package.json, então acompanha o bump automaticamente.
 import { version as APP_VERSION } from '../../../package.json';
-import { detokenizeBasic } from './basicDetokenize';
+import { detokenizeBasic, tokenizeBasic, tokenizeRoundTripOk } from './basicDetokenize';
 import { disassemble, disassembleSmart, formatLine, type DisasmLine } from './disasm6809';
 
 // Persistência (localStorage) das marcas código/dados do disassembly, por arquivo.
@@ -496,8 +496,6 @@ export default function App() {
   // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
   const [xroarType, setXroarType] = useState<{ text: string; key: number; reset?: boolean } | null>(null);
   // Editor BASIC: conteúdo e nome do arquivo persistem mesmo ao trocar de aba.
-  const [basicText, setBasicText] = useState<string>('');
-  const [basicName, setBasicName] = useState<string>('');
   const [basicPane, setBasicPane] = useState<'A' | 'B'>('A');          // painel DSK destino do .BAS
   const [basicScreen, setBasicScreen] = useState<string>('green-black'); // esquema de cores (fundo/letra) do editor
   const [basicAddNew, setBasicAddNew] = useState<boolean>(true);       // prepende NEW ao injetar
@@ -506,11 +504,45 @@ export default function App() {
   // Origem do programa aberto no editor (se veio de um arquivo num DSK) — habilita o "Salvar" in-place.
   // Guarda também a identidade do disco (nome + índice no contêiner) p/ detectar troca de imagem.
   type BasicSrc = { pane: 'A' | 'B'; entry: any; diskName?: string; containerIndex?: number };
-  const [basicSource, setBasicSource] = useState<BasicSrc | null>(null);
+  // ── ABAS de editor BASIC (até 6): cada documento tem texto/nome/origem; o caret é guardado num REF
+  // (por id) p/ não disparar re-render/save a cada movimento. `basicText/Name/Source` continuam como
+  // DERIVADOS do documento ativo (leituras inalteradas no resto do código); só os setters viram updates.
+  // `epoch` muda a cada CARGA EXTERNA no doc → força a remontagem do editor (key) p/ reposicionar o caret
+  // mesmo quando a carga cai na própria aba ativa (a digitação NÃO mexe no epoch, então não remonta).
+  type BasicDoc = { id: number; text: string; name: string; source: BasicSrc | null; epoch: number };
+  const MAX_BASIC_TABS = 6;
+  // Nome-padrão ÚNICO "SEMNOME{N}" (N = menor 1..6 não usado) — cada aba precisa de nome distinto porque o
+  // "Novo DSK + Salvar" usa o nome da aba ATIVA como nome do arquivo (8 letras, formato CoCo).
+  const untitledName = (docs: BasicDoc[]): string => { for (let n = 1; n <= MAX_BASIC_TABS; n++) { const nm = 'SEMNOME' + n; if (!docs.some(d => d.name === nm)) return nm; } return 'SEMNOME' + (docs.length + 1); };
+  const [basicDocs, setBasicDocs] = useState<BasicDoc[]>([{ id: 1, text: '', name: 'SEMNOME1', source: null, epoch: 0 }]);
+  const [basicActive, setBasicActive] = useState(0);
+  const [basicRenaming, setBasicRenaming] = useState<number | null>(null); // índice da aba em edição inline de nome
+  const basicIdSeq = useRef(2);
+  const basicCaretRef = useRef<Record<number, number>>({});            // id → posição do caret (persistido)
+  const actIdx = Math.min(basicActive, basicDocs.length - 1);
+  const activeDoc = basicDocs[actIdx] || basicDocs[0];
+  const basicText = activeDoc.text, basicName = activeDoc.name, basicSource = activeDoc.source;
+  const updateActiveDoc = (patch: Partial<BasicDoc>) => setBasicDocs(ds => ds.map((d, i) => i === actIdx ? { ...d, ...patch } : d));
+  const setBasicText = (v: string) => updateActiveDoc({ text: v });
+  const setBasicName = (v: string) => updateActiveDoc({ name: v });
+  const setBasicSource = (v: BasicSrc | null) => updateActiveDoc({ source: v });
+  const setBasicDocName = (i: number, name: string) => setBasicDocs(ds => ds.map((d, k) => k === i ? { ...d, name } : d)); // renomeia a aba i
+  const newBasicDoc = (init?: Partial<BasicDoc>): BasicDoc => ({ id: basicIdSeq.current++, text: '', name: '', source: null, epoch: 0, ...init });
+  const addBasicTab = () => { if (basicDocs.length >= MAX_BASIC_TABS) return; setBasicDocs(ds => [...ds, newBasicDoc({ name: untitledName(ds) })]); setBasicActive(basicDocs.length); };
+  const closeBasicTab = (i: number) => {
+    setBasicDocs(ds => {
+      const next = ds.filter((_, k) => k !== i);
+      const arr = next.length ? next : [newBasicDoc({ name: untitledName([]) })];
+      setBasicActive(a => Math.max(0, Math.min(a > i ? a - 1 : a, arr.length - 1)));
+      return arr;
+    });
+  };
   // Modais do editor BASIC
   const [basicSaveConfirm, setBasicSaveConfirm] = useState<{ name: string; program: string; pane: 'A' | 'B' } | null>(null);
   const [basQuickView, setBasQuickView] = useState<{ name: string; text: string; ok: boolean } | null>(null); // visualização rápida .BAS (somente leitura)
-  const [basicOpenPending, setBasicOpenPending] = useState<{ text: string; label: string; source: BasicSrc | null; name: string } | null>(null);
+  // Modal "todas as 6 abas ocupadas" — escolher em qual aba colocar o código exportado, ou cancelar.
+  const [basicLoadPick, setBasicLoadPick] = useState<{ text: string; label: string; source: BasicSrc | null; name: string } | null>(null);
+  const [basicCloseConfirm, setBasicCloseConfirm] = useState<number | null>(null); // índice da aba (não vazia) a fechar
   // Modal: o arquivo de origem sumiu / disco foi trocado ao tentar "Salvar" in-place.
   const [basicUpdateConfirm, setBasicUpdateConfirm] = useState<{ which: 'A' | 'B'; name: string; reason: 'missing' | 'diskChanged' } | null>(null);
   const [dskDirty, setDskDirty] = useState<{ A: boolean; B: boolean }>({ A: false, B: false }); // alterações não salvas por painel
@@ -799,8 +831,20 @@ export default function App() {
             if (typeof s.gwExtra === 'string') setGwExtra(s.gwExtra);
             if (s.gwPane === 'A' || s.gwPane === 'B') setGwPane(s.gwPane);
             if (typeof s.fillerByte === 'number') setFillerByte(s.fillerByte);
-            if (typeof s.basicText === 'string') setBasicText(s.basicText);
-            if (typeof s.basicName === 'string') setBasicName(s.basicName);
+            // Abas do editor BASIC: formato novo (basicDocs[]) ou migração do antigo (basicText/basicName único).
+            if (Array.isArray(s.basicDocs) && s.basicDocs.length) {
+              const docs = s.basicDocs.slice(0, MAX_BASIC_TABS).map((d: any, i: number) => {
+                const nm = (typeof d?.name === 'string' && d.name) ? d.name : 'SEMNOME' + (i + 1); // garante nome único
+                const doc = newBasicDoc({ text: typeof d?.text === 'string' ? d.text : '', name: nm });
+                basicCaretRef.current[doc.id] = typeof d?.caret === 'number' ? d.caret : 0;
+                return doc;
+              });
+              setBasicDocs(docs);
+              setBasicActive(Math.max(0, Math.min(typeof s.basicActive === 'number' ? s.basicActive : 0, docs.length - 1)));
+            } else if (typeof s.basicText === 'string' || typeof s.basicName === 'string') {
+              const doc = newBasicDoc({ text: typeof s.basicText === 'string' ? s.basicText : '', name: (typeof s.basicName === 'string' && s.basicName) ? s.basicName : 'SEMNOME1' });
+              setBasicDocs([doc]); setBasicActive(0);
+            }
             if (s.basicPane === 'A' || s.basicPane === 'B') setBasicPane(s.basicPane);
             if (typeof s.basicScreen === 'string') setBasicScreen(s.basicScreen === 'green' ? 'green-black' : s.basicScreen === 'orange' ? 'orange-black' : s.basicScreen);
             if (typeof s.basicAddNew === 'boolean') setBasicAddNew(s.basicAddNew);
@@ -826,9 +870,10 @@ export default function App() {
   useEffect(() => {
     if (!settingsLoaded.current) return;
     if (window.cocoApi && typeof window.cocoApi.saveConfig === 'function') {
-      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform, paneNewFormat });
+      const docsToSave = basicDocs.map(d => ({ text: d.text, name: d.name, caret: basicCaretRef.current[d.id] ?? 0 }));
+      window.cocoApi.saveConfig({ currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicDocs: docsToSave, basicActive, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform, paneNewFormat });
     }
-  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicText, basicName, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform, paneNewFormat]);
+  }, [currentLang, gwPath, gwFormat, gwDevice, gwDrive, gwExtra, gwPane, fillerByte, basicDocs, basicActive, basicPane, basicScreen, basicAddNew, basicAddRun, basicBold, gwStep, platform, paneNewFormat]);
 
   const changeLanguage = (lang: 'pt-br' | 'en-us') => {
     setCurrentLang(lang);
@@ -2252,6 +2297,17 @@ export default function App() {
     return data;
   };
 
+  // Prepara o payload de fita do programa BASIC. Preferimos TOKENIZADO (imagem de memória, como o CSAVE —
+  // formato contínuo das fitas da época, robusto na leitura em tempo real). Se o crunch não fizer round-trip
+  // pelo nosso detokenizador (sintaxe incomum), caímos para ASCII (o ROM tokeniza no CLOAD) — sem risco.
+  const basicToTapePayload = (program: string): { payload: Uint8Array; ascii: boolean } => {
+    const dialect = platform === 'dragon' ? 'dragon' : 'coco';
+    if (tokenizeRoundTripOk(program, dialect)) return { payload: tokenizeBasic(program, dialect), ascii: false };
+    addLog('Programa com sintaxe incomum: gravado como ASCII (o CoCo tokeniza no carregamento).',
+           'Program has unusual syntax: saved as ASCII (the CoCo tokenizes on load).', 'info');
+    return { payload: basicTextToAsciiBytes(program), ascii: true };
+  };
+
   // Lê bytes de um arquivo .BAS e devolve o texto editável. Tokenizado (binário) não é suportado.
   const decodeBasToText = (bytes: Uint8Array, asciiFlag?: number, dialect: 'coco' | 'dragon' = 'coco'): { text: string; tokenized: boolean } => {
     let printable = 0, total = 0;
@@ -2313,10 +2369,10 @@ export default function App() {
   const handleBasicSaveCasFile = async (name: string, program: string) => {
     if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
     try {
-      const payload = basicTextToAsciiBytes(program);
+      const { payload, ascii } = basicToTapePayload(program);
       const casName = (name || 'PROGRAM').toUpperCase().replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'PROGRAM';
       const built = await window.cocoApi.buildEmulatorCas([
-        { name: casName, fileType: 0, asciiFlag: 0xFF, loadAddr: 0, execAddr: 0, payload },
+        { name: casName, fileType: 0, asciiFlag: ascii ? 0xFF : 0x00, loadAddr: 0, execAddr: 0, payload },
       ]);
       if (!built.success) { addLog(`Salvar .CAS: ${built.error}`, `Save .CAS: ${built.error}`, 'error'); return; }
       const res = await window.cocoApi.saveCartridgeFile(
@@ -2327,6 +2383,29 @@ export default function App() {
       if (res.success) addLog(`Fita BASIC salva em: ${res.filePath}`, `BASIC tape saved at: ${res.filePath}`, 'success');
       else if (res.error) addLog(`Salvar .CAS: ${res.error}`, `Save .CAS: ${res.error}`, 'error');
     } catch (err: any) { addLog(`Salvar .CAS: ${err.message}`, `Save .CAS: ${err.message}`, 'error'); }
+  };
+
+  // Aba BASIC: salva o programa como ÁUDIO DE FITA .WAV (FSK 1200/2400 Hz) no sistema de arquivos.
+  // Embrulha o texto ASCII num CAS (namefile tipo 0 BASIC, flag ASCII 0xFF, gapped — leaders de 128 B
+  // entre blocos dão tempo do CoCo re-sincronizar) e codifica em WAV. Carrega no XRoar em TEMPO NORMAL
+  // (CLOAD) e grava numa fita K7 real sem erros. 22 kHz = taxa confiável p/ a FSK no hardware.
+  const handleBasicSaveWavFile = async (name: string, program: string) => {
+    if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    try {
+      const { payload, ascii } = basicToTapePayload(program);
+      const casName = (name || 'PROGRAM').toUpperCase().replace(/[^A-Za-z0-9]/g, '').slice(0, 8) || 'PROGRAM';
+      // WAV com ESTRUTURA DE ÉPOCA (mono 8-bit 9600 Hz, silêncios reais incl. o gap do namefile) — grava
+      // em fita K7 física e roda num CoCo real; carrega no XRoar em tempo normal sem o erro de sync.
+      const wav = await window.cocoApi.buildBasicTapeWav(casName, payload, ascii, 9600);
+      if (!wav?.success) { addLog(`Salvar .WAV: ${wav?.error || '?'}`, `Save .WAV: ${wav?.error || '?'}`, 'error'); return; }
+      const res = await window.cocoApi.saveCartridgeFile(
+        new Uint8Array(wav.data), `${name}.wav`,
+        currentLang === 'pt-br' ? 'Salvar programa BASIC como áudio de fita (.wav)' : 'Save BASIC program as tape audio (.wav)',
+        [{ name: 'WAV audio (.wav)', extensions: ['wav'] }, { name: 'All Files', extensions: ['*'] }]
+      );
+      if (res.success) addLog(`Áudio de fita BASIC salvo em: ${res.filePath}`, `BASIC tape audio saved at: ${res.filePath}`, 'success');
+      else if (res.error) addLog(`Salvar .WAV: ${res.error}`, `Save .WAV: ${res.error}`, 'error');
+    } catch (err: any) { addLog(`Salvar .WAV: ${err.message}`, `Save .WAV: ${err.message}`, 'error'); }
   };
 
   // Carrega texto no editor BASIC; se o editor já tiver conteúdo, pede confirmação (apaga o atual).
@@ -2341,6 +2420,29 @@ export default function App() {
     const { text, tokenized } = decodeBasToText(bytes, 0, platform === 'dragon' ? 'dragon' : 'coco');
     if (tokenized || !text.trim()) { addLog(`"${name}" da fita não pôde ser convertido em texto BASIC.`, `Tape "${name}" could not be converted to BASIC text.`, 'warn'); return; }
     requestLoadBasic(text, name || 'FITA.BAS', null);
+  };
+
+  // W3 — disco → fita: puxa o arquivo selecionado no painel A/B, empacota em .CAS (no main) e devolve
+  // à K7, que o carrega no deck de fita (vira WAV tocável/editável) p/ exportar .CAS/.WAV ou tocar.
+  // Retorna null quando não há nada utilizável (a K7 mostra a dica), {error} numa falha de IPC.
+  const handleK7PullFromPanel = async (): Promise<{ data: Uint8Array; name: string } | { error: string } | null> => {
+    const sel = selectedDsk;
+    if (!sel || !sel.entries?.length) return null;
+    const pane = getPane(sel.pane);
+    if (!pane?.buffer) return null;
+    if (sel.entries.length > 1) {
+      addLog('Vários arquivos selecionados — carregando só o primeiro para a fita.',
+             'Multiple files selected — loading only the first one to tape.', 'info');
+    }
+    const entry = { ...sel.entries[0], format: sel.entries[0].format || pane.format };
+    try {
+      const r = await window.cocoApi.dskFileToCas(pane.buffer, entry);
+      if (!r?.success) return { error: r?.error || '?' };
+      const base = (entry.name || 'FILE').toString().replace(/[^A-Za-z0-9._-]/g, '_') || 'FILE';
+      addLog(`Arquivo "${entry.fullName || base}" do painel ${sel.pane} empacotado como fita (.cas, ${r.data.length} B).`,
+             `File "${entry.fullName || base}" from pane ${sel.pane} packed as a tape (.cas, ${r.data.length} B).`, 'success');
+      return { data: new Uint8Array(r.data), name: base + '.cas' };
+    } catch (e: any) { return { error: e?.message || String(e) }; }
   };
 
   // K5 → XRoar: carrega o WAV da fita (atual, editado/remasterizado) direto no emulador como cassete.
@@ -2409,23 +2511,33 @@ export default function App() {
     if (!pane) { await doK7ToDsk(which, null as any, null, 0, 'blank', { data, name }); return; }
     setK7DskConfirm({ which, wavBytes: null as any, opts: null, fileIndex: 0, prebuilt: { data, name } });
   };
+  // Carrega um programa numa aba específica (limpa e escreve), ativa-a e vai para a aba BASIC. O CARET vai
+  // para o FIM, numa nova linha (o texto já vem com '\n' final), e o `epoch` muda → remonta e reposiciona.
+  const loadBasicIntoDoc = (idx: number, newText: string, name: string, source: BasicSrc | null, label: string) => {
+    const id = basicDocs[idx]?.id; if (id != null) basicCaretRef.current[id] = newText.length; // caret ao final
+    setBasicDocs(ds => ds.map((d, i) => i === idx ? { ...d, text: newText, name: name || d.name, source, epoch: (d.epoch || 0) + 1 } : d));
+    setBasicActive(idx);
+    setActiveTab('basic');
+    addLog(`"${label}" aberto no editor BASIC (aba ${idx + 1}).`, `"${label}" opened in the BASIC editor (tab ${idx + 1}).`, 'success');
+  };
+  // Exportar p/ o editor BASIC: o programa entra com uma NOVA LINHA ao final (cursor lá). Usa a aba ATIVA se
+  // vazia; senão a 1ª aba vazia; senão abre uma NOVA aba (até 6); se as 6 estiverem ocupadas, abre o modal p/
+  // o usuário escolher qual sobrescrever (ou cancelar). O NOME adotado é o do arquivo (8 letras, formato CoCo).
   const requestLoadBasic = (newText: string, label: string, source: BasicSrc | null = null) => {
     const name = suggestNameFrom(source, label);
-    if (basicText.trim()) { setBasicOpenPending({ text: newText, label, source, name }); return; }
-    setBasicText(newText);
-    setBasicSource(source);
-    if (name) setBasicName(name);
-    setActiveTab('basic');
-    addLog(`"${label}" aberto no editor BASIC.`, `"${label}" opened in the BASIC editor.`, 'success');
-  };
-  const applyBasicOpen = () => {
-    if (!basicOpenPending) return;
-    setBasicText(basicOpenPending.text);
-    setBasicSource(basicOpenPending.source);
-    if (basicOpenPending.name) setBasicName(basicOpenPending.name);
-    setActiveTab('basic');
-    addLog(`"${basicOpenPending.label}" aberto no editor BASIC (conteúdo anterior substituído).`, `"${basicOpenPending.label}" opened in the BASIC editor (previous content replaced).`, 'success');
-    setBasicOpenPending(null);
+    const text = newText.endsWith('\n') ? newText : newText + '\n'; // garante a nova linha final → cursor nela
+    if (!activeDoc.text.trim()) { loadBasicIntoDoc(actIdx, text, name, source, label); return; }
+    const emptyIdx = basicDocs.findIndex(d => !d.text.trim());
+    if (emptyIdx >= 0) { loadBasicIntoDoc(emptyIdx, text, name, source, label); return; }
+    if (basicDocs.length < MAX_BASIC_TABS) {
+      const doc = newBasicDoc({ text, name, source });
+      basicCaretRef.current[doc.id] = text.length; // caret ao final
+      const idx = basicDocs.length;
+      setBasicDocs(ds => [...ds, doc]); setBasicActive(idx); setActiveTab('basic');
+      addLog(`"${label}" aberto no editor BASIC (nova aba ${idx + 1}).`, `"${label}" opened in the BASIC editor (new tab ${idx + 1}).`, 'success');
+      return;
+    }
+    setBasicLoadPick({ text, label, source, name }); // 6 abas ocupadas → o usuário escolhe
   };
 
   // Atualiza o arquivo .BAS DENTRO da imagem DSK de onde foi aberto (in-place). Apaga a versão
@@ -4744,30 +4856,65 @@ export default function App() {
         ) : activeTab === 'gw' ? (
           renderGwTab()
         ) : activeTab === 'basic' ? (
-          <BasicEditor
-            lang={currentLang}
-            text={basicText}
-            onTextChange={setBasicText}
-            name={basicName}
-            onNameChange={setBasicName}
-            pane={basicPane}
-            onPaneChange={setBasicPane}
-            screen={basicScreen}
-            onScreenChange={setBasicScreen}
-            addNew={basicAddNew}
-            onAddNewChange={setBasicAddNew}
-            addRun={basicAddRun}
-            onAddRunChange={setBasicAddRun}
-            bold={basicBold}
-            onBoldChange={setBasicBold}
-            onRun={handleBasicRun}
-            onSaveToDisk={handleBasicSaveToDisk}
-            onSaveTextFile={handleBasicSaveTextFile}
-            onSaveCasFile={handleBasicSaveCasFile}
-            onOpenTextFile={handleBasicOpenTextFile}
-            sourceLabel={basicSource ? `${basicSource.entry.fullName} (${basicSource.pane})` : null}
-            onUpdateInDsk={handleBasicUpdateInDsk}
-          />
+          <div className="flex-1 flex flex-col overflow-hidden" style={{ minHeight: 0 }}>
+            {/* Barra de SUB-ABAS do editor BASIC (até 6) — rótulo = NOME.BAS (duplo-clique p/ renomear);
+                + abre, × fecha. O nome da aba ATIVA é usado pelo "Novo DSK + Salvar" → precisa ser único. */}
+            <div className="flex items-end gap-1 px-3 pt-2 flex-shrink-0 flex-wrap">
+              {basicDocs.map((d, i) => (
+                <div key={d.id} onClick={() => setBasicActive(i)}
+                  className="flex items-center gap-1.5 rounded-t-md cursor-pointer select-none"
+                  style={{ padding: '4px 8px', fontSize: 11, maxWidth: 200, border: '1px solid var(--border)', borderBottom: 'none',
+                    background: i === actIdx ? 'var(--surface, #11161f)' : 'transparent', color: i === actIdx ? 'var(--text-primary, #e5e5e5)' : 'var(--text-muted)', fontWeight: i === actIdx ? 700 : 400 }}
+                  title={`${d.name}.BAS — ${currentLang === 'pt-br' ? 'duplo-clique p/ renomear' : 'double-click to rename'}`}>
+                  {basicRenaming === i ? (
+                    <input autoFocus value={d.name} maxLength={8} spellCheck={false}
+                      onChange={(e) => setBasicDocName(i, e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={() => { if (!basicDocs[i]?.name) setBasicDocName(i, untitledName(basicDocs.filter((_, k) => k !== i))); setBasicRenaming(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); (e.currentTarget as HTMLInputElement).blur(); } }}
+                      className="font-mono" style={{ width: 92, fontSize: 11, background: '#0a0e14', color: 'var(--text-primary, #e5e5e5)', border: '1px solid var(--primary, #ff8c1a)', borderRadius: 3, padding: '0 4px', outline: 'none' }} />
+                  ) : (
+                    <span className="font-mono truncate" style={{ maxWidth: 150 }} onDoubleClick={(e) => { e.stopPropagation(); setBasicRenaming(i); }}>{d.name}.BAS</span>
+                  )}
+                  <button onClick={(e) => { e.stopPropagation(); if (d.text.trim()) setBasicCloseConfirm(i); else closeBasicTab(i); }}
+                    className="rounded hover:bg-red-900/40" style={{ lineHeight: 1, padding: '1px 3px', color: 'var(--text-muted)' }}
+                    title={currentLang === 'pt-br' ? 'Fechar aba' : 'Close tab'}>×</button>
+                </div>
+              ))}
+              {basicDocs.length < MAX_BASIC_TABS && (
+                <button onClick={addBasicTab} className="rounded-t-md" style={{ padding: '4px 9px', fontSize: 13, lineHeight: 1, border: '1px solid var(--border)', borderBottom: 'none', color: 'var(--text-secondary)', background: 'transparent' }}
+                  title={currentLang === 'pt-br' ? 'Nova aba de editor BASIC' : 'New BASIC editor tab'}>+</button>
+              )}
+            </div>
+            <BasicEditor
+              key={`${activeDoc.id}.${activeDoc.epoch || 0}`}
+              lang={currentLang}
+              text={basicText}
+              onTextChange={setBasicText}
+              initialCaret={basicCaretRef.current[activeDoc.id] ?? 0}
+              onCaretChange={(p) => { basicCaretRef.current[activeDoc.id] = p; }}
+              name={basicName}
+              onNameChange={setBasicName}
+              pane={basicPane}
+              onPaneChange={setBasicPane}
+              screen={basicScreen}
+              onScreenChange={setBasicScreen}
+              addNew={basicAddNew}
+              onAddNewChange={setBasicAddNew}
+              addRun={basicAddRun}
+              onAddRunChange={setBasicAddRun}
+              bold={basicBold}
+              onBoldChange={setBasicBold}
+              onRun={handleBasicRun}
+              onSaveToDisk={handleBasicSaveToDisk}
+              onSaveTextFile={handleBasicSaveTextFile}
+              onSaveCasFile={handleBasicSaveCasFile}
+              onSaveWavFile={handleBasicSaveWavFile}
+              onOpenTextFile={handleBasicOpenTextFile}
+              sourceLabel={basicSource ? `${basicSource.entry.fullName} (${basicSource.pane})` : null}
+              onUpdateInDsk={handleBasicUpdateInDsk}
+            />
+          </div>
         ) : (activeTab === 'xroar' || activeTab === 'os9' || activeTab === 'k7' || activeTab === 'fujinet') ? null : (
           <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
             {/* DSK toolbar — folga simples (mb-3) como na aba BASIC; o brilho do painel ativo
@@ -4857,7 +5004,7 @@ export default function App() {
         <div style={{ display: activeTab === 'k7' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
           <K7Tab lang={currentLang} active={activeTab === 'k7'} platform={platform} onOpenBasic={handleK7OpenBasic}
             detokenize={(bytes) => decodeBasToText(bytes, undefined, platform === 'dragon' ? 'dragon' : 'coco')}
-            onSendToXroar={handleK7ToXroar} onSendToDsk={handleK7ToDsk} onLoaderToDsk={handleLoaderToDsk} onLog={addLog} />
+            onSendToXroar={handleK7ToXroar} onSendToDsk={handleK7ToDsk} onLoaderToDsk={handleLoaderToDsk} onPullFromPanel={handleK7PullFromPanel} onLog={addLog} />
         </div>
 
         {/* Aba OS-9 — sempre montada (display toggle) para NÃO perder a edição em memória ao trocar de aba */}
@@ -5576,22 +5723,50 @@ export default function App() {
       )}
 
       {/* BASIC: confirma abrir arquivo apagando o conteúdo atual do editor */}
-      {basicOpenPending && (
-        <div className="glass-modal-overlay" onClick={() => setBasicOpenPending(null)}>
-          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 430, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+      {/* Modal: as 6 abas do editor BASIC estão ocupadas — escolher em qual colocar o código exportado. */}
+      {basicLoadPick && (
+        <div className="glass-modal-overlay" onClick={() => setBasicLoadPick(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3">
               <div className="p-2 rounded-full bg-amber-950/30 text-amber-400 flex-shrink-0"><AlertTriangle size={20} /></div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Abrir e substituir?' : 'Open and replace?'}</h3>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Todas as 6 abas ocupadas' : 'All 6 tabs are occupied'}</h3>
             </div>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {currentLang === 'pt-br'
-                ? `O editor BASIC já contém um programa. Abrir "${basicOpenPending.label}" vai APAGAR o conteúdo atual do editor. Deseja continuar?`
-                : `The BASIC editor already has a program. Opening "${basicOpenPending.label}" will ERASE the current editor content. Continue?`}
+                ? `As 6 abas do editor BASIC estão ocupadas. Escolha em qual colocar "${basicLoadPick.label}" — o conteúdo daquela aba será SUBSTITUÍDO — ou cancele.`
+                : `All 6 BASIC editor tabs are occupied. Choose which one to place "${basicLoadPick.label}" into — that tab's content will be REPLACED — or cancel.`}
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {basicDocs.map((d, i) => (
+                <button key={d.id} onClick={() => { const p = basicLoadPick; setBasicLoadPick(null); loadBasicIntoDoc(i, p.text, p.name, p.source, p.label); }}
+                  className="btn btn-secondary py-2 px-3 text-xs font-bold uppercase text-left truncate" title={`${(d.name || 'SEM-NOME')}.BAS`}>
+                  {i + 1}. {(d.name || (currentLang === 'pt-br' ? 'SEM-NOME' : 'UNTITLED'))}.BAS
+                </button>
+              ))}
+            </div>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setBasicLoadPick(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Modal: confirmar o fechamento de uma aba BASIC que tem conteúdo não vazio. */}
+      {basicCloseConfirm !== null && (
+        <div className="glass-modal-overlay" onClick={() => setBasicCloseConfirm(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 420, maxWidth: '90%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-red-950/30 text-red-400 flex-shrink-0"><AlertTriangle size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Fechar a aba?' : 'Close the tab?'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? `A aba ${basicCloseConfirm + 1} ("${(basicDocs[basicCloseConfirm]?.name || 'SEM-NOME')}.BAS") tem conteúdo. Fechá-la vai DESCARTAR o programa não salvo. Continuar?`
+                : `Tab ${basicCloseConfirm + 1} ("${(basicDocs[basicCloseConfirm]?.name || 'UNTITLED')}.BAS") has content. Closing it will DISCARD the unsaved program. Continue?`}
             </p>
             <div className="flex justify-end gap-3 pt-1">
-              <button onClick={() => setBasicOpenPending(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
-              <button onClick={applyBasicOpen} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5">
-                <FolderOpen size={13} /> {currentLang === 'pt-br' ? 'Abrir' : 'Open'}
+              <button onClick={() => setBasicCloseConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={() => { const i = basicCloseConfirm; setBasicCloseConfirm(null); closeBasicTab(i); }} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase" style={{ background: '#b91c1c' }}>
+                {currentLang === 'pt-br' ? 'Fechar' : 'Close'}
               </button>
             </div>
           </div>

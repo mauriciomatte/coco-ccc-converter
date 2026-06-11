@@ -6,9 +6,28 @@ deixa você **editar** com cara de tela do CoCo, e então **roda no XRoar**, **g
 como `.bas`/`.cas`. Ao terminar este guia você saberá trazer um programa de qualquer origem, editá-lo e
 devolvê-lo rodando.
 
+> **Cobertura de tokens (detokenização):** todas as palavras do **Color BASIC**, **Extended Color BASIC**,
+> **Disk BASIC** e do **Super Extended Color BASIC (CoCo 3)** — incluindo comandos como `HSCREEN`, `PALETTE`,
+> `HCOLOR`, `HDRAW`, `HPRINT`, `WIDTH`, `LOCATE` e funções como `LPEEK`, `BUTTON`, `HPOINT` — além do dialeto
+> **Dragon**. Texto dentro de aspas, `REM`/`'` e `DATA` é mostrado **literalmente** (não vira comando), como no
+> `LIST` real. Tabelas conferidas byte-a-byte com os disassemblies *Unravelled*. Um token desconhecido aparece
+> como `[?XX]` (em vez de corromper a linha) — se você vir isso, reporte o código que a tabela é ajustada.
+
 A tela tem três faixas fixas: a **toolbar** (em cima), a **área de edição** (no meio, que cresce) e o
 **rodapé** de opções (embaixo). Quando você abre **Procurar/Substituir**, uma **barra** extra aparece entre a
 toolbar e a área de edição. O botão **?** (na toolbar) reabre esta ajuda.
+
+> **Abas de editor (até 6):** acima da toolbar há uma **barra de sub-abas** — cada aba é um editor BASIC
+> independente. **+** abre uma nova aba; **×** fecha (pede confirmação se a aba tiver conteúdo). O rótulo é
+> **`NOME.BAS`**; **dê duplo-clique no nome para renomear** (8 letras, A-Z/0-9 — formato CoCo). Cada aba nasce
+> com um nome **único** (`SEMNOME1`…`SEMNOME6`), porque o **"Novo DSK + Salvar"** grava usando o nome da aba
+> **ativa** — então não pode haver dois iguais. Os **botões de cima e o salvar/rodar** agem sempre na **aba
+> ativa**; já os **ajustes do rodapé** (Maiúsculas, Tela VDG, Cores, Negrito, NEW/RUN/ENTER, 32 colunas,
+> velocidade) são **globais** (valem para todas). O **cursor** volta para onde você o deixou em cada aba.
+> Ao **exportar** um programa para o editor (do disco, da fita K7, etc.), a aba **adota o nome do arquivo**, o
+> texto entra com uma **nova linha ao final** e o cursor fica nela; ele cai numa **aba vazia** ou **nova aba**,
+> e se as 6 estiverem ocupadas, um aviso deixa você **escolher** em qual colocar (substituindo) ou **cancelar**.
+> As abas abertas são **lembradas** ao reabrir o app.
 
 ---
 
@@ -37,7 +56,8 @@ qualquer ícone para ver a dica.
 |-------|-------|-----------|
 | **Abrir arquivo .BAS** | pasta | Abre um `.bas/.txt` (ASCII) do PC para o editor. |
 | **Salvar como .BAS (texto)** | disquete | Grava o programa em **ASCII** num `.bas`/`.txt` do PC. |
-| **Salvar como fita .CAS** | ondas de áudio | Embrulha o programa num `.CAS` carregável por **CLOAD**. |
+| **Salvar como fita .CAS** | texto **.CAS** | Embrulha o programa num `.CAS` carregável por **CLOAD** (cassete de emulador). |
+| **Salvar como áudio .WAV** | ondas de áudio | Gera o **áudio FSK** da fita no **padrão da época** (mono 8-bit 9600 Hz, com silêncio inicial, gap após o cabeçalho e final): carrega no **XRoar em tempo normal** (CLOAD) e grava numa **fita K7 real** p/ um CoCo físico, sem erros. |
 | **Recortar** | tesoura | Recorta a seleção (área de transferência do sistema). |
 | **Copiar** | duas folhas | Copia a seleção. |
 | **Colar** | prancheta | Cola na posição do cursor (maiusculizado se "Maiúsculas auto" ligada). |
@@ -138,6 +158,13 @@ As opções de rodapé controlam o que é injetado:
   ou `.txt`.
 - **Salvar como fita .CAS** — embrulha o programa num `.CAS` carregável por **CLOAD** no XRoar/MAME (e
   reimportável na aba K7).
+- **Salvar como áudio .WAV** — o próprio **áudio FSK** da fita, reconstruído no **padrão da época** (mono
+  8-bit, 9600 Hz, FSK 1200/2400 Hz exata) com a mesma **estrutura das fitas originais**: silêncio inicial,
+  *leader* + cabeçalho (namefile), **silêncio após o cabeçalho** (o CoCo desliga o motor e o processa),
+  *leader* + dados contínuos + EOF e silêncio final. Carrega no **XRoar em tempo normal** (`CLOAD`) e grava
+  numa **fita K7 real** para um CoCo físico, sem erro de sincronismo. O programa é **tokenizado** (como o
+  `CSAVE`); se a sintaxe for incomum e o tokenizador não bater, cai automaticamente para ASCII (o CoCo
+  tokeniza ao carregar).
 - **Novo DSK + Salvar → A/B** — cria/usa o disco do painel escolhido e grava o programa como **.BAS ASCII**
   (o CoCo carrega com `LOAD"NOME"`). Defina o **Painel** (A/B) e o **nome** (até 8 caracteres A-Z/0-9).
 - **Salvar (in-place no DSK)** — aparece quando o programa veio de um disco (selo "Editando"): **atualiza o

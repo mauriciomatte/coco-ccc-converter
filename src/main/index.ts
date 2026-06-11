@@ -2,8 +2,8 @@ import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8 } from './converter/wav';
-import { parseCas } from './converter/cas';
+import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8, buildEraTapeWav } from './converter/wav';
+import { parseCas, fixCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, fatReplaceFile, fatAddFile, fatDeleteFile, Reader, Writer } from './converter/fat';
@@ -229,6 +229,16 @@ function readFileWithProgress(filePath: string, total: number, phase: string): B
   } finally { fs.closeSync(fd); }
 }
 
+// Resolve o ícone do app (resources/icon.png). Prod: <resources>/icon.png via extraResources;
+// dev: <projeto>/resources/icon.png. Devolve um nativeImage (vazio se não achar).
+function appIcon(): Electron.NativeImage {
+  const dirs = app.isPackaged
+    ? [path.join(process.resourcesPath, 'icon.png')]
+    : [path.join(process.cwd(), 'resources', 'icon.png'), path.join(app.getAppPath(), 'resources', 'icon.png')];
+  for (const p of dirs) { if (fs.existsSync(p)) return nativeImage.createFromPath(p); }
+  return nativeImage.createEmpty();
+}
+
 function createWindow() {
   // Remove o menu padrão do Electron (File/Edit/View/Window/Help) — o app tem sua própria UI.
   Menu.setApplicationMenu(null);
@@ -239,6 +249,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     show: false,
+    icon: appIcon(), // ícone da barra de título / barra de tarefas (substitui o padrão do Electron)
     autoHideMenuBar: true, // sem barra de menu (nem ao pressionar Alt)
     title: 'CoCo File Image Utility (CoCoFIU)',
     webPreferences: {
@@ -431,6 +442,43 @@ ipcMain.handle('dsk-extract-raw', async (_, dskUint8Array: Uint8Array, entry: an
       ? extractDragonFile(stripVdk(buf), entry)
       : extractDskFile(buf, entry as DskFileEntry);
     return { success: true, data: new Uint8Array(raw) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2b1b. W3 — disco → fita: extrai o arquivo selecionado de um painel e o EMPACOTA num .CAS tocável
+// (namefile + data blocks + EOF). ML (tipo 2): o conteúdo no disco é um LOADM → o parseBin recupera
+// load/exec e a imagem de memória crua (o que a fita realmente carrega). BASIC/Data (0/1/3): bytes crus,
+// preservando o asciiFlag do diretório. A K7 carrega o resultado pelo pipeline normal (.cas → WAV).
+ipcMain.handle('dsk-file-to-cas', async (_, dskUint8Array: Uint8Array, entry: any) => {
+  try {
+    const buf = Buffer.from(dskUint8Array);
+    const raw = entry?.format === 'dragon'
+      ? extractDragonFile(stripVdk(buf), entry)
+      : extractDskFile(buf, entry as DskFileEntry);
+    const name = (entry?.name || 'FILE').toString();
+    const ftype = entry?.fileType ?? 2;
+    let cas: Buffer;
+    if (ftype === 2) {
+      let loadAddr = 0x1000, execAddr = 0x1000, payload: Buffer = Buffer.from(raw);
+      try { const p = parseBin(Buffer.from(raw)); loadAddr = p.loadAddr; execAddr = p.execAddr; payload = Buffer.from(p.payload); }
+      catch { /* não é LOADM válido → grava cru */ }
+      cas = encodeCas([{ name, fileType: 2, asciiFlag: 0, loadAddr, execAddr, payload }]);
+    } else {
+      cas = encodeCas([{ name, fileType: ftype, asciiFlag: entry?.asciiFlag ?? 0, loadAddr: 0, execAddr: 0, payload: Buffer.from(raw) }]);
+    }
+    return { success: true, data: new Uint8Array(cas), name, fileType: ftype };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// 2b1c. W5 — FIXCAS: valida/repara um .CAS (recalcula checksums, refaz leader/sync, garante EOF).
+ipcMain.handle('cas-fix', async (_, casBytes: Uint8Array) => {
+  try {
+    const { output, report } = fixCas(Buffer.from(casBytes));
+    return { success: true, data: new Uint8Array(output), report };
   } catch (error: any) {
     return { success: false, error: error.message };
   }
@@ -741,16 +789,41 @@ ipcMain.handle('k7-decode', async (_, wavBytes: Uint8Array, opts: any) => {
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
+// Reescreve, IN PLACE, os 8 bytes de NOME da 1ª namefile (bloco tipo 0) dos segmentos decodificados —
+// usado pelo campo editável de nome de fita da K7. O buildFaithfulCas recalcula o checksum depois.
+function applyTapeName(segs: Array<Array<{ type: number; data: number[] }>>, name?: string): void {
+  if (!name) return;
+  const clean = name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8).padEnd(8, ' ');
+  for (const seg of segs) {
+    for (const b of seg) {
+      if (b.type === 0x00 && b.data.length >= 8) { for (let i = 0; i < 8; i++) b.data[i] = clean.charCodeAt(i); return; }
+    }
+  }
+}
+
 // 3c0z3. K10 — Normalizar/Remaster: re-decodifica o WAV e reemite um arquivo LIMPO (.cas/.wav) menor.
-ipcMain.handle('k7-export-clean', async (_, wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string) => {
+ipcMain.handle('k7-export-clean', async (_, wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string, tapeName?: string) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
   try {
     const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     if (!r.foundSync || !r.segs.length) return { success: false, error: 'Não foi possível decodificar a fita (sem sync/blocos).' };
+    applyTapeName(r.segs as any, tapeName);
     const cas = buildFaithfulCas(r.segs);
-    // WAV: SEMPRE com tempos reais (silêncio após namefile/entre blocos + gaps medidos) p/ rodar em
-    // tempo real, tanto fita simples quanto com loader. O .cas continua contíguo (fast-load).
-    const out = format === 'wav' ? buildCleanWav(r.segs, r.segTimes, sampleRate || 22050) : cas;
+    // WAV: fita de ARQUIVO ÚNICO (padrão) → estrutura de ÉPOCA (silêncio inicial · leader+namefile · GAP do
+    // namefile · dados contínuos · silêncio final), igual às fitas reais → carrega em tempo normal e grava
+    // em K7 física. Fita MULTI-SEGMENTO (loader/tela) → buildCleanWav, que preserva os SILÊNCIOS reais
+    // medidos entre os segmentos (o timing original do loader). O .cas continua contíguo (fast-load).
+    let out: Buffer = cas;
+    if (format === 'wav') {
+      const f0 = r.files[0];
+      if (r.files.length === 1 && f0) {
+        out = buildEraTapeWav(tapeName || f0.name, r.payload, {
+          sampleRate: sampleRate || 9600, ascii: f0.ascii, fileType: f0.ftype, loadAddr: f0.loadAddr, execAddr: f0.execAddr,
+        });
+      } else {
+        out = buildCleanWav(r.segs, r.segTimes, sampleRate || 22050);
+      }
+    }
     const ext = format === 'wav' ? 'wav' : 'cas';
     const res = await dialog.showSaveDialog(mainWindow, {
       title: format === 'wav' ? 'Salvar WAV limpo (normalizado)' : 'Salvar CAS limpo (normalizado)',
@@ -805,10 +878,11 @@ ipcMain.handle('k7-stream', async (_, wavBytes: Uint8Array, opts: any) => {
 // 3c0z5c. Extrair → CAS — devolve os BYTES de um .cas CANÔNICO (mesmo buildCleanCas do "→ CAS", que
 //   abre no XRoar): namefile + data blocks (com leaders entre eles) + EOF. Evita o encodeCas, cujos
 //   blocos colados (sem leader) o XRoar recusava em arquivos multi-bloco.
-ipcMain.handle('k7-cas-bytes', async (_, wavBytes: Uint8Array, opts: any) => {
+ipcMain.handle('k7-cas-bytes', async (_, wavBytes: Uint8Array, opts: any, tapeName?: string) => {
   try {
     const r = decodeCasTapeGapAware(Buffer.from(wavBytes), opts || {});
     if (!r.foundSync || !r.segs.length) return { success: false, error: 'Sem dados decodificáveis na fita.' };
+    applyTapeName(r.segs as any, tapeName);
     return { success: true, data: new Uint8Array(buildFaithfulCas(r.segs)), name: r.files[0]?.name || 'FILE' };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
@@ -866,6 +940,15 @@ ipcMain.handle('k7-file-for-dsk', async (_, wavBytes: Uint8Array, opts: any, fil
 ipcMain.handle('k7-cas-to-wav', async (_, casBytes: Uint8Array, sampleRate: number) => {
   try {
     const wav = encodeCasToWav(Buffer.from(casBytes), sampleRate || 22050);
+    return { success: true, data: new Uint8Array(wav) };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// 3c0z8. Aba BASIC — gera o WAV de fita com ESTRUTURA DE ÉPOCA (mono 8-bit 9600 Hz, silêncios reais) a
+//   partir do payload (tokenizado ou ASCII) já preparado no renderer. Para gravar em fita K7 física.
+ipcMain.handle('build-basic-tape-wav', async (_, name: string, payload: Uint8Array, ascii: boolean, sampleRate?: number) => {
+  try {
+    const wav = buildEraTapeWav(name || 'PROGRAM', payload, { ascii: !!ascii, sampleRate: sampleRate || 9600 });
     return { success: true, data: new Uint8Array(wav) };
   } catch (error: any) { return { success: false, error: error.message }; }
 });

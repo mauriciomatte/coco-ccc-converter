@@ -5,9 +5,27 @@ The **BASIC** tab is a text editor for **Color Computer BASIC** programs (and cl
 a CoCo-screen look, and then **runs in XRoar**, **writes to a disk**, or **saves** as `.bas`/`.cas`. By the
 end of this guide you will know how to bring in a program from any source, edit it, and send it back running.
 
+> **Token coverage (detokenization):** every keyword of **Color BASIC**, **Extended Color BASIC**, **Disk
+> BASIC** and **Super Extended Color BASIC (CoCo 3)** — including commands like `HSCREEN`, `PALETTE`, `HCOLOR`,
+> `HDRAW`, `HPRINT`, `WIDTH`, `LOCATE` and functions like `LPEEK`, `BUTTON`, `HPOINT` — plus the **Dragon**
+> dialect. Text inside quotes, `REM`/`'` and `DATA` is shown **literally** (not turned into a command), just
+> like the real `LIST`. Tables verified byte-by-byte against the *Unravelled* disassemblies. An unknown token
+> shows as `[?XX]` (rather than corrupting the line) — if you see that, report the code so the table can be fixed.
+
 The tab has three fixed bands: the **toolbar** (top), the **editing area** (middle, which grows) and the
 **footer** of options (bottom). When you open **Find/Replace**, an extra **bar** appears between the toolbar
 and the editing area. The **?** button (in the toolbar) reopens this help.
+
+> **Editor tabs (up to 6):** above the toolbar there's a **sub-tab bar** — each tab is an independent BASIC
+> editor. **+** opens a new tab; **×** closes it (asks for confirmation if the tab has content). The label is
+> **`NAME.BAS`**; **double-click the name to rename** (8 chars, A-Z/0-9 — CoCo format). Each tab is born with a
+> **unique** name (`SEMNOME1`…`SEMNOME6`), because **"New DSK + Save"** writes using the **active** tab's name,
+> so no two can be equal. The **top buttons and save/run** always act on the **active tab**; the **footer
+> settings** (Auto-uppercase, VDG screen, Colors, Bold, NEW/RUN/ENTER, 32 columns, speed) are **global**. The
+> **cursor** returns to where you left it in each tab. When you **export** a program into the editor (from disk,
+> K7 tape, etc.), the tab **adopts the file name**, the text comes in with a **trailing new line** and the
+> cursor sits on it; it lands in an **empty tab** or a **new tab**, and if all 6 are occupied a prompt lets you
+> **choose** which one to place it into (replacing it) or **cancel**. Open tabs are **remembered** on reopen.
 
 ---
 
@@ -36,7 +54,8 @@ The toolbar (left to right) groups the file, edit and run commands. Hover any ic
 |--------|------|--------------|
 | **Open .BAS file** | folder | Opens a PC `.bas/.txt` (ASCII) into the editor. |
 | **Save as .BAS (text)** | floppy | Writes the program as **ASCII** to a PC `.bas`/`.txt`. |
-| **Save as .CAS tape** | audio waves | Wraps the program in a `.CAS` loadable by **CLOAD**. |
+| **Save as .CAS tape** | **.CAS** text | Wraps the program in a `.CAS` loadable by **CLOAD** (emulator cassette). |
+| **Save as .WAV audio** | audio waves | Generates the tape **FSK audio** in the **period format** (mono 8-bit 9600 Hz, with lead-in silence, post-header gap and tail): loads in **XRoar at normal speed** (CLOAD) and records to a **real K7 tape** for a physical CoCo, without errors. |
 | **Cut** | scissors | Cuts the selection (system clipboard). |
 | **Copy** | two sheets | Copies the selection. |
 | **Paste** | clipboard | Pastes at the cursor (uppercased if "Auto uppercase" is on). |
@@ -138,6 +157,12 @@ The footer options control what is injected:
   `.txt`.
 - **Save as .CAS tape** — wraps the program in a `.CAS` loadable by **CLOAD** in XRoar/MAME (and re-importable
   on the K7 tab).
+- **Save as .WAV audio** — the tape **FSK audio** itself, rebuilt in the **period format** (mono 8-bit,
+  9600 Hz, exact 1200/2400 Hz FSK) with the same **structure as original tapes**: lead-in silence, leader +
+  header (namefile), **silence after the header** (the CoCo stops the motor and processes it), leader +
+  continuous data + EOF and a trailing silence. It loads in **XRoar at normal speed** (`CLOAD`) and records
+  to a **real K7 tape** for a physical CoCo, with no sync error. The program is **tokenized** (like `CSAVE`);
+  if the syntax is unusual and the tokenizer doesn't match, it falls back to ASCII (the CoCo tokenizes on load).
 - **New DSK + Save → A/B** — creates/uses the chosen pane's disk and writes the program as **.BAS ASCII** (the
   CoCo loads it with `LOAD"NAME"`). Set the **Pane** (A/B) and the **name** (up to 8 chars A-Z/0-9).
 - **Save (in-place on the DSK)** — appears when the program came from a disk (the "Editing" badge): it

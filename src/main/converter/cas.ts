@@ -165,3 +165,102 @@ export function parseCas(casBuffer: Buffer): ParsedCas {
     files: built
   };
 }
+
+// ─────────────────────────── W5 — FIXCAS (validar/reparar .CAS) ───────────────────────────
+
+export interface FixCasReport {
+  blocks: number;        // blocos recuperados (namefile + data + EOF)
+  files: number;         // arquivos reconstruídos na fita
+  checksumsFixed: number; // blocos cujo checksum estava errado e foi recalculado
+  falseSyncsSkipped: number; // bytes 0x3C que não eram cabeçalho de bloco válido
+  eofAdded: number;      // arquivos que não tinham EOF e ganharam um
+  bytesIn: number;
+  bytesOut: number;
+  changed: boolean;      // true se a saída difere da entrada
+}
+
+interface RecoveredBlock { type: number; payload: Buffer; csFixed: boolean; }
+
+/**
+ * Valida e REPARA um .CAS: varre o stream tolerando lixo, recupera os blocos (namefile/data/EOF)
+ * mesmo com checksum errado e reemite uma fita CANÔNICA — leader $55 + sync $3C corretos, checksums
+ * recalculados, e EOF garantido por arquivo. Resolve os defeitos comuns (leader/sync ausente ou
+ * deformado entre blocos, checksum corrompido, EOF faltando). Não inventa dados: blocos cuja
+ * estrutura não fecha (tipo inválido / tamanho que estoura o buffer) são tratados como falso-sync.
+ */
+export function fixCas(input: Buffer): { output: Buffer; report: FixCasReport } {
+  const recovered: RecoveredBlock[] = [];
+  let checksumsFixed = 0, falseSyncsSkipped = 0;
+
+  // 1) Varredura tolerante. O leader é 0x55 (≠ 0x3C), então indexOf(0x3C) pula leaders naturalmente.
+  let off = 0;
+  while (off < input.length) {
+    const sync = input.indexOf(0x3c, off);
+    if (sync < 0 || sync + 3 > input.length) break;       // sem mais sync / cabeçalho truncado
+    const type = input[sync + 1];
+    const len = input[sync + 2];
+    // Só 3 tipos são válidos numa fita CoCo/Dragon. Qualquer outro = falso sync (0x3C dentro de leader/dado).
+    if (type !== 0x00 && type !== 0x01 && type !== 0xff) { off = sync + 1; falseSyncsSkipped++; continue; }
+    if (sync + 3 + len + 1 > input.length) { off = sync + 1; falseSyncsSkipped++; continue; } // não cabe → falso sync
+    const payload = input.subarray(sync + 3, sync + 3 + len);
+    const stored = input[sync + 3 + len];
+    let sum = (type + len) & 0xff;
+    for (let i = 0; i < payload.length; i++) sum = (sum + payload[i]) & 0xff;
+    const csFixed = sum !== stored;
+    if (csFixed) checksumsFixed++;
+    recovered.push({ type, payload: Buffer.from(payload), csFixed });
+    off = sync + 3 + len + 1;                              // pula este bloco (0x3C dentro do payload não confunde)
+  }
+
+  // 2) Reemissão canônica. leader(128) · namefile · leader(128) · [data · leader(2)]… · EOF · leader(2).
+  const out: number[] = [];
+  const leader = (n: number) => { for (let k = 0; k < n; k++) out.push(0x55); };
+  const emit = (type: number, data: Buffer) => {
+    out.push(0x3c, type & 0xff, data.length & 0xff);
+    let s = (type + data.length) & 0xff;
+    for (const b of data) { out.push(b & 0xff); s = (s + b) & 0xff; }
+    out.push(s & 0xff);                                    // checksum SEMPRE recalculado
+  };
+
+  let files = 0, eofAdded = 0;
+  const emitFile = (namefile: Buffer | null, datas: Buffer[], hadEof: boolean) => {
+    files++;
+    leader(128);
+    if (namefile) { emit(0x00, namefile); leader(128); }
+    for (const d of datas) { emit(0x01, d); leader(2); }
+    emit(0xff, Buffer.alloc(0));
+    if (!hadEof) eofAdded++;
+    leader(2);
+  };
+
+  let i = 0;
+  while (i < recovered.length) {
+    const b = recovered[i];
+    if (b.type === 0x00) {                                 // namefile → começa um arquivo
+      const nf = b.payload; i++;
+      const datas: Buffer[] = [];
+      while (i < recovered.length && recovered[i].type === 0x01) { datas.push(recovered[i].payload); i++; }
+      let hadEof = false;
+      if (i < recovered.length && recovered[i].type === 0xff) { hadEof = true; i++; }
+      emitFile(nf, datas, hadEof);
+    } else if (b.type === 0x01) {                          // data órfão (sem namefile) → arquivo anônimo
+      const datas: Buffer[] = [];
+      while (i < recovered.length && recovered[i].type === 0x01) { datas.push(recovered[i].payload); i++; }
+      let hadEof = false;
+      if (i < recovered.length && recovered[i].type === 0xff) { hadEof = true; i++; }
+      emitFile(null, datas, hadEof);
+    } else {                                               // EOF avulso (sem arquivo aberto) → descarta
+      i++;
+    }
+  }
+
+  const output = Buffer.from(out);
+  const changed = output.length !== input.length || !output.equals(input);
+  return {
+    output,
+    report: {
+      blocks: recovered.length, files, checksumsFixed, falseSyncsSkipped, eofAdded,
+      bytesIn: input.length, bytesOut: output.length, changed,
+    },
+  };
+}

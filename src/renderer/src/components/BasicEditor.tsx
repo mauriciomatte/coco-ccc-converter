@@ -28,12 +28,17 @@ interface Props {
   onSaveTextFile: (name: string, program: string) => void;
   // Salva como fita .CAS (cassete de emulador) no sistema de arquivos.
   onSaveCasFile: (name: string, program: string) => void;
+  // Salva como ÁUDIO de fita .WAV (FSK) — carrega no XRoar em tempo normal e grava em fita K7 real.
+  onSaveWavFile: (name: string, program: string) => void;
   // Abre um arquivo de texto (.bas) do sistema de arquivos para o editor.
   onOpenTextFile: () => void;
   // Rótulo do arquivo aberto a partir de um DSK (ex.: "JOGO.BAS (A)") ou null se não veio de DSK.
   sourceLabel: string | null;
   // Atualiza o arquivo na imagem DSK de origem (in-place).
   onUpdateInDsk: () => void;
+  // Posição do caret a restaurar ao montar (memória por aba) e callback ao mover o caret.
+  initialCaret?: number;
+  onCaretChange?: (pos: number) => void;
 }
 
 // Combinações de cores do editor (fundo/letra) selecionáveis por dropdown.
@@ -53,7 +58,8 @@ const schemeOf = (k: string) => SCHEMES[k] || SCHEMES['green-black'];
 export default function BasicEditor({
   lang, text, onTextChange, name, onNameChange, pane, onPaneChange, screen, onScreenChange,
   addNew, onAddNewChange, addRun, onAddRunChange, bold, onBoldChange,
-  onRun, onSaveToDisk, onSaveTextFile, onSaveCasFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
+  onRun, onSaveToDisk, onSaveTextFile, onSaveCasFile, onSaveWavFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
+  initialCaret, onCaretChange,
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
   const [showHelp, setShowHelp] = useState(false);
@@ -100,6 +106,19 @@ export default function BasicEditor({
   // o scroll acompanha sozinho).
   const [display, setDisplay] = useState<'normal' | 'vdg' | 'vdg6847'>(() => { try { const d = localStorage.getItem('basicDisplay'); return d === 'vdg' || d === 'vdg6847' ? d : 'normal'; } catch { return 'normal'; } });
   useEffect(() => { try { localStorage.setItem('basicDisplay', display); } catch { /* ignore */ } }, [display]);
+  // Ao ENTRAR na aba (montagem) e ao trocar o modo de tela, foca a área de edição e RESTAURA o caret na
+  // última posição daquela aba (memória por aba via `initialCaret`) — não na 1ª linha. setTimeout 0 espera
+  // o DOM da textarea do modo atual. O `key` por documento (no App) remonta o editor ao trocar de aba.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const ta = taRef.current; if (!ta) return;
+      const pos = Math.min(Math.max(0, initialCaret ?? text.length), text.length);
+      ta.focus();
+      try { ta.setSelectionRange(pos, pos); } catch { /* ignore */ }
+      setCaretOff(pos);
+    }, 0);
+    return () => clearTimeout(id);
+  }, [display]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Velocidade de digitação do código no XRoar (persistente). 'fast' = 12ms/tecla, 'normal' = 25ms.
   // O XRoarPanel lê esta preferência (localStorage 'xroarTypeSpeed') na hora de digitar.
@@ -133,6 +152,29 @@ export default function BasicEditor({
   const isVdg = display !== 'normal';
   const VDG_GREEN = '#3fcf3f', VDG_DARK = '#06320a';
   const vdgFontFamily = "'Courier New', monospace";
+
+  // Cursor em BLOCO (verde-escuro piscante, estilo Dragon/CoCo) nos modos VDG — o caret nativo fino some
+  // no fundo verde. Rastreamos a posição do caret (só quando NÃO há seleção) e desenhamos um bloco do
+  // tamanho de uma célula, atrás da textarea transparente.
+  const [caretOff, setCaretOff] = useState(-1);
+  const syncCaret = () => { const ta = taRef.current; if (!ta) { setCaretOff(-1); return; } setCaretOff(ta.selectionStart === ta.selectionEnd ? ta.selectionStart : -1); onCaretChange?.(ta.selectionStart); };
+  // Largura da célula do modo 'vdg' simples (Courier New 14px + 1px de letter-spacing), medida.
+  const vdgMeasRef = useRef<HTMLSpanElement>(null);
+  const [vdgCharW, setVdgCharW] = useState(9.4);
+  useLayoutEffect(() => { const s = vdgMeasRef.current; if (s) { const w = s.getBoundingClientRect().width / 20; if (w > 1 && Math.abs(w - vdgCharW) > 0.02) setVdgCharW(w); } }, [display, bold, isVdg]);
+  // Posição/tamanho do bloco do cursor conforme o modo VDG (ou null se oculto / com seleção).
+  const caretBlock = (mode: 'vdg' | 'vdg6847'): React.CSSProperties | null => {
+    if (caretOff < 0) return null;
+    let row = 0, col = 0;
+    for (let i = 0; i < caretOff && i < text.length; i++) { const ch = text[i]; if (ch === '\n') { row++; col = 0; } else { col++; if (wrap32 && col >= COLS) { row++; col = 0; } } }
+    if (mode === 'vdg6847') return { left: col * cellW, top: row * cellH, width: Math.max(2, cellW - 1), height: cellH };
+    const lineH = 14 * 1.55, pad = 12;                                    // fontSize 14 · lineHeight 1.55 · padding 12
+    return { left: pad + col * vdgCharW, top: pad + row * lineH, width: Math.max(2, vdgCharW), height: lineH };
+  };
+  const renderCaretBlock = (mode: 'vdg' | 'vdg6847'): React.ReactNode => {
+    const st = caretBlock(mode);
+    return st ? <div aria-hidden className="vdg-caret" style={{ position: 'absolute', background: VDG_DARK, pointerEvents: 'none', zIndex: 1, ...st }} /> : null;
+  };
   // No VDG, o '^' (exponenciação) é mostrado como a SETA PARA CIMA (↑), como no teclado/tela do CoCo.
   const toVdgText = (s: string) => s.replace(/\^/g, '↑');
   // Renderiza o texto (modo VDG-mono) agrupando trechos contíguos de mesma "caixa" (poucos spans).
@@ -290,7 +332,8 @@ export default function BasicEditor({
         {/* Arquivo de TEXTO (.bas) no sistema de arquivos */}
         <button onClick={onOpenTextFile} title={t('Abrir arquivo .BAS (texto)', 'Open .BAS text file')} className={toolBtn}><FolderOpen size={15} /></button>
         <button onClick={() => onSaveTextFile(safeName(), text)} disabled={empty} title={t('Salvar como arquivo .BAS (texto)', 'Save as .BAS text file')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><Save size={15} /></button>
-        <button onClick={() => onSaveCasFile(safeName(), text)} disabled={empty} title={t('Salvar como fita .CAS (cassete de emulador — CLOAD)', 'Save as .CAS tape (emulator cassette — CLOAD)')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><AudioLines size={15} /></button>
+        <button onClick={() => onSaveCasFile(safeName(), text)} disabled={empty} title={t('Salvar como fita .CAS (cassete de emulador — CLOAD)', 'Save as .CAS tape (emulator cassette — CLOAD)')} className={`${toolBtn} text-[11px] font-bold disabled:opacity-30 disabled:cursor-not-allowed`}>.CAS</button>
+        <button onClick={() => onSaveWavFile(safeName(), text)} disabled={empty} title={t('Salvar como ÁUDIO de fita .WAV (FSK 1200/2400 Hz) — carrega no XRoar em tempo normal (CLOAD) e grava numa fita K7 real sem erros', 'Save as tape AUDIO .WAV (FSK 1200/2400 Hz) — loads in XRoar at normal speed (CLOAD) and records to a real K7 tape without errors')} className={`${toolBtn} disabled:opacity-30 disabled:cursor-not-allowed`}><AudioLines size={15} /></button>
         {sep}
         <button onClick={doCut} title={t('Recortar', 'Cut')} className={toolBtn}><Scissors size={15} /></button>
         <button onClick={doCopy} title={t('Copiar', 'Copy')} className={toolBtn}><Copy size={15} /></button>
@@ -401,15 +444,18 @@ export default function BasicEditor({
                   {text ? renderVdg(text) : <span style={{ color: 'rgba(0,0,0,0.35)' }}>{'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}</span>}
                   {'​'}
                 </div>
+                {renderCaretBlock('vdg')}
+                <span ref={vdgMeasRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: 0, left: 0, fontFamily: vdgFontFamily, fontSize: 14, letterSpacing: '1px', whiteSpace: 'pre', fontWeight: bold ? 700 : 400 }}>00000000000000000000</span>
                 <textarea
                   ref={taRef}
                   className="vdg-input"
                   value={text}
-                  onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); }}
+                  onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); syncCaret(); }}
                   onKeyDown={handleEditorKeyDown}
+                  onSelect={syncCaret} onFocus={syncCaret} onBlur={() => setCaretOff(-1)}
                   spellCheck={false}
                   autoCapitalize="characters"
-                  style={{ ...vdgFont, position: 'absolute', inset: 0, color: 'transparent', caretColor: '#000', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden' }}
+                  style={{ ...vdgFont, position: 'absolute', inset: 0, color: 'transparent', caretColor: 'transparent', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden', zIndex: 2 }}
                 />
               </div>
             </div>
@@ -425,15 +471,17 @@ export default function BasicEditor({
         <div className="flex-1 rounded-lg overflow-auto" style={{ minHeight: 0, background: wrap32 ? '#0b1018' : VDG_GREEN, border: '2px solid rgba(0,0,0,0.45)', position: 'relative', padding: wrap32 ? 12 : 0, display: wrap32 ? 'flex' : 'block', justifyContent: wrap32 ? 'center' : undefined, alignItems: wrap32 ? 'flex-start' : undefined }}>
           <div style={{ position: 'relative', width: wrap32 ? wrapW : 'max-content', minWidth: wrap32 ? undefined : '100%', minHeight: wrap32 ? undefined : '100%', margin: wrap32 ? '0 auto' : undefined, flex: wrap32 ? '0 0 auto' : undefined, boxShadow: wrap32 ? '0 0 0 2px rgba(0,0,0,0.5), 0 6px 22px rgba(0,0,0,0.55)' : undefined }}>
             <canvas ref={canvasRef} style={{ display: 'block', imageRendering: 'pixelated' }} />
+            {renderCaretBlock('vdg6847')}
             <textarea
               ref={taRef}
               className="vdg-input"
               value={text}
-              onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); }}
+              onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); syncCaret(); }}
               onKeyDown={handleEditorKeyDown}
+              onSelect={syncCaret} onFocus={syncCaret} onBlur={() => setCaretOff(-1)}
               spellCheck={false}
               autoCapitalize="characters"
-              style={{ position: 'absolute', inset: 0, margin: 0, padding: 0, fontFamily: vdgFontFamily, fontSize: measurePx, lineHeight: `${cellH}px`, letterSpacing: 0, whiteSpace: wrap32 ? 'pre-wrap' : 'pre', wordBreak: wrap32 ? 'break-all' : 'normal', width: wrap32 ? wrapW : undefined, color: 'transparent', caretColor: '#000', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden' }}
+              style={{ position: 'absolute', inset: 0, margin: 0, padding: 0, fontFamily: vdgFontFamily, fontSize: measurePx, lineHeight: `${cellH}px`, letterSpacing: 0, whiteSpace: wrap32 ? 'pre-wrap' : 'pre', wordBreak: wrap32 ? 'break-all' : 'normal', width: wrap32 ? wrapW : undefined, color: 'transparent', caretColor: 'transparent', background: 'transparent', border: 0, outline: 'none', resize: 'none', overflow: 'hidden', zIndex: 2 }}
             />
           </div>
           <span ref={measureRef} aria-hidden style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', top: 0, left: 0, fontFamily: vdgFontFamily, fontSize: measurePx, letterSpacing: 0, whiteSpace: 'pre' }}>00000000000000000000</span>
