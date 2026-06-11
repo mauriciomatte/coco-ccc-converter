@@ -10,6 +10,40 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.63 — 2026-06-11
+--------------------------------------------------------------------------------
+Detecção universal de loaders, recuperação de fitas R3-R6, efeitos na onda + desfazer/refazer unificado, e correcao do instalador Linux
+
+ADICIONADO
+  • DETECCAO UNIVERSAL DE LOADERS DE FITA: alem do SoftKristian, reconhece o loader PLAN-SOFT/GAMEPACK
+    (multi-parte, ex.: SAILOR) pelas assinaturas de motor/BLKIN/CLOADM. A aba K7 informa a familia e,
+    para PLAN-SOFT (all-RAM), orienta a rodar o .CAS fiel no mini-XRoar.
+  • RECUPERACAO DE FITAS DEGRADADAS (R3-R6), no painel "Recuperacao avancada" da K7:
+      - R3 Diagnostico: histograma de periodos (limiar Otsu) + mapa de blocos bom/ruim por segmento +
+        re-decodificar so a selecao da onda;
+      - R4 Fundir capturas: junta os melhores blocos de varias capturas da MESMA fita (RAID de fita);
+      - R5 Efeitos de audio: DC, Faixa, AGC, Agudos e selecao de Canal (estereo) — aplicados a ONDA;
+      - R6 Multi-passe REC: grave varias vezes e funda os melhores blocos.
+  • DESFAZER/REFAZER UNIFICADO na K7: um historico unico cobre edicoes da onda, os efeitos de audio e
+    as mudancas de ajuste (Limiar/Amplitude/Recuperar). Ctrl+Z / Ctrl+Y.
+
+ALTERADO
+  • Os efeitos/filtros de audio agora se aplicam a propria ONDA — o PLAY e o mini-XRoar passam a tocar o
+    resultado, e a forma de onda mostra o efeito (antes so afetavam a decodificacao).
+  • Forma de onda: estilo padrao "linha" (osciloscopio) e zoom mais profundo para ver os ciclos reais da
+    FSK; rolagem suave do playhead ao tocar.
+
+CORRIGIDO
+  • INSTALADOR LINUX (.deb): no Ubuntu 24.04/26.04 (que restringem user namespaces) o app fechava ao
+    iniciar com erro do sandbox ("zygote ... Check failed"). O .deb agora habilita o setuid-sandbox
+    (chrome-sandbox SUID root na pos-instalacao) — abre normalmente, sem precisar de --no-sandbox.
+  • Forma de onda: corrigido o "piscar em partes aleatorias" ao tocar (rolagem suave) e o laco de
+    animacao que continuava rodando parado.
+
+  Observacao Linux: distros nao-Debian usam o AppImage; em sistemas que restringem user namespaces o
+  AppImage pode precisar de "--no-sandbox".
+
+--------------------------------------------------------------------------------
 v1.0.62 — 2026-06-11
 --------------------------------------------------------------------------------
 Gravar .img em cartao CF pelo app, edicao BASIC mais robusta e abrir BASIC de qualquer extensao

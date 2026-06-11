@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron
 import * as path from 'path';
 import * as fs from 'fs';
 import { spawn } from 'child_process';
-import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8, buildEraTapeWav } from './converter/wav';
+import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8, buildEraTapeWav, tapeDiagnostics, decodeRegion, mergeCaptures } from './converter/wav';
 import { parseCas, fixCas } from './converter/cas';
 import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
@@ -148,7 +148,7 @@ import { isOs9Disk, isOs9DiskStrict, parseIdent, parseOs9, readFD, readFileData,
 import { parseBin } from './converter/bin';
 import { compileBootstrap, BootstrapConfig } from './converter/bootstrap';
 import { encodeCas, encodeDsk, buildCocoFlashBin, CasFileInput, DskFileInput } from './converter/export';
-import { scanSoftKristian } from './converter/loaderscan';
+import { scanSoftKristian, scanLoaders } from './converter/loaderscan';
 import { buildNoLoaderBin, readCdcuInfo, stripToProgram } from './converter/loaderpak';
 
 let mainWindow: BrowserWindow | null = null;
@@ -802,6 +802,21 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
   }
 });
 
+// R4 — abre VÁRIOS .wav (capturas da mesma fita) para a fusão "RAID".
+ipcMain.handle('pick-wav-files', async () => {
+  if (!mainWindow) return { success: false, error: 'No application window.' };
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Abrir capturas WAV da MESMA fita (várias) para fundir',
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Captura de fita (.wav)', extensions: ['wav'] }, { name: 'All Files', extensions: ['*'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return { cancelled: true };
+  try {
+    const files = result.filePaths.map(fp => ({ name: path.basename(fp), data: new Uint8Array(fs.readFileSync(fp)) }));
+    return { success: true, files };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
 // 3c0z2. K7 — decodifica um WAV de fita (FSK) com parâmetros ajustáveis (K8) → blocos/arquivos CAS.
 ipcMain.handle('k7-decode', async (_, wavBytes: Uint8Array, opts: any) => {
   try {
@@ -813,6 +828,26 @@ ipcMain.handle('k7-decode', async (_, wavBytes: Uint8Array, opts: any) => {
       segments: r.segments, multi: r.multi, bitCount: r.payload.length * 8, byteCount: r.payload.length,
       blockCount: r.blocks.length, files: r.files,
     };
+  } catch (error: any) { return { success: false, error: error.message }; }
+});
+
+// R3 — DIAGNÓSTICO: histograma de períodos + mapa de blocos bom/ruim por segmento + limiar Otsu detectado.
+ipcMain.handle('tape-diagnostics', async (_, wavBytes: Uint8Array, opts: any) => {
+  try { return { success: true, diag: tapeDiagnostics(Buffer.from(wavBytes), opts || {}) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+// R3 — re-decodifica uma REGIÃO (intervalo em segundos) com os parâmetros atuais.
+ipcMain.handle('tape-decode-region', async (_, wavBytes: Uint8Array, startSec: number, endSec: number, opts: any) => {
+  try { return { success: true, ...decodeRegion(Buffer.from(wavBytes), startSec, endSec, opts || {}) }; }
+  catch (error: any) { return { success: false, error: error.message }; }
+});
+// R4 — FUSÃO de N capturas da mesma fita → reemite um WAV LIMPO (tempo real) e um .CAS do resultado fundido.
+ipcMain.handle('tape-merge-captures', async (_, buffers: Uint8Array[], opts: any) => {
+  try {
+    const m = mergeCaptures((buffers || []).map(b => Buffer.from(b)), opts || {});
+    if (!m.foundSync || !m.blocks.length) return { success: false, error: 'Nenhuma captura decodificável para fundir.' };
+    const wav = buildCleanWav([m.blocks], [], 22050);            // WAV tempo-real do resultado fundido
+    return { success: true, wav: new Uint8Array(wav), perCapture: m.perCapture, baseIndex: m.baseIndex, mergedGood: m.mergedGood, bestSingleGood: m.bestSingleGood, payloadLen: m.payload.length };
   } catch (error: any) { return { success: false, error: error.message }; }
 });
 
@@ -985,16 +1020,17 @@ ipcMain.handle('build-basic-tape-wav', async (_, name: string, payload: Uint8Arr
 //   de conflito de memória (pilha do DOS ~$7E00, RAM reservada $0600–$25FF). Ver loaderscan.ts.
 ipcMain.handle('loader-scan', async (_, wavBytes: Uint8Array, opts: any) => {
   try {
-    const pr = scanSoftKristian(Buffer.from(wavBytes), opts || {});
+    const pr = scanLoaders(Buffer.from(wavBytes), opts || {});
     if (!pr) return { success: true, detected: false, reason: 'no-sync' };
-    const progEnd = (pr.progLoad + pr.program.length) & 0xFFFFF;
     return {
-      success: true, detected: pr.isSoftKristian, confidence: pr.confidence,
-      name: pr.name, telaLoad: pr.telaLoad, telaLen: pr.telaLen, hasScreen: pr.telaLen > 0,
-      progLoad: pr.progLoad, progExec: pr.progExec, progLen: pr.program.length, progEnd,
-      cloadmCalls: pr.cloadmCalls, notes: pr.notes,
-      warnStack: progEnd >= 0x7E00,                                  // encosta na pilha do sistema
-      warnDos: pr.progLoad < 0x2600 && progEnd > 0x0600,             // sobrepõe RAM reservada do DOS
+      success: true, detected: pr.detected,
+      family: pr.family, familyName: pr.familyName, convertible: pr.convertible,
+      confidence: pr.confidence, name: pr.name,
+      telaLoad: pr.telaLoad, telaLen: pr.telaLen, hasScreen: pr.hasScreen,
+      progLoad: pr.progLoad, progExec: pr.progExec, progLen: pr.progLen, progEnd: pr.progEnd,
+      cloadmCalls: pr.cloadmCalls, parts: pr.parts, romCalls: pr.romCalls, notes: pr.notes,
+      warnStack: pr.progEnd >= 0x7E00,                                // encosta na pilha do sistema
+      warnDos: pr.progLoad > 0 && pr.progLoad < 0x2600 && pr.progEnd > 0x0600, // sobrepõe RAM reservada do DOS
     };
   } catch (error: any) { return { success: false, error: error.message }; }
 });

@@ -166,7 +166,9 @@ const CAS_TYPE_NAME: Record<number, string> = { 0: 'BASIC', 1: 'Data', 2: 'Machi
 
 export interface CasBlock { type: number; data: number[]; checksumOk: boolean; }
 export interface CasFileInfo { name: string; ftype: number; ftypeName: string; ascii: boolean; gapped: boolean; loadAddr: number; execAddr: number; sizeBytes: number; blocks: number; checksumOk: boolean; }
-export interface DecodeOpts { midUs?: number; minUs?: number; maxUs?: number; minAmp?: number; recover?: boolean; }
+// R5 — pré-filtros opcionais aplicados aos SAMPLES antes da detecção de cruzamentos.
+export interface PreFilterOpts { dc?: boolean; agc?: boolean; bandpass?: boolean; treble?: boolean; }
+export interface DecodeOpts { midUs?: number; minUs?: number; maxUs?: number; minAmp?: number; recover?: boolean; channel?: number; prefilter?: PreFilterOpts; }
 
 /** R1 — RECUPERAÇÃO: calcula o limiar 1/0 a partir do HISTOGRAMA dos períodos por OTSU. As fitas
  *  degradadas costumam estar LENTAS/esticadas (a FSK toda alongada) → o limiar fixo de 600µs erra.
@@ -202,8 +204,9 @@ export interface CasDecodeResult {
   bytes: number[]; byteTimes: number[]; blocks: CasBlock[]; files: CasFileInfo[];
 }
 
-/** Lê os SAMPLES (canal 0, -1..1) de um WAV PCM 8/16-bit. */
-function readWavSamples(wavBuffer: Buffer): { samples: Float32Array; sampleRate: number; bits: number; channels: number } {
+/** Lê os SAMPLES (-1..1) de um WAV PCM 8/16-bit. `ch` escolhe o canal (R5 estéreo); fora do alcance →
+ *  canal 0. `prefilter` aplica a limpeza opcional (R5) ANTES de devolver. */
+function readWavSamples(wavBuffer: Buffer, ch = 0, prefilter?: PreFilterOpts): { samples: Float32Array; sampleRate: number; bits: number; channels: number } {
   let offset = 12, sampleRate = 0, bits = 0, channels = 0, dataOffset = 0, dataSize = 0;
   while (offset + 8 <= wavBuffer.length) {
     const id = wavBuffer.slice(offset, offset + 4).toString('ascii'), size = wavBuffer.readUInt32LE(offset + 4);
@@ -213,8 +216,48 @@ function readWavSamples(wavBuffer: Buffer): { samples: Float32Array; sampleRate:
   }
   if (!sampleRate || (bits !== 8 && bits !== 16)) throw new Error('WAV inválido ou não-PCM 8/16-bit.');
   const frame = (bits / 8) * channels, n = Math.floor(dataSize / frame), samples = new Float32Array(n);
-  for (let i = 0; i < n; i++) { const b = dataOffset + i * frame; samples[i] = bits === 8 ? (wavBuffer[b] - 128) / 128 : wavBuffer.readInt16LE(b) / 32768; }
+  const c = Math.max(0, Math.min((channels || 1) - 1, ch | 0));    // canal pedido, limitado
+  const cb = (bits / 8) * c;
+  for (let i = 0; i < n; i++) { const b = dataOffset + i * frame + cb; samples[i] = bits === 8 ? (wavBuffer[b] - 128) / 128 : wavBuffer.readInt16LE(b) / 32768; }
+  if (prefilter) preprocessSamples(samples, sampleRate, prefilter);
   return { samples, sampleRate, bits, channels };
+}
+
+/** R5 — pré-processa os samples IN PLACE: remove offset DC, passa-faixa (1200–2400 Hz), realce de agudos
+ *  (compensa azimute) e AGC por janela (lev­anta dropout). Tudo opcional. Mexe só na onda; o decode segue
+ *  igual (cruzamentos por zero). */
+export function preprocessSamples(samples: Float32Array, sampleRate: number, pf: PreFilterOpts): void {
+  const n = samples.length; if (!n) return;
+  // 1) DC: subtrai a média global (centra os cruzamentos).
+  if (pf.dc) { let m = 0; for (let i = 0; i < n; i++) m += samples[i]; m /= n; for (let i = 0; i < n; i++) samples[i] -= m; }
+  // 2) Banda-limite ZC-SAFE: passa-ALTA one-pole (~600 Hz, tira rumble/deriva) seguida de passa-BAIXA
+  //    one-pole (~3.5 kHz, tira hiss que cria cruzamentos falsos). Filtros de 1 polo → fase monotônica,
+  //    SEM ringing → preservam os cruzamentos da FSK 1200/2400 Hz (um biquad agudo destruía o decode).
+  if (pf.bandpass) {
+    const hpC = Math.exp(-2 * Math.PI * 600 / sampleRate);          // passa-alta (remove < ~600 Hz)
+    let yh = 0, xPrev = samples[0];
+    for (let i = 0; i < n; i++) { const x = samples[i]; yh = hpC * (yh + x - xPrev); xPrev = x; samples[i] = yh; }
+    const lpA = 1 - Math.exp(-2 * Math.PI * 3500 / sampleRate);     // passa-baixa (remove > ~3.5 kHz)
+    let yl = samples[0];
+    for (let i = 0; i < n; i++) { yl += lpA * (samples[i] - yl); samples[i] = yl; }
+  }
+  // 3) Realce de agudos (azimute) SUAVE: y = x + k·(x − x[-1]) — recompõe o 2400 Hz que cai com cabeça
+  //    torta. k pequeno p/ não amplificar hiss em excesso (k alto criava cruzamentos falsos).
+  if (pf.treble) { const k = 0.35; let prev = samples[0]; for (let i = 1; i < n; i++) { const x = samples[i]; samples[i] = x + k * (x - prev); prev = x; } }
+  // 4) AGC por janela (~20 ms): normaliza pelo pico local → ergue trechos fracos (dropout) sem estourar o
+  //    silêncio (piso). Pico suavizado por envelope para não pulsar.
+  if (pf.agc) {
+    const W = Math.max(64, Math.round(sampleRate * 0.02));
+    let peak = 0; for (let i = 0; i < Math.min(W, n); i++) peak = Math.max(peak, Math.abs(samples[i]));
+    const floor = 0.06, atk = 0.2, rel = 0.005;
+    let env = Math.max(peak, floor);
+    for (let i = 0; i < n; i++) {
+      const a = Math.abs(samples[i]);
+      env += (a > env ? atk : rel) * (a - env);                    // envelope (ataque rápido / liberação lenta)
+      const g = env > floor ? 0.7 / Math.max(env, floor) : 0;       // ganho p/ ~0.7 de pico; silêncio → 0
+      samples[i] = Math.max(-1, Math.min(1, samples[i] * g));
+    }
+  }
 }
 
 /** Parse dos blocos CAS a partir do fluxo de bytes (após sync): [$3C type len data… checksum]. */
@@ -294,7 +337,7 @@ function decodeStreamFromSamples(samples: Float32Array, sampleRate: number, opts
 
 /** K2/K8 — decodifica um WAV de fita → blocos/arquivos CAS, com parâmetros ajustáveis (K8). */
 export function decodeCasTape(wavBuffer: Buffer, opts: DecodeOpts = {}): CasDecodeResult {
-  const { samples, sampleRate, bits, channels } = readWavSamples(wavBuffer);
+  const { samples, sampleRate, bits, channels } = readWavSamples(wavBuffer, opts.channel ?? 0, opts.prefilter);
   const base: CasDecodeResult = {
     sampleRate, bitsPerSample: bits, channels, totalSamples: samples.length, durationSec: samples.length / sampleRate,
     foundSync: false, inverted: false, bitCount: 0, byteCount: 0, bytes: [], byteTimes: [], blocks: [], files: [],
@@ -376,7 +419,7 @@ const RECOVER_CANDS: DecodeOpts[] = [
  *  e descarta o lixo do ruído. Se houver ≤1 segmento, cai no decode contínuo (fitas simples).
  *  R1 — `opts.recover`: por segmento testa Otsu + varredura de limiar e fica com o melhor. */
 export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}): CasGapResult {
-  const { samples, sampleRate } = readWavSamples(wavBuffer);
+  const { samples, sampleRate } = readWavSamples(wavBuffer, opts.channel ?? 0, opts.prefilter);
   const durationSec = samples.length / sampleRate;
   const regions = segmentDataRegions(samples, sampleRate);
   const pad = Math.floor(0.05 * sampleRate);
@@ -410,7 +453,7 @@ export function decodeCasTapeGapAware(wavBuffer: Buffer, opts: DecodeOpts = {}):
     if (opts.recover) {                                              // recover: varre limiares no contínuo também
       let bestLen = extractCasFileData(c.blocks, 0).length;
       for (const cand of RECOVER_CANDS) {
-        const t = decodeCasTape(wavBuffer, cand);
+        const t = decodeCasTape(wavBuffer, { ...cand, channel: opts.channel, prefilter: opts.prefilter });
         const l = t.foundSync ? extractCasFileData(t.blocks, 0).length : 0;
         if (l > bestLen) { c = t; bestLen = l; }
       }
@@ -575,6 +618,102 @@ export function buildCleanWav(segs: CasBlock[][], segTimes: Array<{ start: numbe
   }
   silence(0.2);
   return pcm8ToWav(pcm, sampleRate);
+}
+
+// ─────────────── R3 — DIAGNÓSTICO de recuperação (histograma + mapa de blocos) ───────────────
+export interface PeriodHistogram { lo: number; binWidth: number; bins: number[]; total: number; midUs: number | null; }
+export interface BlockMapEntry { type: number; len: number; ok: boolean; }
+export interface SegDiag { startSec: number; endSec: number; blocks: BlockMapEntry[]; good: number; total: number; }
+export interface TapeDiag { sampleRate: number; durationSec: number; segments: number; channels: number; histogram: PeriodHistogram; segs: SegDiag[]; goodBlocks: number; totalBlocks: number; }
+
+/** Histograma de TODOS os períodos de cruzamento por zero (bins de 10µs, 200–1350µs). O vale entre os
+ *  dois picos (≈417µs=bit1 e ≈833µs=bit0) é o limiar; `midUs` traz o limiar Otsu detectado. */
+function periodHistogram(samples: Float32Array, sampleRate: number, minAmp = 0): PeriodHistogram {
+  const cross: number[] = [], segMax: number[] = [];
+  let prevSign = Math.sign(samples[0]) || 1, curMax = 0;
+  for (let i = 1; i < samples.length; i++) {
+    const a = Math.abs(samples[i]); if (a > curMax) curMax = a;
+    const sign = Math.sign(samples[i]) || 1;
+    if (sign !== prevSign) { if (sign > 0 && prevSign < 0) { const f = -samples[i - 1] / (samples[i] - samples[i - 1]); cross.push(i - 1 + f); segMax.push(curMax); curMax = 0; } prevSign = sign; }
+  }
+  const lo = 200, hi = 1350, bw = 10, nb = Math.ceil((hi - lo) / bw);
+  const bins = new Array(nb).fill(0); const pers: number[] = []; let total = 0;
+  for (let i = 1; i < cross.length; i++) { if (segMax[i] < minAmp) continue; const us = ((cross[i] - cross[i - 1]) / sampleRate) * 1e6; pers.push(us); if (us >= lo && us < hi) { bins[Math.floor((us - lo) / bw)]++; total++; } }
+  const adapt = adaptiveThresholds(pers);
+  return { lo, binWidth: bw, bins, total, midUs: adapt ? adapt.midUs : null };
+}
+
+/** Decodifica UM segmento mantendo TODOS os blocos (inclusive checksum-RUIM) — base do mapa bom/ruim (R3)
+ *  e da fusão (R4). No modo recover testa os candidatos de limiar e fica com o que valida mais blocos. */
+function bestSegmentBlocks(sub: Float32Array, sampleRate: number, recover: boolean): CasBlock[] {
+  const cands = recover ? RECOVER_CANDS : [{} as DecodeOpts];
+  let best: CasBlock[] = [];
+  const goodN = (f: CasBlock[]) => f.reduce((s, b) => s + (b.checksumOk ? 1 : 0), 0);
+  for (const c of cands) {
+    const dec = decodeStreamFromSamples(sub, sampleRate, c, 0);
+    if (!dec.foundSync) continue;
+    const bl = parseCasBlocks(dec.bytes);
+    if (bl.length && (goodN(bl) > goodN(best) || (goodN(bl) === goodN(best) && bl.length > best.length))) best = bl;
+  }
+  return best;
+}
+
+/** R3 — DIAGNÓSTICO completo de uma fita: histograma de períodos + mapa de blocos bom/ruim por segmento. */
+export function tapeDiagnostics(wavBuffer: Buffer, opts: DecodeOpts = {}): TapeDiag {
+  const { samples, sampleRate, channels } = readWavSamples(wavBuffer, opts.channel ?? 0, opts.prefilter);
+  const histogram = periodHistogram(samples, sampleRate, opts.minAmp ?? 0);
+  const regions = segmentDataRegions(samples, sampleRate);
+  const pad = Math.floor(0.05 * sampleRate);
+  const segs: SegDiag[] = []; let goodBlocks = 0, totalBlocks = 0;
+  for (const reg of regions) {
+    const a = Math.max(0, reg.a - pad), b = Math.min(samples.length, reg.b + pad);
+    const bl = bestSegmentBlocks(samples.subarray(a, b), sampleRate, opts.recover !== false);
+    const good = bl.reduce((s, x) => s + (x.checksumOk ? 1 : 0), 0);
+    segs.push({ startSec: reg.a / sampleRate, endSec: reg.b / sampleRate, blocks: bl.map(x => ({ type: x.type, len: x.data.length, ok: x.checksumOk })), good, total: bl.length });
+    goodBlocks += good; totalBlocks += bl.length;
+  }
+  return { sampleRate, durationSec: samples.length / sampleRate, segments: regions.length, channels, histogram, segs, goodBlocks, totalBlocks };
+}
+
+/** R3 — re-decodifica uma REGIÃO (intervalo em segundos) com parâmetros próprios (limiar/amplitude/recover). */
+export function decodeRegion(wavBuffer: Buffer, startSec: number, endSec: number, opts: DecodeOpts = {}):
+  { foundSync: boolean; good: number; total: number; payload: number[]; blocks: BlockMapEntry[] } {
+  const { samples, sampleRate } = readWavSamples(wavBuffer, opts.channel ?? 0, opts.prefilter);
+  const a = Math.max(0, Math.floor(startSec * sampleRate)), b = Math.min(samples.length, Math.ceil(endSec * sampleRate));
+  const recover = opts.recover !== false;
+  const bl = recover ? bestSegmentBlocks(samples.subarray(a, b), sampleRate, true)
+    : (() => { const d = decodeStreamFromSamples(samples.subarray(a, b), sampleRate, opts, 0); return d.foundSync ? parseCasBlocks(d.bytes) : []; })();
+  return { foundSync: bl.length > 0, good: bl.reduce((s, x) => s + (x.checksumOk ? 1 : 0), 0), total: bl.length, payload: extractCasFileData(bl, 0), blocks: bl.map(x => ({ type: x.type, len: x.data.length, ok: x.checksumOk })) };
+}
+
+// ─────────────── R4 — FUSÃO de múltiplas capturas ("RAID de fita") ───────────────
+export interface MergeResult { foundSync: boolean; blocks: CasBlock[]; payload: number[]; perCapture: Array<{ good: number; total: number }>; baseIndex: number; mergedGood: number; bestSingleGood: number; }
+
+/** Decodifica UMA captura → blocos achatados (namefile + data… + EOF), MANTENDO blocos ruins (p/ alinhar). */
+function flatBlocksOf(wavBuffer: Buffer, opts: DecodeOpts): CasBlock[] {
+  const { samples, sampleRate } = readWavSamples(wavBuffer, opts.channel ?? 0, opts.prefilter);
+  const regions = segmentDataRegions(samples, sampleRate); const pad = Math.floor(0.05 * sampleRate);
+  let flat: CasBlock[] = [];
+  if (regions.length > 1) { for (const reg of regions) { const a = Math.max(0, reg.a - pad), b = Math.min(samples.length, reg.b + pad); flat = flat.concat(bestSegmentBlocks(samples.subarray(a, b), sampleRate, true)); } }
+  else { const d = decodeStreamFromSamples(samples, sampleRate, { ...opts, recover: true }, 0); if (d.foundSync) flat = parseCasBlocks(d.bytes); }
+  return flat;
+}
+
+/** R4 — funde N capturas da MESMA fita: pega a captura com mais blocos válidos como BASE e, para cada
+ *  bloco RUIM dela, substitui pelo bloco bom de mesma posição/tipo de outra captura (um bloco que falha
+ *  em A pode passar em B). Alinhamento por índice (passes da mesma fita têm a mesma sequência de blocos). */
+export function mergeCaptures(buffers: Buffer[], opts: DecodeOpts = {}): MergeResult {
+  const caps = buffers.map(b => flatBlocksOf(b, opts));
+  const goodN = (f: CasBlock[]) => f.reduce((s, b) => s + (b.checksumOk ? 1 : 0), 0);
+  const perCapture = caps.map(f => ({ good: goodN(f), total: f.length }));
+  let baseIndex = 0; for (let i = 1; i < caps.length; i++) if (goodN(caps[i]) > goodN(caps[baseIndex])) baseIndex = i;
+  const base = caps[baseIndex] || [];
+  const merged: CasBlock[] = base.map((bl, i) => {
+    if (bl.checksumOk) return bl;
+    for (let c = 0; c < caps.length; c++) { if (c === baseIndex) continue; const o = caps[c][i]; if (o && o.checksumOk && o.type === bl.type) return o; }
+    return bl;
+  });
+  return { foundSync: merged.length > 0, blocks: merged, payload: extractCasFileData(merged, 0), perCapture, baseIndex, mergedGood: goodN(merged), bestSingleGood: goodN(base) };
 }
 
 /** Reamostra um WAV para `targetRate` em 8-bit mono (interpolação linear) — encolhe o arquivo

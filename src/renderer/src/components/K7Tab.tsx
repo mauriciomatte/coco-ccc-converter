@@ -83,6 +83,48 @@ function samplesToWav16(samples: Float32Array, sampleRate: number): Uint8Array {
   for (let i = 0; i < n; i++) { const s = Math.max(-1, Math.min(1, samples[i])); dv.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true); }
   return new Uint8Array(buf);
 }
+// ─────────── R5 — EFEITOS de áudio (aplicados à ONDA, no cliente) — espelham o preprocessSamples ZC-safe
+// do wav.ts. Cada um devolve um Float32Array NOVO (o `edit()` guarda o atual no undo, então não mutar). ───
+function fxDc(s: Float32Array): Float32Array {                       // remove offset/deriva DC (centra cruzamentos)
+  const n = s.length; if (!n) return s; let m = 0; for (let i = 0; i < n; i++) m += s[i]; m /= n;
+  const o = new Float32Array(n); for (let i = 0; i < n; i++) o[i] = s[i] - m; return o;
+}
+function fxBandpass(s: Float32Array, sr: number): Float32Array {     // HP 600 Hz + LP 3.5 kHz (1 polo, sem ringing)
+  const n = s.length; if (!n) return s; const o = new Float32Array(n);
+  const hpC = Math.exp(-2 * Math.PI * 600 / sr); let yh = 0, xp = s[0];
+  for (let i = 0; i < n; i++) { const x = s[i]; yh = hpC * (yh + x - xp); xp = x; o[i] = yh; }
+  const lpA = 1 - Math.exp(-2 * Math.PI * 3500 / sr); let yl = o[0];
+  for (let i = 0; i < n; i++) { yl += lpA * (o[i] - yl); o[i] = yl; } return o;
+}
+function fxTreble(s: Float32Array): Float32Array {                   // realça agudos (compensa azimute)
+  const n = s.length; if (!n) return s; const o = new Float32Array(n); const k = 0.35; let prev = s[0]; o[0] = s[0];
+  for (let i = 1; i < n; i++) { const x = s[i]; o[i] = Math.max(-1, Math.min(1, x + k * (x - prev))); prev = x; } return o;
+}
+function fxAgc(s: Float32Array, sr: number): Float32Array {          // AGC por janela (ergue dropout)
+  const n = s.length; if (!n) return s; const o = new Float32Array(n); const floor = 0.06, atk = 0.2, rel = 0.005;
+  let env = floor; for (let i = 0; i < Math.min(Math.round(sr * 0.02), n); i++) env = Math.max(env, Math.abs(s[i]));
+  for (let i = 0; i < n; i++) { const a = Math.abs(s[i]); env += (a > env ? atk : rel) * (a - env); const g = env > floor ? 0.7 / Math.max(env, floor) : 0; o[i] = Math.max(-1, Math.min(1, s[i] * g)); }
+  return o;
+}
+/** Extrai o CANAL `ch` (mono) dos bytes de um WAV PCM 8/16-bit (p/ o efeito "Canal" em capturas estéreo). */
+function fxExtractChannel(bytes: Uint8Array, ch: number): Float32Array | null {
+  if (bytes.byteLength < 44) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let off = 12, channels = 0, bits = 0, dataOff = -1, dataLen = 0;
+  while (off + 8 <= bytes.byteLength) {
+    const id = dv.getUint32(off, false), size = dv.getUint32(off + 4, true);
+    if (id === 0x666d7420) { channels = dv.getUint16(off + 10, true); bits = dv.getUint16(off + 22, true); }
+    else if (id === 0x64617461) { dataOff = off + 8; dataLen = Math.min(size, bytes.byteLength - (off + 8)); }
+    off += 8 + size + (size & 1);
+  }
+  if (dataOff < 0 || (bits !== 8 && bits !== 16) || !channels) return null;
+  const frame = (bits / 8) * channels, n = Math.floor(dataLen / frame);
+  const c = Math.max(0, Math.min(channels - 1, ch | 0)), cb = (bits / 8) * c;
+  const out = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const b = dataOff + i * frame + cb; out[i] = bits === 8 ? (bytes[b] - 128) / 128 : dv.getInt16(b, true) / 32768; }
+  return out;
+}
+
 /** Decodifica VOC (Creative Voice File) → PCM mono (canal 0). Cobre blocos 1 (8-bit), 9 (novo:
  *  8/16-bit), 2 (continuação), 3 (silêncio) e 8 (estendido). Retorna null se não for VOC válido. */
 function decodeVoc(bytes: Uint8Array): { sampleRate: number; bits: number; samples: Float32Array } | null {
@@ -170,7 +212,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [confirm, setConfirm] = useState<null | 'rec' | 'eject'>(null); // diálogo de confirmação (REC/Eject)
   // Diálogo "→ Sem loader (autostart)": resultado do scan SoftKristian + parâmetros editáveis.
   const [skDlg, setSkDlg] = useState<null | {
-    name: string; confidence: number; telaLen: number; hasScreen: boolean;
+    name: string; familyName: string; confidence: number; telaLen: number; hasScreen: boolean;
     progLoad: number; progExec: number; progLen: number; progEnd: number;
     warnStack: boolean; warnDos: boolean; notes: string[];
     mode: 'key' | 'delay'; trap: boolean;
@@ -184,7 +226,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [wavRate, setWavRate] = useState<number>(cfg.wavRate ?? 22050);     // taxa (Hz) dos exports .WAV (22k = confiável p/ a FSK; menor pode falhar ao carregar)
   const [sizes, setSizes] = useState<{ casSize: number; wavSize: number; fullSize: number; programBytes: number } | null>(null);
   const [progExpanded, setProgExpanded] = useState<boolean>(cfg.progExpanded ?? false); // painel Programa: detalhes recolhidos por padrão
-  const [waveStyle, setWaveStyle] = useState<'line' | 'bars' | 'filled' | 'rms'>(cfg.waveStyle ?? 'bars'); // estilo de desenho da onda
+  const [waveStyle, setWaveStyle] = useState<'line' | 'bars' | 'filled' | 'rms'>(cfg.waveStyle ?? 'line'); // estilo de desenho da onda (linha = osciloscópio: mostra a FORMA da FSK ao dar zoom)
   // Pesos (flex-grow) dos painéis de baixo, ajustáveis por splitters: BASIC | HEX | mini-XRoar.
   const [panelW, setPanelW] = useState<{ basic: number; hex: number; mini: number }>(cfg.panelW ?? { basic: 1, hex: 1, mini: 2 });
   const panelsRowRef = useRef<HTMLDivElement | null>(null);
@@ -210,16 +252,25 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [view, setView] = useState({ start: 0, len: 1 });          // janela visível (frações 0..1)
   const [decoded, setDecoded] = useState<any>(null);               // K2: resultado do decode FSK→CAS
   const [decoding, setDecoding] = useState(false);
-  const [dec, setDec] = useState<{ midUs: number; minAmp: number; recover?: boolean }>({ midUs: cfg.midUs ?? 600, minAmp: cfg.minAmp ?? 0 }); // K8: parâmetros de ajuste fino (+ recover R1)
+  // K8: parâmetros de ajuste fino da DECODIFICAÇÃO (+ recover R1). Os pré-filtros/canal R5 NÃO ficam aqui —
+  // viraram EFEITOS aplicados à ONDA (via edit/undo), p/ refletirem no PLAY e no mini-XRoar em tempo real.
+  const [dec, setDec] = useState<{ midUs: number; minAmp: number; recover?: boolean }>({ midUs: cfg.midUs ?? 600, minAmp: cfg.minAmp ?? 0 });
+  const [diag, setDiag] = useState<any>(null);                    // R3: diagnóstico aberto (histograma + mapa)
+  const [recBusy, setRecBusy] = useState(false);                  // R3/R4: operação de recuperação em curso
   const [exporting, setExporting] = useState(false);
   const [fixing, setFixing] = useState(false);                     // W5 — FIXCAS em andamento
   const [tapeName, setTapeName] = useState('');                    // nome interno da fita (namefile) — editável
   const rawRef = useRef<Uint8Array | null>(null);                  // bytes crus do WAV (p/ decode/export)
+  const origRawRef = useRef<Uint8Array | null>(null);              // bytes ORIGINAIS carregados (p/ o efeito "Canal" reler canais)
   const [sel, setSel] = useState<{ a: number; b: number } | null>(null); // K3: seleção (índices de amostra)
   const [, setHist] = useState(0);                                 // bump p/ re-render dos botões de edição
   const clipRef = useRef<Float32Array | null>(null);
-  const undoRef = useRef<Float32Array[]>([]);
-  const redoRef = useRef<Float32Array[]>([]);
+  // Histórico UNIFICADO: cada item guarda a ONDA + os AJUSTES (Limiar/Amplitude/Recuperar), p/ Desfazer/
+  // Refazer cobrirem edições da onda, EFEITOS e mudanças de ajuste igualmente.
+  type DecState = { midUs: number; minAmp: number; recover?: boolean };
+  type Snap = { samples: Float32Array; dec: DecState };
+  const undoRef = useRef<Snap[]>([]);
+  const redoRef = useRef<Snap[]>([]);
   const selDrag = useRef<{ x0: number; sample0: number; moved: boolean } | null>(null);
   const [recording, setRecording] = useState(false);              // K4
   const [vu, setVu] = useState(0);
@@ -279,6 +330,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     const p = await decodeWavAsync(wavBytes, setProgress);
     if (!p) { setLoading(false); setErr(t('Áudio inválido ou não-PCM (8/16-bit).', 'Invalid or non-PCM (8/16-bit) audio.')); return; }
     rawRef.current = wavBytes;
+    origRawRef.current = wavBytes;                                 // guarda o original p/ o efeito "Canal"
     setAudio({ name, ...p });
     // .cas/.c10/.voc = tom digital SINTETIZADO sem pausas: no zoom completo vira um bloco sólido (todas
     // as colunas vão de −amp a +amp). Auto-aproxima p/ uma janela curta (~1800 amostras, ~80 ms) logo após
@@ -357,9 +409,19 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     try {
       const s = await window.cocoApi.loaderScan(rawRef.current, dec);
       if (!s?.success) { setErr('Loader: ' + (s?.error || '?')); return; }
-      if (!s.detected) { setErr(t('Loader SoftKristian não reconhecido nesta fita (tela+loader). Sem assinatura.', 'SoftKristian loader (screen+loader) not recognized in this tape.')); return; }
+      if (!s.detected) { setErr(t('Nenhum loader de fita reconhecido (SoftKristian ou PLAN-SOFT). Sem assinatura.', 'No tape loader recognized (SoftKristian or PLAN-SOFT). No signature.')); return; }
+      // Família detectada mas SEM caminho de conversão p/ disco (ex.: PLAN-SOFT/GAMEPACK multi-parte, all-RAM):
+      // o .CAS fiel já roda no XRoar; informamos em vez de abrir o diálogo de build.
+      if (!s.convertible) {
+        const partes = s.parts ? ` (${s.parts} ${t('partes', 'parts')})` : '';
+        const calls = (s.romCalls && s.romCalls.length) ? ` · ${s.romCalls.join('; ')}` : '';
+        setErr(t(
+          `Loader ${s.familyName}${partes} detectado (confiança ${(s.confidence * 100).toFixed(0)}%)${calls}. Esta família é multi-parte/all-RAM: o .CAS FIEL já RODA em tempo real no XRoar (use o mini-XRoar à direita). A conversão p/ DISCO desta família ainda NÃO está disponível (projeto futuro).`,
+          `${s.familyName} loader${partes} detected (confidence ${(s.confidence * 100).toFixed(0)}%)${calls}. This family is multi-part/all-RAM: the FAITHFUL .CAS already RUNS in real time in XRoar (use the mini-XRoar on the right). Disk conversion of this family is NOT available yet (future project).`));
+        return;
+      }
       setSkDlg({
-        name: s.name, confidence: s.confidence, telaLen: s.telaLen, hasScreen: s.hasScreen,
+        name: s.name, familyName: s.familyName || 'SoftKristian', confidence: s.confidence, telaLen: s.telaLen, hasScreen: s.hasScreen,
         progLoad: s.progLoad, progExec: s.progExec, progLen: s.progLen, progEnd: s.progEnd,
         warnStack: s.warnStack, warnDos: s.warnDos, notes: s.notes || [],
         mode: 'key', trap: true,
@@ -398,6 +460,47 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       setErr(t(`Programa puro salvo: ${r.path} (${r.progLen} B, carga $${(r.load >>> 0).toString(16).toUpperCase()})`, `Pure program saved: ${r.path} (${r.progLen} B, load $${(r.load >>> 0).toString(16).toUpperCase()})`));
     } finally { setSkBusy(false); }
   };
+
+  // ───────── R5 — EFEITOS de áudio: aplicam à ONDA (via edit/undo) → PLAY, mini-XRoar e decode refletem
+  // imediatamente; "Desfazer/Refazer" revertem. (Antes eram só filtros de decode e não tocavam.) ─────────
+  const applyFx = (fx: (s: Float32Array, sr: number) => Float32Array) => { if (!audio) return; edit(fx(audio.samples, audio.sampleRate)); };
+  const applyChannel = (ch: number) => { if (!audio || !origRawRef.current) return; const s = fxExtractChannel(origRawRef.current, ch); if (s) edit(s); else setErr(t('Canal indisponível nesta captura.', 'Channel unavailable in this capture.')); };
+  // ───────── R3 — diagnóstico (histograma + mapa de blocos) ─────────
+  const runDiag = async () => {
+    if (!rawRef.current) return;
+    setRecBusy(true); setErr('');
+    try { const r = await window.cocoApi.tapeDiagnostics(rawRef.current, dec); if (r?.success) setDiag(r.diag); else setErr('Diagnóstico: ' + (r?.error || '?')); }
+    finally { setRecBusy(false); }
+  };
+  // R3 — re-decodifica SÓ a seleção da waveform (se houver) e relata blocos recuperados.
+  const reDecodeSelection = async () => {
+    if (!rawRef.current || !audio || !sel) { setErr(t('Selecione um trecho na onda primeiro (arraste na waveform).', 'Select a region in the waveform first (drag on it).')); return; }
+    const a = Math.min(sel.a, sel.b) / audio.sampleRate, b = Math.max(sel.a, sel.b) / audio.sampleRate;
+    setRecBusy(true); setErr('');
+    try {
+      const r = await window.cocoApi.tapeDecodeRegion(rawRef.current, a, b, dec);
+      if (r?.success) setErr(t(`Região ${a.toFixed(1)}–${b.toFixed(1)}s: ${r.good}/${r.total} blocos OK, ${r.payload.length} B.`, `Region ${a.toFixed(1)}–${b.toFixed(1)}s: ${r.good}/${r.total} blocks OK, ${r.payload.length} B.`));
+      else setErr('Região: ' + (r?.error || '?'));
+    } finally { setRecBusy(false); }
+  };
+  // ───────── R4 — fusão de múltiplas capturas ("RAID de fita") ─────────
+  const mergeCapturesUi = async () => {
+    const pick = await window.cocoApi.pickWavFiles?.();
+    if (!pick || pick.cancelled) return;
+    if (!pick.success) { setErr(t('Abrir capturas: ', 'Open captures: ') + (pick.error || '?')); return; }
+    // capturas = arquivos escolhidos + (se houver) a fita JÁ carregada, p/ aproveitar tudo.
+    const bufs: Uint8Array[] = pick.files.map((f: any) => f.data);
+    if (rawRef.current) bufs.unshift(rawRef.current);
+    if (bufs.length < 2) { setErr(t('Escolha ao menos 2 capturas da MESMA fita (ou tenha uma fita aberta + 1 arquivo).', 'Pick at least 2 captures of the SAME tape (or have one open + 1 file).')); return; }
+    setRecBusy(true); setErr('');
+    try {
+      const r = await window.cocoApi.tapeMergeCaptures(bufs, { ...dec, recover: true });
+      if (!r?.success) { setErr(t('Fusão: ', 'Merge: ') + (r?.error || '?')); return; }
+      await loadBytes(new Uint8Array(r.wav), 'fusao.wav');         // carrega o resultado fundido no deck
+      const per = (r.perCapture || []).map((c: any) => `${c.good}/${c.total}`).join(' · ');
+      setErr(t(`Fusão de ${bufs.length} capturas: ${r.mergedGood} blocos bons (melhor single ${r.bestSingleGood}). Por captura: ${per}. Resultado carregado no deck.`, `Merged ${bufs.length} captures: ${r.mergedGood} good blocks (best single ${r.bestSingleGood}). Per capture: ${per}. Result loaded in the deck.`));
+    } finally { setRecBusy(false); }
+  };
   // ↔ DSK (arquivo lido cru): para fita SIMPLES grava direto; para fita com TELA+LOADER (SoftKristian),
   // o arquivo cru iria para $009F e viraria LIXO → avisa e abre o diálogo "→ Sem loader".
   const onDskClick = async () => {
@@ -405,19 +508,25 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     try {
       const s = await window.cocoApi.loaderScan(rawRef.current, dec);
       if (s?.detected) {
-        setErr(t('Esta fita tem TELA + LOADER: o ↔ DSK gravaria o arquivo cru (carrega em $009F = lixo, não roda). Use "→ Sem loader" 🚀 — abri o diálogo p/ você.', 'This tape has SCREEN + LOADER: ↔ DSK would write the raw file (loads at $009F = garbage, won\'t run). Use "→ No loader" 🚀 — I opened the dialog for you.'));
-        await openLoaderDlg();
+        if (s.convertible) { // Família A (SoftKristian): há conversão p/ disco → abre o diálogo.
+          setErr(t('Esta fita tem TELA + LOADER: o ↔ DSK gravaria o arquivo cru (carrega em $009F = lixo, não roda). Use "→ Sem loader" 🚀 — abri o diálogo p/ você.', 'This tape has SCREEN + LOADER: ↔ DSK would write the raw file (loads at $009F = garbage, won\'t run). Use "→ No loader" 🚀 — I opened the dialog for you.'));
+          await openLoaderDlg();
+        } else { // Família B (PLAN-SOFT/GAMEPACK): multi-parte/all-RAM, sem conversão p/ disco ainda.
+          const partes = s.parts ? ` (${s.parts} ${t('partes', 'parts')})` : '';
+          setErr(t(`Loader ${s.familyName}${partes}: jogo multi-parte/all-RAM. O ↔ DSK não serve aqui e a conversão p/ disco desta família ainda não existe. Rode o .CAS FIEL no mini-XRoar (botão à direita) em tempo real.`, `${s.familyName} loader${partes}: multi-part/all-RAM game. ↔ DSK doesn't apply and disk conversion of this family doesn't exist yet. Run the FAITHFUL .CAS in the mini-XRoar (button on the right) in real time.`));
+        }
         return;
       }
     } catch { /* sem scan → segue o fluxo normal */ }
     onSendToDsk(rawRef.current, { midUs: dec.midUs, minAmp: dec.minAmp }, 0);
   };
-  // → XRoar: avisa (sem bloquear) que fita com loader só carrega o stub via CLOADM no deck de fita.
+  // → XRoar: avisa (sem bloquear) conforme a família do loader.
   const onXroarClick = async () => {
     if (!rawRef.current || !audio || !onSendToXroar) return;
     try {
       const s = await window.cocoApi.loaderScan(rawRef.current, dec);
-      if (s?.detected) setErr(t('Fita com tela+loader: no XRoar o CLOADM lê só o loader (multi-estágio). Para rodar o jogo use "→ Sem loader" 🚀 (BIN/DSK) ou o mini-XRoar (botão à direita) em tempo real.', 'Screen+loader tape: in XRoar, CLOADM reads only the loader (multi-stage). To run the game use "→ No loader" 🚀 (BIN/DSK) or the real-time mini-XRoar (button on the right).'));
+      if (s?.detected && s.convertible) setErr(t('Fita com tela+loader (SoftKristian): no XRoar o CLOADM lê só o loader (multi-estágio). Para rodar o jogo use "→ Sem loader" 🚀 (BIN/DSK) ou o mini-XRoar (botão à direita) em tempo real.', 'Screen+loader tape (SoftKristian): in XRoar, CLOADM reads only the loader (multi-stage). To run the game use "→ No loader" 🚀 (BIN/DSK) or the real-time mini-XRoar (button on the right).'));
+      else if (s?.detected) setErr(t(`Loader ${s.familyName} (multi-parte): o .CAS FIEL CARREGA em tempo real no XRoar/deck de fita — aguarde todas as partes. Use o mini-XRoar (à direita) para rodar como na fita.`, `${s.familyName} loader (multi-part): the FAITHFUL .CAS LOADS in real time in XRoar/the tape deck — wait for all parts. Use the mini-XRoar (on the right) to run it like the tape.`));
     } catch { /* ignore */ }
     onSendToXroar(rawRef.current, audio.name);
   };
@@ -514,9 +623,21 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     setAudio({ ...audio, samples: next, durationSec: next.length / sr });
     stop(); posRef.current = 0; lastPosRef.current = 0; setView({ start: 0, len: 1 }); setSel(null); setFrame(f => f + 1);
   };
-  const edit = (next: Float32Array) => { if (!audio) return; undoRef.current.push(audio.samples); if (undoRef.current.length > 8) undoRef.current.shift(); redoRef.current = []; applySamples(next); setHist(h => h + 1); };
-  const undo = () => { if (!audio || !undoRef.current.length) return; redoRef.current.push(audio.samples); applySamples(undoRef.current.pop()!); setHist(h => h + 1); };
-  const redo = () => { if (!audio || !redoRef.current.length) return; undoRef.current.push(audio.samples); applySamples(redoRef.current.pop()!); setHist(h => h + 1); };
+  const decEq = (a: DecState, b: DecState) => a.midUs === b.midUs && a.minAmp === b.minAmp && !!a.recover === !!b.recover;
+  // Captura o estado ATUAL no histórico (antes de uma mudança). Deduplica entradas idênticas (ex.: clicar
+  // num slider sem arrastar). Limpa o "refazer".
+  const pushUndo = () => {
+    if (!audio) return;
+    const top = undoRef.current[undoRef.current.length - 1];
+    if (top && top.samples === audio.samples && decEq(top.dec, dec)) return;   // nada mudou desde o último
+    undoRef.current.push({ samples: audio.samples, dec }); if (undoRef.current.length > 30) undoRef.current.shift();
+    redoRef.current = []; setHist(h => h + 1);
+  };
+  const restore = (s: Snap) => { if (audio && s.samples !== audio.samples) applySamples(s.samples); setDec(s.dec); setHist(h => h + 1); };
+  // EDIÇÃO da onda (corte/efeito/normalizar/…): guarda o estado e troca as amostras (dec inalterado).
+  const edit = (next: Float32Array) => { if (!audio) return; pushUndo(); applySamples(next); };
+  const undo = () => { if (!audio || !undoRef.current.length) return; redoRef.current.push({ samples: audio.samples, dec }); restore(undoRef.current.pop()!); };
+  const redo = () => { if (!audio || !redoRef.current.length) return; undoRef.current.push({ samples: audio.samples, dec }); restore(redoRef.current.pop()!); };
   const doCut = () => { const r = selRange(); if (!r || !audio) return; clipRef.current = audio.samples.slice(r.a, r.b); edit(cat(audio.samples.slice(0, r.a), audio.samples.slice(r.b))); };
   const doCopy = () => { const r = selRange(); if (!r || !audio) return; clipRef.current = audio.samples.slice(r.a, r.b); setHist(h => h + 1); };
   const doPaste = () => { if (!audio || !clipRef.current) return; const r = selRange(); const at = r ? r.a : Math.floor(posRef.current * audio.sampleRate); edit(cat(audio.samples.slice(0, at), clipRef.current, audio.samples.slice(at))); };
@@ -596,8 +717,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   };
   const confirmYes = () => { const k = confirm; setConfirm(null); if (k === 'rec') toggleRec(); else if (k === 'eject') clearTape(); };
   // K8 — ajuste fino por clique: Limiar ±0.5 µs (faixa 500–720), Amplitude mín. ±0.01 (faixa 0–0.30).
-  const nudgeMid = (d: number) => setDec(s => ({ ...s, midUs: Math.max(500, Math.min(720, Math.round((s.midUs + d) * 2) / 2)) }));
-  const nudgeAmp = (d: number) => setDec(s => ({ ...s, minAmp: Math.max(0, Math.min(0.3, Math.round((s.minAmp + d) * 100) / 100)) }));
+  const nudgeMid = (d: number) => { pushUndo(); setDec(s => ({ ...s, midUs: Math.max(500, Math.min(720, Math.round((s.midUs + d) * 2) / 2)) })); };
+  const nudgeAmp = (d: number) => { pushUndo(); setDec(s => ({ ...s, minAmp: Math.max(0, Math.min(0.3, Math.round((s.minAmp + d) * 100) / 100)) })); };
 
   // K6 — abre o 1º arquivo BASIC da fita no editor BASIC (detokeniza no App).
   const openInBasic = async () => {
@@ -618,7 +739,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   // ---- player (Web Audio) ----
   const tickLoop = () => {
     const ctx = ctxRef.current;
-    if (ctx && srcRef.current) {
+    if (!(ctx && srcRef.current)) return;                          // parado → encerra o laço (evita rAF órfão)
+    {
       const pos = Math.min(anchorOffRef.current + (ctx.currentTime - anchorCtxRef.current) * speedRef.current, audio?.durationSec ?? 0);
       const dPos = pos - lastPosRef.current; lastPosRef.current = pos; posRef.current = pos;
       // carretéis: ESQUERDO = alimentação (cheio no início, ENCOLHE); DIREITO = recolhimento (vazio,
@@ -695,7 +817,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
 
   // ---- zoom / scroll / follow ----
   const zoom = (factor: number, centerFrac?: number) => setView(v => {
-    const len = Math.min(1, Math.max(0.002, v.len * factor));
+    // piso ADAPTATIVO: permite aproximar até ~32 amostras visíveis → no estilo "linha" aparece a ONDA
+    // QUADRADA real da FSK (antes o piso fixo 0.002 só mostrava o zig-zag mín/máx = "bloco").
+    const minLen = audio ? Math.max(0.00002, 32 / audio.samples.length) : 0.002;
+    const len = Math.min(1, Math.max(minLen, v.len * factor));
     const c = centerFrac ?? (v.start + v.len / 2);
     let start = c - len / 2; start = Math.max(0, Math.min(start, 1 - len));
     return { start, len };
@@ -705,8 +830,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     setView(v => {
       if (v.len >= 0.999) return v;                                // tudo visível → não segue
       const pf = pos / audio.durationSec;
-      if (pf >= v.start && pf <= v.start + v.len) return v;         // playhead visível
+      // ROLAGEM SUAVE: mantém o playhead CENTRADO na janela (a fita corre por baixo dele) em vez de
+      // SALTAR a janela inteira quando ele sai — o salto causava o "piscar em partes aleatórias".
       let start = pf - v.len / 2; start = Math.max(0, Math.min(start, 1 - v.len));
+      if (Math.abs(start - v.start) < v.len * 0.0008) return v;     // mudança ínfima → evita redraw à toa
       return { start, len: v.len };
     });
   };
@@ -993,7 +1120,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             <div className="glass-panel" style={{ padding: 18, width: 420, maxWidth: '92%', border: `1px solid ${ACCENT}` }} onClick={e => e.stopPropagation()}>
               <div className="text-[13px] font-bold mb-1 flex items-center gap-2" style={{ color: ACCENT }}><Rocket size={15} /> {t('Gerar sem loader (autostart)', 'Build no-loader (autostart)')}</div>
               <div className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>
-                {t('Loader SoftKristian', 'SoftKristian loader')} · <span className="font-mono">{skDlg.name}</span> · {t('confiança', 'confidence')} {(skDlg.confidence * 100).toFixed(0)}% · {skDlg.hasScreen ? t('tela 512B → $0400', 'screen 512B → $0400') : t('sem tela', 'no screen')}
+                {t('Loader', 'Loader')} {skDlg.familyName} · <span className="font-mono">{skDlg.name}</span> · {t('confiança', 'confidence')} {(skDlg.confidence * 100).toFixed(0)}% · {skDlg.hasScreen ? t('tela 512B → $0400', 'screen 512B → $0400') : t('sem tela', 'no screen')}
               </div>
               <div className="grid grid-cols-2 gap-2 mb-2">
                 <label className="text-[10px]" style={{ color: 'var(--text-secondary)' }}>{t('Carga do programa', 'Program load')}
@@ -1037,7 +1164,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         {tool(<FileCode2 size={14} />, '', openInBasic, !!decoded?.files?.some((f: any) => f.ftype === 0), t('Abrir o programa BASIC lido da fita no editor BASIC (detokeniza automaticamente)', 'Open the BASIC program read from the tape in the BASIC editor (auto-detokenizes)'))}
         {tool(<><ArrowRightLeft size={14} /><Save size={13} /></>, '', onDskClick, !!(rawRef.current && fileMeta && onSendToDsk), t('Gravar o arquivo lido (BASIC/ML) num painel DSK. Fita com tela+loader → use "→ Sem loader".', 'Write the read file (BASIC/ML) into a DSK pane. Screen+loader tape → use "→ No loader".'))}
         {tool(<MonitorPlay size={14} />, '', onXroarClick, !!(rawRef.current && audio && onSendToXroar), t('Carregar esta fita no emulador XRoar (fita com loader → use "→ Sem loader" ou o mini-XRoar)', 'Load this tape into the XRoar emulator (loader tape → use "→ No loader" or the mini-XRoar)'))}
-        {tool(<Rocket size={14} />, t('→ Sem loader', '→ No loader'), openLoaderDlg, !!rawRef.current && !skBusy, t('Fitas SoftKristian (tela + loader): gera um .BIN/.DSK que RODA SOZINHO com LOADM (autostart, sem :EXEC) — remove o loader de fita e mantém a tela de abertura', 'SoftKristian tapes (screen + loader): build a .BIN/.DSK that AUTOSTARTS with LOADM (no :EXEC) — removes the tape loader and keeps the opening screen'))}
+        {tool(<Rocket size={14} />, t('→ Sem loader', '→ No loader'), openLoaderDlg, !!rawRef.current && !skBusy, t('Detecta o loader da fita (SoftKristian, PLAN-SOFT…). SoftKristian → gera um .BIN/.DSK que RODA SOZINHO com LOADM (autostart, sem :EXEC), mantendo a tela. PLAN-SOFT/multi-parte (all-RAM) → informa que o .CAS fiel roda no mini-XRoar (conversão p/ disco é projeto futuro).', 'Detects the tape loader (SoftKristian, PLAN-SOFT…). SoftKristian → builds a .BIN/.DSK that AUTOSTARTS with LOADM (no :EXEC), keeping the screen. PLAN-SOFT/multi-part (all-RAM) → tells you the faithful .CAS runs in the mini-XRoar (disk conversion is a future project).'))}
         {tool(<Undo2 size={14} />, t('Reverter', 'Revert'), revertCdcu, !skBusy, t('Abrir um .BIN nosso (assinatura CoCo DCU) e recuperar o PROGRAMA PURO em .CAS/.WAV (sem a tela/stub de disco)', 'Open one of our .BIN files (CoCo DCU signature) and recover the PURE PROGRAM as .CAS/.WAV (without the screen/disk stub)'))}
         {mirrorXroar && <button onClick={() => setFastLoad(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: fastLoad ? ACCENT : GREEN, fontWeight: fastLoad ? 700 : 400 }} title={t('Leitura da mini-XRoar: "Ler rápido" = carrega o .cas com fast-load (sem animação, p/ arquivos digitais). "Ler normal" = WAV em tempo real (com os gaps reais, p/ fitas com loader). Liga sozinho ao abrir um .cas.', 'mini-XRoar read: "Fast read" = loads the .cas with fast-load (no animation, for digital files). "Normal read" = real-time WAV (with real gaps, for loader tapes). Auto-on when opening a .cas.')}>{fastLoad ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}<span className="text-[11px]">{fastLoad ? t('Ler rápido', 'Fast read') : t('Ler normal', 'Normal read')}</span></button>}
         {sep}
@@ -1249,7 +1376,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
               <div className="flex justify-between"><span>{t('Limiar (µs)', 'Threshold (µs)')}</span><span className="font-mono">{dec.midUs}</span></div>
               <div className="flex items-center gap-1">
                 <button onClick={() => nudgeMid(-0.5)} disabled={!audio || dec.midUs <= 500} className="dsk-tool" style={{ padding: '1px 3px', color: audio ? '#34d399' : undefined }} title={t('−0,5 µs', '−0.5 µs')}><Minus size={11} /></button>
-                <input type="range" min={500} max={720} step={5} value={dec.midUs} disabled={!audio} onChange={e => setDec(d => ({ ...d, midUs: Number(e.target.value) }))} className="flex-1" style={{ accentColor: '#34d399' }} />
+                <input type="range" min={500} max={720} step={5} value={dec.midUs} disabled={!audio} onMouseDown={() => pushUndo()} onChange={e => setDec(d => ({ ...d, midUs: Number(e.target.value) }))} className="flex-1" style={{ accentColor: '#34d399' }} />
                 <button onClick={() => nudgeMid(0.5)} disabled={!audio || dec.midUs >= 720} className="dsk-tool" style={{ padding: '1px 3px', color: audio ? '#34d399' : undefined }} title={t('+0,5 µs', '+0.5 µs')}><Plus size={11} /></button>
               </div>
             </div>
@@ -1257,19 +1384,73 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
               <div className="flex justify-between"><span>{t('Amplitude mín.', 'Min amplitude')}</span><span className="font-mono">{dec.minAmp.toFixed(2)}</span></div>
               <div className="flex items-center gap-1">
                 <button onClick={() => nudgeAmp(-0.01)} disabled={!audio || dec.minAmp <= 0} className="dsk-tool" style={{ padding: '1px 3px', color: audio ? '#34d399' : undefined }} title={t('−0,01', '−0.01')}><Minus size={11} /></button>
-                <input type="range" min={0} max={0.3} step={0.01} value={dec.minAmp} disabled={!audio} onChange={e => setDec(d => ({ ...d, minAmp: Number(e.target.value) }))} className="flex-1" style={{ accentColor: '#34d399' }} />
+                <input type="range" min={0} max={0.3} step={0.01} value={dec.minAmp} disabled={!audio} onMouseDown={() => pushUndo()} onChange={e => setDec(d => ({ ...d, minAmp: Number(e.target.value) }))} className="flex-1" style={{ accentColor: '#34d399' }} />
                 <button onClick={() => nudgeAmp(0.01)} disabled={!audio || dec.minAmp >= 0.3} className="dsk-tool" style={{ padding: '1px 3px', color: audio ? '#34d399' : undefined }} title={t('+0,01', '+0.01')}><Plus size={11} /></button>
               </div>
             </div>
             <div className="flex items-center justify-between mt-1 gap-1">
               <div className="flex items-center gap-1">
-                <button onClick={() => { setDec({ midUs: 600, minAmp: 0 }); setWavRate(22050); }} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: audio ? '#34d399' : undefined }} title={t('Voltar TODOS os ajustes de som ao padrão seguro (Limiar 600 µs, Amplitude 0, WAV 22 kHz) — evita parâmetros errados', 'Reset ALL sound settings to the safe default (Threshold 600 µs, Amplitude 0, WAV 22 kHz) — avoids wrong parameters')}><RotateCcw size={11} /> {t('Padrão', 'Default')}</button>
-                <button onClick={() => setDec(d => ({ ...d, recover: !d.recover }))} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: dec.recover ? ACCENT : (audio ? '#34d399' : undefined), fontWeight: dec.recover ? 700 : 400 }} title={t('RECUPERAR fitas degradadas: calibra o limiar 1/0 automaticamente por segmento (Otsu + varredura) — destrava fitas lentas/esticadas que o limiar fixo erra. Ignora o Limiar/Amplitude manuais.', 'RECOVER degraded tapes: auto-calibrates the 1/0 threshold per segment (Otsu + sweep) — unlocks slow/stretched tapes the fixed threshold misses. Overrides the manual Threshold/Amplitude.')}><Sparkles size={11} /> {t('Recuperar', 'Recover')}{dec.recover ? ' ✓' : ''}</button>
+                <button onClick={() => { pushUndo(); setDec({ midUs: 600, minAmp: 0 }); setWavRate(22050); }} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: audio ? '#34d399' : undefined }} title={t('Voltar TODOS os ajustes de som ao padrão seguro (Limiar 600 µs, Amplitude 0, WAV 22 kHz) — evita parâmetros errados', 'Reset ALL sound settings to the safe default (Threshold 600 µs, Amplitude 0, WAV 22 kHz) — avoids wrong parameters')}><RotateCcw size={11} /> {t('Padrão', 'Default')}</button>
+                <button onClick={() => { pushUndo(); setDec(d => ({ ...d, recover: !d.recover })); }} disabled={!audio} className="dsk-tool text-[10px] flex items-center gap-1" style={{ padding: '2px 8px', color: dec.recover ? ACCENT : (audio ? '#34d399' : undefined), fontWeight: dec.recover ? 700 : 400 }} title={t('RECUPERAR fitas degradadas: calibra o limiar 1/0 automaticamente por segmento (Otsu + varredura) — destrava fitas lentas/esticadas que o limiar fixo erra. Ignora o Limiar/Amplitude manuais.', 'RECOVER degraded tapes: auto-calibrates the 1/0 threshold per segment (Otsu + sweep) — unlocks slow/stretched tapes the fixed threshold misses. Overrides the manual Threshold/Amplitude.')}><Sparkles size={11} /> {t('Recuperar', 'Recover')}{dec.recover ? ' ✓' : ''}</button>
               </div>
               <span className="text-[9px] font-mono text-[var(--text-muted)]">{decoded ? `${decoded.bitCount} bits · ${decoded.byteCount} B` : ''}</span>
             </div>
             <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{dec.recover ? t('Recuperação ATIVA: limiar automático por segmento (para fitas degradadas/lentas).', 'RECOVERY ON: automatic per-segment threshold (for degraded/slow tapes).') : t('Mexa no limiar/amplitude para destravar fitas difíceis — ou ligue "Recuperar".', 'Adjust threshold/amplitude to unlock difficult tapes — or turn on "Recover".')}</div>
           </div>
+
+          {/* RECUPERAÇÃO AVANÇADA (R3–R6): pré-filtros, canal estéreo, diagnóstico, fusão de capturas */}
+          {audio && (
+            <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>
+              <div className={panelTitle}>{t('Recuperação avançada', 'Advanced recovery')}</div>
+              {/* R5 — EFEITOS de áudio: aplicam à ONDA → PLAY e mini-XRoar tocam o resultado; Desfazer reverte */}
+              <div className="text-[10px] text-[var(--text-secondary)] mb-1">{t('Efeitos (aplicam à onda — PLAY/mini-XRoar tocam o resultado; Desfazer reverte)', 'Effects (applied to the wave — PLAY/mini-XRoar play the result; Undo reverts)')}</div>
+              <div className="flex flex-wrap gap-1">
+                <button onClick={() => applyFx((s) => fxDc(s))} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('Remove offset/deriva DC (centra os cruzamentos)', 'Removes DC offset/drift (centers crossings)')}>DC</button>
+                <button onClick={() => applyFx((s, sr) => fxBandpass(s, sr))} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('Banda-limite 600 Hz–3,5 kHz (tira rumble e hiss)', 'Band-limit 600 Hz–3.5 kHz (kills rumble and hiss)')}>{t('Faixa', 'Band')}</button>
+                <button onClick={() => applyFx((s, sr) => fxAgc(s, sr))} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('Controle automático de ganho (ergue trechos fracos/dropout)', 'Auto gain control (lifts weak/dropout regions)')}>AGC</button>
+                <button onClick={() => applyFx((s) => fxTreble(s))} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('Realça agudos (compensa azimute/cabeça torta)', 'Treble boost (compensates azimuth/misaligned head)')}>{t('Agudos', 'Treble')}</button>
+              </div>
+              {/* R5 — canal (estéreo): aplica o canal escolhido à onda (relê do original) */}
+              {audio.channels > 1 && (
+                <div className="flex items-center gap-2 mt-1 text-[10px]">
+                  <span>{t('Canal', 'Channel')}</span>
+                  {Array.from({ length: audio.channels }).map((_, i) => (
+                    <button key={i} onClick={() => applyChannel(i)} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t(`Usar o canal ${i} (relê do original)`, `Use channel ${i} (re-read from original)`)}>{i}</button>
+                  ))}
+                  <span className="text-[var(--text-muted)]">{t('(estéreo — tente os dois)', '(stereo — try both)')}</span>
+                </div>
+              )}
+              {/* R3/R4 — ações */}
+              <div className="flex flex-wrap gap-1 mt-2">
+                <button onClick={runDiag} disabled={recBusy} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('R3 — mostra o histograma de períodos e o mapa de blocos bom/ruim por segmento (onde a fita falha)', 'R3 — shows the period histogram and the good/bad block map per segment (where the tape fails)')}>{t('Diagnóstico', 'Diagnose')}</button>
+                <button onClick={reDecodeSelection} disabled={recBusy || !sel} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('R3 — re-decodifica SÓ o trecho selecionado na onda com os parâmetros atuais', 'R3 — re-decodes ONLY the selected waveform region with the current parameters')}>{t('Re-decodificar seleção', 'Re-decode selection')}</button>
+                <button onClick={mergeCapturesUi} disabled={recBusy} className="dsk-tool text-[10px]" style={{ padding: '2px 8px' }} title={t('R4 — funde VÁRIAS capturas (.wav) da MESMA fita: um bloco que falha numa passa noutra (inclui a fita aberta agora). Bom para multi-passe do REC.', 'R4 — merges SEVERAL captures (.wav) of the SAME tape: a block failing in one passes in another (includes the currently open tape). Great for REC multi-pass.')}>{t('Fundir capturas…', 'Merge captures…')}</button>
+              </div>
+              <div className="text-[9px] text-[var(--text-muted)] mt-1 leading-tight">{t('R6 — grave a MESMA fita várias vezes (REC) e use "Fundir capturas" para juntar os melhores blocos de cada passe. "Diagnóstico" mostra a qualidade do passe.', 'R6 — record the SAME tape several times (REC) and use "Merge captures" to combine the best blocks of each pass. "Diagnose" shows the pass quality.')}</div>
+              {/* R3 — diagnóstico aberto: histograma + mapa de blocos */}
+              {diag && (
+                <div className="mt-2">
+                  <div className="flex items-end gap-px" style={{ height: 40 }}>
+                    {(() => { const mx = Math.max(1, ...diag.histogram.bins); return diag.histogram.bins.map((v: number, i: number) => { const us = diag.histogram.lo + i * diag.histogram.binWidth; const atThr = diag.histogram.midUs != null && Math.abs(us - diag.histogram.midUs) < diag.histogram.binWidth; return <div key={i} title={`${us}µs: ${v}`} style={{ flex: 1, height: `${(v / mx) * 100}%`, minHeight: v > 0 ? 1 : 0, background: atThr ? '#ef4444' : ACCENT, opacity: atThr ? 1 : 0.65 }} />; }); })()}
+                  </div>
+                  <div className="text-[9px] text-[var(--text-muted)]">{t('Histograma de períodos (2 picos ≈417/833µs; vale = limiar). Vermelho = limiar Otsu', 'Period histogram (2 peaks ≈417/833µs; valley = threshold). Red = Otsu threshold')} {diag.histogram.midUs ? `≈ ${Math.round(diag.histogram.midUs)}µs` : ''}</div>
+                  <div className="text-[9px] mt-1">{t('Blocos por segmento', 'Blocks per segment')} — {diag.goodBlocks}/{diag.totalBlocks} {t('OK', 'OK')}{diag.channels > 1 ? ` · ${diag.channels} ${t('canais', 'channels')}` : ''}</div>
+                  <div className="flex flex-col gap-1 mt-1" style={{ maxHeight: 120, overflowY: 'auto' }}>
+                    {diag.segs.map((s: any, i: number) => (
+                      <div key={i} className="flex items-center gap-1">
+                        <span className="text-[8px] font-mono text-[var(--text-muted)]" style={{ width: 44, flexShrink: 0 }}>{s.startSec.toFixed(1)}s</span>
+                        <div className="flex flex-1 flex-wrap gap-px">
+                          {s.blocks.map((b: any, j: number) => <div key={j} title={`${t('tipo', 'type')} ${b.type} · ${b.len}B · ${b.ok ? 'OK' : t('RUIM', 'BAD')}`} style={{ width: 6, height: 6, borderRadius: 1, background: b.ok ? '#22c55e' : '#ef4444' }} />)}
+                        </div>
+                        <span className="text-[8px] font-mono" style={{ color: s.good === s.total ? '#22c55e' : '#f59e0b', flexShrink: 0 }}>{s.good}/{s.total}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button onClick={() => setDiag(null)} className="dsk-tool text-[10px] mt-1" style={{ padding: '2px 8px' }}>{t('Fechar diagnóstico', 'Close diagnostics')}</button>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* EXPORTAR — taxa do WAV + tamanhos finais EM TEMPO REAL (atualizam ao mexer no som/kHz) */}
           <div className="glass-panel p-2.5" style={{ flexShrink: 0 }}>

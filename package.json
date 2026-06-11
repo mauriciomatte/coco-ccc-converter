@@ -1,6 +1,6 @@
 {
   "name": "coco-file-image-utility",
-  "version": "1.0.62",
+  "version": "1.0.63",
   "description": "TRS-80 Color Computer File Image Utility - CoCo File Image Utility - CoCoFIU",
   "main": "./out/main/index.js",
   "author": "Mauricio Matte",
@@ -84,7 +84,11 @@
         "deb"
       ],
       "maintainer": "Mauricio Matte <matteadv@gmail.com>",
-      "category": "Development"
+      "category": "Development",
+      "executableName": "coco-file-image-utility"
+    },
+    "deb": {
+      "afterInstall": "resources/linux-after-install.sh"
     },
     "mac": {
       "icon": "resources/icon-512.png",

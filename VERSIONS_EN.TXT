@@ -10,6 +10,40 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.63 — 2026-06-11
+--------------------------------------------------------------------------------
+Universal tape-loader detection, degraded-tape recovery R3-R6, audio effects on the wave + unified undo/redo, and a Linux installer fix
+
+ADDED
+  • UNIVERSAL TAPE-LOADER DETECTION: besides SoftKristian, it now recognizes the PLAN-SOFT/GAMEPACK loader
+    (multi-part, e.g. SAILOR) by its motor/BLKIN/CLOADM signatures. The K7 tab reports the family and, for
+    PLAN-SOFT (all-RAM), guides you to run the faithful .CAS in the mini-XRoar.
+  • DEGRADED-TAPE RECOVERY (R3-R6), in the K7 "Advanced recovery" panel:
+      - R3 Diagnose: period histogram (Otsu threshold) + good/bad block map per segment + re-decode just
+        the waveform selection;
+      - R4 Merge captures: combines the best blocks of several captures of the SAME tape (tape RAID);
+      - R5 Audio effects: DC, Band, AGC, Treble and Channel selection (stereo) — applied to the WAVE;
+      - R6 REC multi-pass: record several times and merge the best blocks.
+  • UNIFIED UNDO/REDO in K7: a single history covers waveform edits, the audio effects and the adjustment
+    changes (Threshold/Amplitude/Recover). Ctrl+Z / Ctrl+Y.
+
+CHANGED
+  • Audio effects/filters now apply to the WAVE itself — PLAY and the mini-XRoar play the result and the
+    waveform shows the effect (before they only affected decoding).
+  • Waveform: default "line" (oscilloscope) style and deeper zoom to see the real FSK cycles; smooth
+    playhead scrolling during playback.
+
+FIXED
+  • LINUX INSTALLER (.deb): on Ubuntu 24.04/26.04 (which restrict user namespaces) the app crashed on
+    launch with a sandbox error ("zygote ... Check failed"). The .deb now enables the setuid-sandbox
+    (chrome-sandbox SUID root on post-install) — it launches normally, no --no-sandbox needed.
+  • Waveform: fixed the "flicker at random spots" during playback (smooth scrolling) and the animation
+    loop that kept running while stopped.
+
+  Linux note: non-Debian distros use the AppImage; on systems that restrict user namespaces the AppImage
+  may need "--no-sandbox".
+
+--------------------------------------------------------------------------------
 v1.0.62 — 2026-06-11
 --------------------------------------------------------------------------------
 Write .img to a CF card from the app, sturdier BASIC editing, and open BASIC of any extension

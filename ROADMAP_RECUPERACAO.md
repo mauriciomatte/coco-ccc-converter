@@ -1,13 +1,22 @@
 # ROADMAP — Recuperação de Fitas Degradadas (CoCo K7)
 
-> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
-> **R1+R2 IMPLEMENTADOS e validados:** o botão **"Recuperar"** (Sparkles) na K7 liga o limiar adaptativo por
-> segmento (**Otsu** + varredura), ficando com o resultado de mais blocos válidos. No corpus de 102 fitas:
-> **51 → 94 decodificadas, 0 regressões**.
+> ## ✅ STATUS ATUAL — 2026-06-11 (R1–R6 IMPLEMENTADOS)
+> **R1+R2** (já validados): botão **"Recuperar"** (Sparkles) → limiar adaptativo por segmento (**Otsu** +
+> varredura). Corpus de 102 fitas: **51 → 94 decodificadas, 0 regressões**.
 >
-> **PENDENTE:** **R3** diagnósticos (histograma de períodos, mapa de blocos bons/ruins, re-decode de região),
-> **R4** merge de múltiplas capturas do mesmo programa, **R5** estéreo (tentar os dois canais) + pré-filtros,
-> **R6** medidor de qualidade no REC ao vivo.
+> **R3–R6 IMPLEMENTADOS 2026-06-11 (uncommitted), validados por `tools/recovertest.ts` (6/6):**
+> - **R3 — Diagnóstico:** `tapeDiagnostics`/`decodeRegion` (wav.ts) + IPC `tape-diagnostics`/`tape-decode-region`.
+>   Painel "Recuperação avançada" na K7: **histograma de períodos** (limiar Otsu em vermelho) + **mapa de
+>   blocos bom/ruim por segmento** + **re-decodificar só a seleção** da waveform.
+> - **R4 — Fusão de capturas ("RAID"):** `mergeCaptures` (captura com mais blocos válidos = base; substitui os
+>   blocos ruins pelos bons de outra captura, por índice) + IPC `tape-merge-captures` + `pick-wav-files`
+>   (multi-seleção). Botão "Fundir capturas…" (inclui a fita aberta). Validado: nunca perde blocos.
+> - **R5 — Pré-filtros + estéreo:** `preprocessSamples` (DC, banda-limite ZC-safe HP+LP de 1 polo, AGC por
+>   janela, realce de agudos) + seleção de **canal** via `DecodeOpts.{prefilter,channel}` (fluem por todo o
+>   decode). Toggles + seletor de canal no painel. ZC-safe (um bandpass biquad agudo zerava o decode → trocado).
+> - **R6 — REC multi-passe + qualidade:** grave a mesma fita N vezes e use "Fundir capturas" (R4) p/ juntar os
+>   melhores blocos; "Diagnóstico" (R3) mostra a qualidade de cada passe. (Medidor em TEMPO REAL durante a
+>   captura = refinamento menor pendente; o VU já existe.)
 
 Objetivo: **salvar um pedaço da história** — recuperar programas de fitas de 40+ anos e de
 capturas de áudio imperfeitas, que hoje falham (NO-SYNC) ou decodificam só em parte. Cobre os

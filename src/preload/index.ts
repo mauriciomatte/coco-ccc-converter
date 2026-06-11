@@ -32,6 +32,11 @@ const api = {
   xroarPickFile: (kind?: string) =>
     ipcRenderer.invoke('xroar-pick-file', kind),
   k7Decode: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('k7-decode', wavBytes, opts),
+  // Recuperação R3/R4: diagnóstico, re-decode de região e fusão de capturas.
+  tapeDiagnostics: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('tape-diagnostics', wavBytes, opts),
+  tapeDecodeRegion: (wavBytes: Uint8Array, startSec: number, endSec: number, opts?: any) => ipcRenderer.invoke('tape-decode-region', wavBytes, startSec, endSec, opts),
+  tapeMergeCaptures: (buffers: Uint8Array[], opts?: any) => ipcRenderer.invoke('tape-merge-captures', buffers, opts),
+  pickWavFiles: () => ipcRenderer.invoke('pick-wav-files'),
   k7ExportClean: (wavBytes: Uint8Array, opts: any, format: string, sampleRate: number, defaultName: string, tapeName?: string) => ipcRenderer.invoke('k7-export-clean', wavBytes, opts, format, sampleRate, defaultName, tapeName),
   k7ExtractFile: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-extract-file', wavBytes, opts, fileIndex),
   k7FileBytes: (wavBytes: Uint8Array, opts: any, fileIndex: number) => ipcRenderer.invoke('k7-file-bytes', wavBytes, opts, fileIndex),

@@ -1,0 +1,2 @@
+# Scripts de shell DEVEM usar LF (CRLF quebra o shebang "#!/bin/bash^M: bad interpreter" no Linux/CI).
+*.sh text eol=lf
