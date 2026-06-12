@@ -10,6 +10,37 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.64 — 2026-06-11
+--------------------------------------------------------------------------------
+Nomes de disco do SIDEKICK no painel + "Apagar nome", gravacao de cartao CF com elevacao UAC sob demanda + confirmacao de sucesso, "Limpar intervalo" de discos, e opcoes ao salvar BASIC
+
+ADICIONADO
+  • NOME DO DRIVE (SIDEKICK) NO PAINEL: contêineres MiniIDE agora exibem o NOME de cada disco (lido do
+    setor LSN 322 do SIDEKICK) no rótulo "DISCO (nome)". Antes o nome existia na imagem mas nunca chegava
+    à interface (o IPC nao repassava o campo) — disco 0 aparecia "(SEM NOME)" em vez de "MINIIDE".
+  • BOTAO "APAGAR NOME": no modal de nomear/renomear drive, um botao para REMOVER o nome de um disco que
+    ja tem nome — zera o setor LSN 322 (volta ao estado "sem nome" autentico, como um disco nunca nomeado).
+  • GRAVACAO DE CARTAO CF — ELEVACAO UAC SOB DEMANDA: o app nao precisa mais ser aberto como administrador;
+    a permissao (UAC) e pedida SO na hora de gravar o cartao fisico (unico recurso que exige privilegio).
+    Barra de progresso real durante a gravacao elevada e deteccao de cancelamento do UAC.
+  • CONFIRMACAO DE SUCESSO DA GRAVACAO CF: ao terminar, um modal verde "Gravacao concluida!" com o tamanho
+    gravado e o disco de destino; removida a etapa de "digite o numero do disco" para confirmar.
+  • LIMPAR INTERVALO DE DISCOS: em contêineres de arquivo (MiniIDE/CoCoSDC) abertos de .img/.vhd, um botao
+    substitui um INTERVALO de discos (XX..YY) por imagens RS-DOS VAZIAS formatadas, de uma so vez, com
+    confirmacao em duas etapas (operacao irreversivel — APAGA os dados daquele intervalo).
+  • OPCOES AO SALVAR BASIC: ao salvar um programa aberto a partir de um painel de disco, um modal oferece
+    Cancelar / Salvar / Salvar e fechar.
+
+CORRIGIDO / MELHORADO
+  • Discos LIMPOS (formatados em branco) passam a aparecer como discos RS-DOS USAVEIS (com a opcao de
+    inserir imagem), em vez de "slot vazio — insira imagem".
+  • Renomear um drive SIDEKICK agora persiste corretamente e ATIVA o botao "Salvar imagem" (destaque de
+    alteracao pendente); corrigida uma sobrescrita do buffer renomeado por estado defasado do painel.
+  • Ajustes no painel de contêiner: rótulo "LIDA: Contêiner · KB", "DISCO (nome)", botao X de fechar painel
+    e botoes mais compactos.
+  • Manuais (abas DSK e BASIC) atualizados, em portugues e ingles.
+
+--------------------------------------------------------------------------------
 v1.0.63 — 2026-06-11
 --------------------------------------------------------------------------------
 Detecção universal de loaders, recuperação de fitas R3-R6, efeitos na onda + desfazer/refazer unificado, e correcao do instalador Linux

@@ -137,11 +137,17 @@ When you open a container (DriveWire/MiniIDE/CoCoSDC), the pane gains a disk sel
   media).
 - **OS-9 · {volume}** — opens the container's OS-9 partition in the OS-9 tab (read-only for safety).
 - **Name/Rename** (MiniIDE) — sets/edits the drive's SIDEKICK catalog name.
+- **Clear range** (eraser icon — file-backed MiniIDE/CoCoSDC) — opens a modal asking the range **From XX to YY**
+  (PHYSICAL disk #) and replaces **every disk in the range with EMPTY images**, all at once (no need to go one
+  by one). ⚠️ **PERMANENTLY ERASES** those disks' data in the file (art disks are skipped). Writes straight to
+  the `.img` (like the per-disk "Save"). *Validated on real CoCo/MiniIDE.*
 - **Write to CF card** (orange database icon — only when the pane is a file-backed `.img`/`.vhd` container) —
-  writes the container image **straight to a CF/SD/USB card**. ⚠️ **ERASES the card.** Requires the app
-  running as **ADMINISTRATOR**, shows **only removable** drives (never the system disk) and asks for
-  **confirmation by typing the disk number**, with a progress bar. When done, if Windows offers to "format",
-  **ignore it** (the content is RS-DOS/OS-9, not FAT). Alternative: balenaEtcher on the saved `.img`.
+  writes the container image **straight to a CF/SD/USB card**. ⚠️ **ERASES the card.** Shows **only removable**
+  drives (never the system disk): select the drive and click **"Write card"** (with a progress bar). The raw
+  write needs Administrator, but **you don't have to launch the app as admin**: if you aren't elevated, **Windows
+  asks for confirmation (UAC) only when writing** — approve the prompt. When done, a **success notice** appears;
+  if Windows offers to "format", **ignore it** (the content is RS-DOS/OS-9, not FAT). *Validated on real
+  CoCo/MiniIDE.* Alternative: balenaEtcher on the saved `.img`.
 
 > **Clear pane** with a program being **edited in the BAS tab** from it and **unsaved** → the app **warns** you
 > before closing (the text stays in the BAS tab).

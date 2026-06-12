@@ -21,7 +21,7 @@
     "src/main/converter/fat.ts","src/main/converter/sdf.ts","tools/sdfprobe.ts","tools/os9clone.ts","tools/sdfinspect.ts","tools/sdfrt.ts",
     "tools/os9seedscan.ts","tools/os9seedverify.ts","tools/os9bootdiag.ts","tools/renamert.ts","tools/casfixtest.ts",
     "tools/basictoktest.ts","src/renderer/src/basicDetokenize.ts","tools/wavanalyze.ts","tools/wavaudit.ts",
-    "tools/loaderfamtest.ts","src/main/converter/loaderscan.ts","tools/recovertest.ts",
+    "tools/loaderfamtest.ts","src/main/converter/loaderscan.ts","tools/recovertest.ts","tools/sknametest.ts",
     "tools/tnfsprobe.ts","tools/tnfsdldiag.ts","src/main/net/tnfs.ts",
     "tools/tnfsservetest.ts","tools/tnfswritetest.ts","tools/tnfsdirxtest.ts","src/main/net/tnfsServer.ts","src/main/net/download.ts",
     "src/main/converter/dmk.ts",

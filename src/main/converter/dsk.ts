@@ -644,6 +644,12 @@ export function writeSidekickName(disk: Buffer, name: string): Buffer {
   if (disk.length < off + 256) throw new Error('Imagem pequena demais para o nome SIDEKICK.');
   const out = Buffer.from(disk);
   const nm = (name || '').toUpperCase().replace(/[^\x20-\x7e]/g, '').slice(0, 8);
+  if (!nm) {
+    // APAGAR o nome: zera o setor LSN 322 para 0xFF (estado "drive sem nome" — igual a um disco nunca
+    // nomeado). readSidekickName volta a retornar null e o SIDEKICK não exibe nome.
+    out.fill(0xFF, off, off + 256);
+    return out;
+  }
   if (isBlankSector(out, off)) {
     // sem catálogo → construir: copia as 8 primeiras entradas do diretório real (16 B cada).
     out.fill(0x00, off, off + 256);

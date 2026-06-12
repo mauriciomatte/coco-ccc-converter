@@ -139,11 +139,17 @@ Ao abrir um contêiner (DriveWire/MiniIDE/CoCoSDC), o painel ganha um seletor de
   mídia real).
 - **OS-9 · {volume}** — abre a partição OS-9 do contêiner na aba OS-9 (somente-leitura por segurança).
 - **Nomear/Renomear** (MiniIDE) — dá/edita o nome de catálogo SIDEKICK do drive.
+- **Limpar intervalo** (ícone de borracha — MiniIDE/CoCoSDC de arquivo) — abre um modal pedindo o intervalo
+  **De XX até YY** (nº FÍSICO dos discos) e substitui **todos os discos do intervalo por imagens VAZIAS**, de
+  uma só vez (sem precisar ir de um em um). ⚠️ **APAGA permanentemente** os dados desses discos no arquivo
+  (discos de arte são pulados). Grava direto no `.img` (como o "Salvar" por-disco). *Validado em CoCo/MiniIDE reais.*
 - **Gravar em cartão CF** (ícone laranja de banco de dados — só quando o painel é um contêiner aberto de
   arquivo `.img`/`.vhd`) — grava a imagem do contêiner **direto num cartão CF/SD/USB**. ⚠️ **APAGA o cartão.**
-  Exige o app rodando como **ADMINISTRADOR**, mostra **só drives removíveis** (nunca o disco do sistema) e
-  pede **confirmação digitando o nº do disco**, com barra de progresso. Ao terminar, se o Windows oferecer
-  "formatar", **ignore** (o conteúdo é RS-DOS/OS-9, não FAT). Alternativa: balenaEtcher na `.img` salva.
+  Mostra **só drives removíveis** (nunca o disco do sistema): selecione o drive e clique **"Gravar cartão"**
+  (com barra de progresso). A gravação crua precisa de Administrador, mas **não é preciso abrir o app como
+  admin**: se você não estiver elevado, o **Windows pede confirmação (UAC) só na hora de gravar** — confirme o
+  aviso. Ao concluir, aparece um **aviso de sucesso**; se o Windows oferecer "formatar", **ignore** (o conteúdo
+  é RS-DOS/OS-9, não FAT). *Validado em CoCo/MiniIDE reais.* Alternativa: balenaEtcher na `.img` salva.
 
 > **Limpar painel** com um programa em **edição na aba BAS** vindo dele e **não salvo** → o app **avisa** antes
 > de fechar (o texto continua na aba BAS).

@@ -1,6 +1,6 @@
 {
   "name": "coco-file-image-utility",
-  "version": "1.0.63",
+  "version": "1.0.64",
   "description": "TRS-80 Color Computer File Image Utility - CoCo File Image Utility - CoCoFIU",
   "main": "./out/main/index.js",
   "author": "Mauricio Matte",

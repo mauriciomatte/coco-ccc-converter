@@ -551,8 +551,17 @@ export default function App() {
   const [basicLoadPick, setBasicLoadPick] = useState<{ text: string; label: string; source: BasicSrc | null; name: string } | null>(null);
   const [basicCloseConfirm, setBasicCloseConfirm] = useState<number | null>(null); // índice da aba (não vazia) a fechar
   const [clearPaneConfirm, setClearPaneConfirm] = useState<{ which: 'A' | 'B'; names: string[] } | null>(null); // limpar painel c/ BASIC não salvo
+  // LIMPAR INTERVALO de discos de um contêiner (substitui XX..YY por discos VAZIOS).
+  const [clearRangeModal, setClearRangeModal] = useState<{ which: 'A' | 'B'; minSlot: number; maxSlot: number } | null>(null);
+  const [clearRangeConfirm, setClearRangeConfirm] = useState<{ which: 'A' | 'B'; lo: number; hi: number; count: number } | null>(null); // 2ª etapa: confirmação final
+  const [crFrom, setCrFrom] = useState('');
+  const [crTo, setCrTo] = useState('');
+  const [crBusy, setCrBusy] = useState(false);
+  const [crProgress, setCrProgress] = useState({ done: 0, total: 0 });
   // Modal: o arquivo de origem sumiu / disco foi trocado ao tentar "Salvar" in-place.
   const [basicUpdateConfirm, setBasicUpdateConfirm] = useState<{ which: 'A' | 'B'; name: string; reason: 'missing' | 'diskChanged' } | null>(null);
+  // Modal de opções ao "Salvar" um arquivo aberto de um painel: Cancelar / Salvar / Salvar e fechar.
+  const [basicSaveOptions, setBasicSaveOptions] = useState<{ which: 'A' | 'B'; entry: any; name: string; docIdx: number } | null>(null);
   const [dskDirty, setDskDirty] = useState<{ A: boolean; B: boolean }>({ A: false, B: false }); // alterações não salvas por painel
   const [consoleMax, setConsoleMax] = useState<boolean>(false);
 
@@ -584,11 +593,11 @@ export default function App() {
   const [cfModal, setCfModal] = useState<null | { filePath: string; fileName: string }>(null);
   const [cfDrives, setCfDrives] = useState<null | { number: number; name: string; size: number; busType: string }[]>(null);
   const [cfSel, setCfSel] = useState<number | null>(null);
-  const [cfTyped, setCfTyped] = useState('');      // confirmação: o usuário digita o nº do disco
   const [cfBusy, setCfBusy] = useState(false);
   const [cfProgress, setCfProgress] = useState(0); // 0..1
   const [cfAdmin, setCfAdmin] = useState<boolean | null>(null); // app rodando como Administrador? (null = checando)
   const [cfError, setCfError] = useState<string | null>(null);  // erro da última gravação (mostrado no modal)
+  const [cfDone, setCfDone] = useState<{ mb: number; disk: number } | null>(null); // sucesso: mostra modal de "gravado!"
   const [formatConfirm, setFormatConfirm] = useState<{ which: 'A' | 'B' } | null>(null); // modal: formatar a imagem do painel (rápida/completa)
   const [renameDrive, setRenameDrive] = useState<{ which: 'A' | 'B'; current: string; named: boolean } | null>(null); // modal: nomear/renomear drive SIDEKICK (MiniIDE)
   const [imgWriteConfirm, setImgWriteConfirm] = useState<{ which: 'A' | 'B'; fileName: string; slot: number; pendingSwitch?: number; kind?: 'miniide' | 'cocosdc' } | null>(null); // modal: confirmar gravação no .img (MiniIDE / CoCoSDC)
@@ -1621,8 +1630,11 @@ export default function App() {
     // parse falhou). Um RS-DOS válido com NOMES de arte (semigráficos) NÃO é ilegível: lista normalmente,
     // mas entra em SOMENTE-LEITURA (round-trip de escrita ainda não validado) → edições bloqueadas.
     const entryState = c.entries?.[index]?.state;
-    const emptySlot = entryState === 'empty';
     const unreadable = !res.success || res.rsdos === false;
+    // "Slot vazio" SÓ quando o conteúdo REALMENTE não é um disco RS-DOS legível. Um disco FORMATADO em
+    // branco (FAT válida, 0 arquivos) — inclusive os gerados pelo "Limpar intervalo" — é RS-DOS legível e
+    // PRONTO PARA USO: deve aparecer como um disco normal (tabela vazia, editável), não "insira uma imagem".
+    const emptySlot = entryState === 'empty' && unreadable;
     // Disco OS-9 dentro do contêiner → abre na aba OS-9 (e ainda atualiza o índice do contêiner abaixo).
     if (unreadable && !emptySlot) { await maybeRouteOs9(slice, c.entries?.[index]?.label || label); }
     const readOnly = !unreadable && !!res.hasArt;
@@ -1638,9 +1650,12 @@ export default function App() {
     });
     clearDirty(which); // trocou para outro disco (limpo)
     const slotN = c.entries?.[index]?.slot ?? index;
-    if (emptySlot && !unreadable) {
-      addLog(`Disco ${slotN}: slot VAZIO (000–255). Disponível para formatar ou inserir uma imagem.`,
-             `Disk ${slotN}: EMPTY slot (000–255). Available to format or insert an image.`, 'info');
+    if (emptySlot) {
+      addLog(`Disco ${slotN}: slot sem disco legível. Insira uma imagem (.dsk 35T RS-DOS) ou formate.`,
+             `Disk ${slotN}: no readable disk. Insert an image (.dsk 35T RS-DOS) or format.`, 'info');
+    } else if (!unreadable && entryState === 'empty') {
+      addLog(`Disco ${slotN}: disco FORMATADO em branco (0 arquivos) — pronto para uso (adicione arquivos e salve).`,
+             `Disk ${slotN}: blank FORMATTED disk (0 files) — ready to use (add files and save).`, 'info');
     } else if (unreadable) {
       const why = !res.success ? (res.os9 ? 'OS-9' : res.error) : (currentLang === 'pt-br' ? 'não é RS-DOS (provável OS-9 / dupla-face / .dsk com cabeçalho)' : 'not RS-DOS (likely OS-9 / double-sided / headered .dsk)');
       addLog(`Disco ${slotN}: formato não suportado — ${why}. Navegação continua; este disco não é editável.`,
@@ -2259,7 +2274,7 @@ export default function App() {
     const fp = pane?.container?.filePath;
     if (!fp) { addLog('Abra uma imagem de contêiner (.img: MiniIDE/CoCoSDC) no painel ativo para gravar num cartão CF.', 'Open a container image (.img: MiniIDE/CoCoSDC) in the active pane to write to a CF card.', 'warn'); return; }
     setCfModal({ filePath: fp, fileName: pane.container.fileName || fp.split(/[\\/]/).pop() || fp });
-    setCfDrives(null); setCfSel(null); setCfTyped(''); setCfProgress(0); setCfBusy(false); setCfError(null); setCfAdmin(null);
+    setCfDrives(null); setCfSel(null); setCfProgress(0); setCfBusy(false); setCfError(null); setCfDone(null); setCfAdmin(null);
     window.cocoApi.cfIsAdmin?.().then((a: any) => setCfAdmin(!!a?.admin)).catch(() => setCfAdmin(false));
     const r = await window.cocoApi.cfListRemovable();
     if (!r?.success) { addLog(`Listar cartões: ${r?.error || '?'}`, `List cards: ${r?.error || '?'}`, 'warn'); setCfDrives([]); return; }
@@ -2267,11 +2282,11 @@ export default function App() {
   };
   const doCfFlash = async () => {
     if (!cfModal || cfSel == null) return;
-    setCfBusy(true); setCfProgress(0); setCfError(null);
+    setCfBusy(true); setCfProgress(0); setCfError(null); setCfDone(null);
     const off = window.cocoApi.onCfFlashProgress?.((p: any) => setCfProgress(p.total ? p.written / p.total : 0));
     try {
       const r = await window.cocoApi.cfFlash(cfModal.filePath, cfSel);
-      if (r?.success) { addLog(`Cartão CF gravado: ${(r.bytes / 1048576).toFixed(0)} MB no disco ${cfSel}. Pode ejetar com segurança.`, `CF card written: ${(r.bytes / 1048576).toFixed(0)} MB to disk ${cfSel}. Safe to eject.`, 'success'); setCfModal(null); }
+      if (r?.success) { addLog(`Cartão CF gravado: ${(r.bytes / 1048576).toFixed(0)} MB no disco ${cfSel}. Pode ejetar com segurança.`, `CF card written: ${(r.bytes / 1048576).toFixed(0)} MB to disk ${cfSel}. Safe to eject.`, 'success'); setCfDone({ mb: r.bytes / 1048576, disk: cfSel }); } // mantém o modal aberto com a confirmação de sucesso
       else { const msg = r?.error || '?'; setCfError(msg); addLog(`Gravar CF: ${msg}`, `Write CF: ${msg}`, 'error'); } // mantém o modal aberto p/ o usuário LER o erro
     } catch (err: any) { const msg = err?.message || String(err); setCfError(msg); addLog(`Gravar CF: ${msg}`, `Write CF: ${msg}`, 'error'); }
     finally { off?.(); setCfBusy(false); }
@@ -2620,7 +2635,8 @@ export default function App() {
       const exists = dir.success && dir.files.some((f: any) => `${f.name}.${f.ext}`.toUpperCase() === `${entry.name}.${entry.ext}`.toUpperCase());
       if (!exists) { setBasicUpdateConfirm({ which, name: entry.fullName, reason: 'missing' }); return; }
     } catch { setBasicUpdateConfirm({ which, name: entry.fullName, reason: 'missing' }); return; }
-    doBasicUpdateCommit(which, entry);
+    // Caso normal: abre o modal de opções (Cancelar / Salvar / Salvar e fechar) em vez de gravar direto.
+    setBasicSaveOptions({ which, entry, name: entry.fullName, docIdx: actIdx });
   };
 
   // Grava de fato a versão atual do editor sobre o arquivo de origem (delete + add).
@@ -2869,6 +2885,67 @@ export default function App() {
     } catch (err: any) { addLog(`Inserir imagem: ${err.message}`, `Insert image: ${err.message}`, 'error'); }
   };
 
+  // LIMPAR INTERVALO — abre o modal pedindo XX..YY (nº físico dos discos) p/ um contêiner de arquivo.
+  const openClearRange = (which: 'A' | 'B') => {
+    const c = getPane(which)?.container;
+    if (!c?.entries?.length || c.source !== 'file' || !(c.kind === 'miniide' || c.kind === 'cocosdc')) {
+      addLog('Limpar intervalo: disponível em contêineres MiniIDE/CoCoSDC abertos de arquivo (.img/.vhd).',
+             'Clear range: available on MiniIDE/CoCoSDC containers opened from a file (.img/.vhd).', 'warn');
+      return;
+    }
+    const slots = c.entries.map((e: any, i: number) => (e.slot ?? e.id ?? i));
+    const minSlot = Math.min(...slots), maxSlot = Math.max(...slots);
+    setActivePane(which);
+    setCrFrom(String(minSlot)); setCrTo(String(maxSlot));
+    setClearRangeModal({ which, minSlot, maxSlot });
+  };
+  // 1ª etapa: valida o intervalo e abre a CONFIRMAÇÃO final (operação irreversível).
+  const requestClearRange = () => {
+    if (!clearRangeModal) return;
+    const which = clearRangeModal.which;
+    const c = getPane(which)?.container;
+    if (!c?.entries?.length) { setClearRangeModal(null); return; }
+    const from = Math.max(0, parseInt(crFrom) || 0), to = Math.max(0, parseInt(crTo) || 0);
+    const lo = Math.min(from, to), hi = Math.max(from, to);
+    const count = c.entries.filter((e: any, i: number) => { const s = (e.slot ?? e.id ?? i); return s >= lo && s <= hi && !e.graphicsArt; }).length;
+    if (!count) { addLog(`Nenhum disco no intervalo ${lo}–${hi}.`, `No disk in the range ${lo}–${hi}.`, 'warn'); return; }
+    setClearRangeModal(null);
+    setClearRangeConfirm({ which, lo, hi, count });
+  };
+  // 2ª etapa: APAGA os discos do intervalo (substitui por imagens VAZIAS), grava direto no .img e
+  // FORÇA a releitura do disco atual (doSelectContainerDisk ignora o guard "mesmo índice").
+  const doClearRange = async () => {
+    if (!clearRangeConfirm) return;
+    const { which, lo, hi } = clearRangeConfirm;
+    const c = getPane(which)?.container;
+    if (!c?.entries?.length) { setClearRangeConfirm(null); return; }
+    const targets = c.entries.filter((e: any, i: number) => { const s = (e.slot ?? e.id ?? i); return s >= lo && s <= hi && !e.graphicsArt; });
+    if (!targets.length) { setClearRangeConfirm(null); return; }
+    const blankR = await window.cocoApi.dskNewBlank(35);
+    if (!blankR?.success) { addLog('Limpar intervalo: falha ao criar disco em branco.', 'Clear range: failed to create a blank disk.', 'error'); return; }
+    const blank = new Uint8Array(blankR.image);
+    setCrBusy(true); setCrProgress({ done: 0, total: targets.length });
+    let ok = 0, fail = 0; const errs: string[] = [];
+    for (let i = 0; i < targets.length; i++) {
+      const e: any = targets[i];
+      let r: any;
+      try {
+        if (c.kind === 'miniide' && e.locator?.offset != null) r = await window.cocoApi.imageWriteSlot(c.filePath, e.locator.offset, blank);
+        else if (c.kind === 'cocosdc' && e.locator?.path) r = await window.cocoApi.imageFatWriteback(c.filePath, e.locator.path, blank);
+        else r = { success: false, error: 'sem localizador' };
+      } catch (err: any) { r = { success: false, error: err?.message || String(err) }; }
+      if (r?.success) ok++; else { fail++; if (errs.length < 3) errs.push(`#${e.slot ?? '?'}: ${r?.error || '?'}`); }
+      setCrProgress({ done: i + 1, total: targets.length });
+    }
+    setCrBusy(false);
+    addLog(`Limpar intervalo ${lo}–${hi}: ${ok} disco(s) limpos${fail ? `, ${fail} falha(s): ${errs.join('; ')}` : ''}. Os discos viraram imagens VAZIAS.`,
+           `Clear range ${lo}–${hi}: ${ok} disk(s) cleared${fail ? `, ${fail} failure(s): ${errs.join('; ')}` : ''}. The disks became EMPTY images.`, fail ? 'warn' : 'success');
+    // Se o disco ATUAL estava no intervalo, RELÊ-O do arquivo (agora vazio) — força via doSelectContainerDisk.
+    const curSlot = (c.entries[c.index]?.slot ?? c.index);
+    setClearRangeConfirm(null);
+    if (curSlot >= lo && curSlot <= hi) { clearDirty(which); await doSelectContainerDisk(which, c.index); }
+  };
+
   // NOMEAR/RENOMEAR o drive do SIDEKICK (MiniIDE) — grava o nome no setor LSN 322. Renomear um drive
   // já nomeado é seguro; nomear um drive SEM nome constrói o catálogo (experimental → validar no hardware).
   const handleRenameDrive = async (which: 'A' | 'B', name: string) => {
@@ -2881,18 +2958,22 @@ export default function App() {
       const res = await window.cocoApi.dskSetSidekickName(pane.buffer, name);
       if (!res.success) { addLog(`Nomear drive: ${res.error}`, `Name drive: ${res.error}`, 'error'); return; }
       await refreshPane(which, new Uint8Array(res.image));
-      markDirty(which);
-      // feedback imediato no seletor: atualiza o rótulo/nome da entrada do slot atual
-      const p2 = getPane(which);
-      if (p2?.container?.entries?.[p2.container.index]) {
-        const entries = p2.container.entries.slice();
-        const i = p2.container.index;
-        entries[i] = { ...entries[i], name: name || null, label: name || entries[i].label };
-        setPane(which, { ...p2, container: { ...p2.container, entries } });
-      }
+      markDirty(which); // ATIVA o "Salvar" — o usuário grava o nome no .img clicando Salvar (e vê que há alteração)
+      // feedback imediato no seletor: atualiza o rótulo/nome da entrada do slot ATUAL. Updater FUNCIONAL p/ ler
+      // o painel JÁ renomeado (refreshPane) — sem isto, um getPane defasado sobrescrevia o buffer renomeado.
+      setPane(which, (p: any) => {
+        if (!p?.container?.entries?.[p.container.index]) return p;
+        const i = p.container.index;
+        const entries = p.container.entries.map((e: any, k: number) => k === i ? { ...e, name: name || null, label: name || e.label } : e);
+        return { ...p, container: { ...p.container, entries } };
+      });
       const slotN = pane.container.entries?.[pane.container.index]?.slot ?? pane.container.index;
-      addLog(`Drive ${slotN} nomeado como "${name.toUpperCase()}". Salve para gravar no .img (teste no hardware/cópia).`,
-             `Drive ${slotN} named "${name.toUpperCase()}". Save to write it to the .img (test on hardware/copy).`, 'success');
+      if (!name.trim())
+        addLog(`Nome do drive ${slotN} apagado. Clique em SALVAR para gravar a alteração no .img.`,
+               `Drive ${slotN} name cleared. Click SAVE to write the change into the .img.`, 'success');
+      else
+        addLog(`Drive ${slotN} nomeado como "${name.toUpperCase()}". Clique em SALVAR para gravar o nome no .img.`,
+               `Drive ${slotN} named "${name.toUpperCase()}". Click SAVE to write the name into the .img.`, 'success');
     } catch (err: any) { addLog(`Nomear drive: ${err.message}`, `Name drive: ${err.message}`, 'error'); }
   };
 
@@ -3894,8 +3975,9 @@ export default function App() {
     if (p.container) {
       const k = p.container.kind === 'cocosdc' ? 'CoCoSDC' : p.container.kind === 'miniide' ? 'MiniIDE' : 'DriveWire';
       const discos = currentLang === 'pt-br' ? 'discos' : 'disks';
+      // O TOTAL de discos já aparece no navegador (/255); aqui mostramos o TAMANHO do disco atual.
       return {
-        label: `${currentLang === 'pt-br' ? 'Contêiner' : 'Container'} · ${p.container.count} ${discos}`,
+        label: `${currentLang === 'pt-br' ? 'Contêiner' : 'Container'} · ${(p.buffer.length / 1024).toFixed(0)} KB`,
         color: '#a78bfa',
         hint: currentLang === 'pt-br'
           ? `Contêiner multi-disco (MiniIDE / DriveWire / CoCoSDC) — detectado como ${k}. ${p.container.count} ${discos}.`
@@ -3955,8 +4037,8 @@ export default function App() {
               <button onClick={(e) => { e.stopPropagation(); handleImageImport(which); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '4px 6px' }} title={t('openImageBtn')} aria-label={t('openImageBtn')}>
                 <FolderOpen size={14} />
               </button>
-              <button onClick={(e) => { e.stopPropagation(); handleClearPane(which); }} disabled={!pane} className="dsk-tool" style={{ padding: '4px 6px' }} title={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`} aria-label={currentLang === 'pt-br' ? `Limpar Painel ${which}` : `Clear Pane ${which}`}>
-                <Eraser size={14} />
+              <button onClick={(e) => { e.stopPropagation(); handleClearPane(which); }} disabled={!pane} className="dsk-tool" style={{ padding: '4px 6px' }} title={currentLang === 'pt-br' ? `Fechar Painel ${which} (descarrega a imagem aberta)` : `Close Pane ${which} (unloads the open image)`} aria-label={currentLang === 'pt-br' ? `Fechar Painel ${which}` : `Close Pane ${which}`}>
+                <X size={14} />
               </button>
               <button onClick={(e) => { e.stopPropagation(); if (pane) { setActivePane(which); setFormatConfirm({ which }); } }} disabled={!pane || !!pane?.diskUnreadable} className="dsk-tool" style={{ padding: '4px 6px' }} title={currentLang === 'pt-br' ? `Formatar Imagem do Painel ${which}` : `Format Pane ${which} image`} aria-label={currentLang === 'pt-br' ? `Formatar Imagem do Painel ${which}` : `Format Pane ${which} image`}>
                 <Disc size={14} />
@@ -3964,16 +4046,17 @@ export default function App() {
             </div>
             {/* O "NOVA: formato | +" fica FIXO na barra de status (rodapé). Aqui a INFO da imagem é
                 CENTRALIZADA verticalmente no espaço que sobra (distribuição harmônica), tudo centralizado. */}
-            <div className="flex-1 flex flex-col justify-center items-center gap-2.5 min-h-0 w-full">
+            <div className={`flex-1 flex flex-col items-center gap-2 min-h-0 w-full ${pane?.container ? 'justify-start pt-0.5' : 'justify-center'}`}>
               {!pane ? (
                 <span className="text-[10px] text-[var(--text-muted)] leading-relaxed text-center px-1">{t('imgFormatsLegend')}</span>
               ) : (
-                <div className="flex flex-col gap-2 items-center text-center w-full">
+                <div className="flex flex-col gap-1.5 items-center text-center w-full">
                   {/* Nome da IMAGEM encurtado em 1 linha (nome completo no hint). Contêiner-arquivo = .img. */}
                   {(() => { const full = pane.container?.fileName ?? pane.fileName; return (
-                    <div className="text-white font-mono text-[12px] max-w-full whitespace-nowrap overflow-hidden text-ellipsis" title={full}>{truncName(full)}</div>
+                    <div className="text-white font-mono text-[10px] max-w-full whitespace-nowrap overflow-hidden text-ellipsis px-1" title={full}>{truncName(full, 18)}</div>
                   ); })()}
-                  <div className="text-[var(--text-secondary)] text-[11px]">{((pane.container ? pane.buffer.length : pane.size) / 1024).toFixed(0)} KB</div>
+                  {/* Tamanho: para CONTÊINER já vai no selo "Lida"; aqui só para imagem simples. */}
+                  {!pane.container && <div className="text-[var(--text-secondary)] text-[11px]">{(pane.size / 1024).toFixed(0)} KB</div>}
                   {/* Selo: CRIADA pelo ✚ → "NOVA: nome"; ABERTA de arquivo → "LIDA: formato". */}
                   {pane.created ? (
                     <span className="text-[9px] font-bold uppercase tracking-wide rounded" style={{ color: '#000', background: '#fbbf24', padding: '3px 9px', boxShadow: '0 0 8px rgba(251,191,36,0.6)' }} title={currentLang === 'pt-br' ? 'Imagem NOVA criada neste painel (ainda não salva em arquivo).' : 'NEW image created in this pane (not yet saved to a file).'}>
@@ -3992,8 +4075,12 @@ export default function App() {
                   )}
                   {/* Navegação do contêiner: "DISCO" + índice editável + lupa (centralizada). */}
                   {pane.container && (
-                    <div className="flex flex-col gap-1.5 bg-slate-950/40 rounded p-2 border border-[#a78bfa]/40 w-full" style={{ maxWidth: 172 }} onClick={(e) => e.stopPropagation()}>
-                      <span className="text-[10px] font-bold uppercase tracking-wider text-[#c4b5fd] text-center">{currentLang === 'pt-br' ? 'Disco' : 'Disk'}</span>
+                    <div className="flex flex-col gap-1 bg-slate-950/40 rounded p-1.5 border border-[#a78bfa]/40 w-full" style={{ maxWidth: 176 }} onClick={(e) => e.stopPropagation()}>
+                      {(() => { const nm = pane.container.entries?.[pane.container.index]?.name; const art = pane.container.entries?.[pane.container.index]?.graphicsArt; return (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#c4b5fd] text-center truncate px-1" title={nm || undefined}>
+                          {currentLang === 'pt-br' ? 'Disco' : 'Disk'} <span style={{ color: nm ? '#e9d5ff' : 'var(--text-muted)', fontWeight: 400 }}>({nm ? nm : (art ? (currentLang === 'pt-br' ? 'arte' : 'art') : (currentLang === 'pt-br' ? 'sem nome' : 'unnamed'))})</span>
+                        </span>
+                      ); })()}
                       {(() => {
                         const ents = pane.container.entries || [];
                         const cur = ents[pane.container.index];
@@ -4025,7 +4112,7 @@ export default function App() {
                         <button
                           onClick={() => { const cur = pane.container.entries?.[pane.container.index]?.name || ''; setActivePane(which); setRenameDrive({ which, current: cur, named: !!cur }); }}
                           className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1"
-                          style={{ padding: '3px 6px', color: '#fbbf24', borderColor: '#fbbf2455' }}
+                          style={{ padding: '2px 6px', color: '#fbbf24', borderColor: '#fbbf2455' }}
                           title={currentLang === 'pt-br' ? 'Nomear/renomear este drive (SIDEKICK)' : 'Name/rename this drive (SIDEKICK)'}
                         ><FileText size={11} /> {pane.container.entries?.[pane.container.index]?.name ? (currentLang === 'pt-br' ? 'Renomear' : 'Rename') : (currentLang === 'pt-br' ? 'Nomear' : 'Name')}</button>
                       )}
@@ -4033,7 +4120,7 @@ export default function App() {
                         <button
                           onClick={() => openOs9Doc({ filePath: pane.container.filePath, base: pane.container.os9Base, fileName: pane.container.fileName, editable: false })}
                           className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide"
-                          style={{ padding: '3px 6px', color: '#c4b5fd', borderColor: '#a78bfa55' }}
+                          style={{ padding: '2px 6px', color: '#c4b5fd', borderColor: '#a78bfa55' }}
                           title={currentLang === 'pt-br' ? 'Navegar a partição OS-9 desta imagem (somente-leitura)' : 'Browse this image\'s OS-9 partition (read-only)'}
                         >OS-9{pane.container.os9Volume ? ` · ${pane.container.os9Volume}` : ''}</button>
                       )}
@@ -4042,9 +4129,18 @@ export default function App() {
                           onClick={() => { setActivePane(which); setFatInsertWhich(which); }}
                           disabled={imageBusy}
                           className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1"
-                          style={{ padding: '3px 6px', color: '#34d399', borderColor: '#34d39955' }}
+                          style={{ padding: '2px 6px', color: '#34d399', borderColor: '#34d39955' }}
                           title={currentLang === 'pt-br' ? 'Inserir um .dsk/.os9 do PC no cartão CoCoSDC (grava no arquivo)' : 'Insert a .dsk/.os9 from the PC into the CoCoSDC card (writes to the file)'}
                         ><FileInput size={11} /> {currentLang === 'pt-br' ? 'Inserir disco' : 'Insert disk'}</button>
+                      )}
+                      {pane.container.source === 'file' && (pane.container.kind === 'miniide' || pane.container.kind === 'cocosdc') && !pane.container.suspect && (
+                        <button
+                          onClick={() => openClearRange(which)}
+                          disabled={imageBusy}
+                          className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1"
+                          style={{ padding: '2px 6px', color: '#f87171', borderColor: '#f8717155' }}
+                          title={currentLang === 'pt-br' ? 'Limpar um INTERVALO de discos (XX..YY) — substitui por imagens VAZIAS de uma só vez. APAGA os dados.' : 'Clear a RANGE of disks (XX..YY) — replaces them with EMPTY images at once. ERASES data.'}
+                        ><Eraser size={11} /> {currentLang === 'pt-br' ? 'Limpar intervalo' : 'Clear range'}</button>
                       )}
                     </div>
                   )}
@@ -4079,6 +4175,21 @@ export default function App() {
                 <div className="flex items-center gap-2 pt-1">
                   <button onClick={() => handleInsertImage(which)} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"><FileInput size={13} /> {currentLang === 'pt-br' ? 'Inserir imagem (.dsk)' : 'Insert image (.dsk)'}</button>
                   <button onClick={() => { setActivePane(which); setFormatConfirm({ which }); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{currentLang === 'pt-br' ? 'Formatar' : 'Format'}</button>
+                </div>
+              </div>
+            ) : pane && pane.container?.kind === 'miniide' && (pane.files?.length ?? 0) === 0 ? (
+              // Disco RS-DOS FORMATADO em branco (0 arquivos) — pronto para uso. Mostra o aviso + "Inserir imagem"
+              // AQUI (no corpo), aliviando o painel esquerdo. Pode adicionar arquivos (arrastar) ou inserir um .dsk.
+              <div className="h-full flex flex-col items-center justify-center gap-3 p-6 text-center">
+                <span className="text-3xl">💾</span>
+                <span className="text-sm font-bold text-emerald-300">{currentLang === 'pt-br' ? 'Disco vazio · formatado' : 'Blank disk · formatted'}</span>
+                <span className="text-[11px] text-[var(--text-secondary)] leading-relaxed max-w-[420px]">
+                  {currentLang === 'pt-br'
+                    ? 'Disco RS-DOS 35T formatado e pronto para uso (adicione arquivos e salve). Você pode inserir uma imagem compatível usando o botão abaixo ou o recurso drag-and-drop.'
+                    : 'Formatted 35T RS-DOS disk, ready to use (add files and save). You can insert a compatible image using the button below or drag-and-drop.'}
+                </span>
+                <div className="flex items-center gap-2 pt-1">
+                  <button onClick={() => handleInsertImage(which)} disabled={imageBusy} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"><FileInput size={13} /> {currentLang === 'pt-br' ? 'Inserir imagem (.dsk)' : 'Insert image (.dsk)'}</button>
                 </div>
               </div>
             ) : pane ? (
@@ -5535,9 +5646,14 @@ export default function App() {
                   : '⚠ This drive had no name — the SIDEKICK catalog will be CREATED (experimental). Do it on a COPY and validate on hardware before trusting.'}
               </p>
             )}
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setRenameDrive(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
-              <button onClick={() => handleRenameDrive(renameDrive.which, renameDrive.current)} disabled={!renameDrive.current.trim()} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase">{currentLang === 'pt-br' ? 'Salvar nome' : 'Save name'}</button>
+            <div className="flex justify-between items-center gap-2 pt-1">
+              {renameDrive.named ? (
+                <button onClick={() => handleRenameDrive(renameDrive.which, '')} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase" style={{ color: '#f87171', borderColor: '#f8717155' }} title={currentLang === 'pt-br' ? 'Remover o nome deste drive (volta a SEM NOME)' : 'Remove this drive name (back to NO NAME)'}>{currentLang === 'pt-br' ? 'Apagar nome' : 'Clear name'}</button>
+              ) : <span />}
+              <div className="flex gap-2">
+                <button onClick={() => setRenameDrive(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+                <button onClick={() => handleRenameDrive(renameDrive.which, renameDrive.current)} disabled={!renameDrive.current.trim()} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase">{currentLang === 'pt-br' ? 'Salvar nome' : 'Save name'}</button>
+              </div>
             </div>
           </div>
         </div>
@@ -5595,7 +5711,30 @@ export default function App() {
       )}
 
       {/* MODAL — Gravar a imagem .img num cartão CF (reflash). PERIGOSO: apaga o cartão. Só removíveis. */}
-      {cfModal && (
+      {cfModal && cfDone && (
+        <div className="glass-modal-overlay" onClick={() => setCfModal(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-emerald-950/40 text-emerald-400 flex-shrink-0"><CheckCircle2 size={22} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Gravação concluída!' : 'Write complete!'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? <>A imagem <b className="font-mono">{cfModal.fileName}</b> foi gravada com sucesso no cartão (<b>{cfDone.mb.toFixed(0)} MB</b>, disco {cfDone.disk}). Pode <b>ejetar o cartão com segurança</b> e usá-lo no CoCo/MiniIDE.</>
+                : <>The image <b className="font-mono">{cfModal.fileName}</b> was successfully written to the card (<b>{cfDone.mb.toFixed(0)} MB</b>, disk {cfDone.disk}). You can <b>safely eject the card</b> and use it on the CoCo/MiniIDE.</>}
+            </p>
+            <p className="text-[11px] text-[var(--text-muted)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? 'Se o Windows oferecer "formatar" o cartão, ignore — o conteúdo é RS-DOS/OS-9, não FAT.'
+                : 'If Windows offers to "format" the card, ignore it — the content is RS-DOS/OS-9, not FAT.'}
+            </p>
+            <div className="flex justify-end pt-1">
+              <button onClick={() => setCfModal(null)} className="btn btn-primary py-2 px-6 text-xs font-bold uppercase" style={{ background: '#059669' }}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {cfModal && !cfDone && (
         <div className="glass-modal-overlay" onClick={() => { if (!cfBusy) setCfModal(null); }}>
           <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 500, maxWidth: '94%' }} onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3">
@@ -5604,39 +5743,37 @@ export default function App() {
             </div>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
               {currentLang === 'pt-br'
-                ? <>Grava a imagem <b className="font-mono">{cfModal.fileName}</b> num cartão CF/SD/USB. <b className="text-red-400">ISTO APAGA TODO o cartão escolhido.</b> Só mostramos drives <b>removíveis</b> (nunca o disco do sistema). Requer o app rodando como <b>ADMINISTRADOR</b>.</>
-                : <>Writes the image <b className="font-mono">{cfModal.fileName}</b> to a CF/SD/USB card. <b className="text-red-400">THIS ERASES the entire chosen card.</b> Only <b>removable</b> drives are shown (never the system disk). Requires the app running as <b>ADMINISTRATOR</b>.</>}
+                ? <>Grava a imagem <b className="font-mono">{cfModal.fileName}</b> num cartão CF/SD/USB. <b className="text-red-400">ISTO APAGA TODO o cartão escolhido.</b> Só mostramos drives <b>removíveis</b> (nunca o disco do sistema). Na hora de gravar, o Windows pode pedir <b>confirmação (UAC)</b> — só essa operação precisa de Administrador.</>
+                : <>Writes the image <b className="font-mono">{cfModal.fileName}</b> to a CF/SD/USB card. <b className="text-red-400">THIS ERASES the entire chosen card.</b> Only <b>removable</b> drives are shown (never the system disk). When writing, Windows may ask for <b>confirmation (UAC)</b> — only this operation needs Administrator.</>}
             </p>
             {cfAdmin === false && (
-              <div className="text-xs rounded-md p-2.5 flex items-start gap-2" style={{ background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(248,113,113,0.4)', color: '#fca5a5' }}>
+              <div className="text-xs rounded-md p-2.5 flex items-start gap-2" style={{ background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.4)', color: '#fcd34d' }}>
                 <AlertTriangle size={14} className="flex-shrink-0 mt-0.5" />
                 <span>{currentLang === 'pt-br'
-                  ? <>O app <b>NÃO</b> está rodando como <b>Administrador</b> — a gravação vai falhar. Feche e reabra com <b>“Executar como administrador”</b> (clique direito no atalho/ícone).</>
-                  : <>The app is <b>NOT</b> running as <b>Administrator</b> — writing will fail. Close and reopen via <b>“Run as administrator”</b> (right-click the shortcut/icon).</>}</span>
+                  ? <>O app não está como Administrador — tudo bem: ao clicar em <b>“Gravar cartão”</b>, o Windows vai pedir <b>confirmação (UAC)</b> só para a gravação. <b>Confirme o aviso</b> para prosseguir.</>
+                  : <>The app isn't running as Administrator — that's fine: when you click <b>“Write card”</b>, Windows will ask for <b>confirmation (UAC)</b> just for the write. <b>Approve the prompt</b> to proceed.</>}</span>
               </div>
             )}
             <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
               {cfDrives === null && <div className="text-xs text-[var(--text-muted)] py-2">{currentLang === 'pt-br' ? 'Procurando cartões removíveis…' : 'Scanning removable cards…'}</div>}
               {cfDrives && cfDrives.length === 0 && <div className="text-xs text-[var(--text-muted)] py-2">{currentLang === 'pt-br' ? 'Nenhum cartão removível encontrado. Insira o CF (via leitor USB) e reabra este diálogo.' : 'No removable card found. Insert the CF (via a USB reader) and reopen this dialog.'}</div>}
               {cfDrives && cfDrives.map(d => (
-                <button key={d.number} onClick={() => { setCfSel(d.number); setCfTyped(''); }} disabled={cfBusy}
+                <button key={d.number} onClick={() => setCfSel(d.number)} disabled={cfBusy}
                   className="dsk-tool flex items-center justify-between text-left" style={{ padding: '6px 10px', background: cfSel === d.number ? 'var(--primary-glow)' : undefined, borderColor: cfSel === d.number ? 'var(--primary)' : undefined }}>
                   <span className="truncate"><b>Disco {d.number}</b> — {d.name || '(?)'} <span className="text-[var(--text-muted)]">[{d.busType}]</span></span>
                   <span className="font-mono text-[10px] text-[var(--text-muted)] flex-shrink-0 ml-2">{(d.size / 1073741824).toFixed(1)} GB</span>
                 </button>
               ))}
             </div>
-            {cfBusy ? (
+            {cfBusy && (
               <div className="flex flex-col gap-1">
                 <div className="text-[11px] text-[var(--text-secondary)]">{currentLang === 'pt-br' ? 'Gravando…' : 'Writing…'} {Math.round(cfProgress * 100)}%</div>
                 <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${Math.round(cfProgress * 100)}%`, height: '100%', background: 'var(--primary)' }} /></div>
                 <div className="text-[10px] text-[var(--text-muted)]">{currentLang === 'pt-br' ? 'Não remova o cartão nem feche o app.' : 'Do not remove the card or close the app.'}</div>
               </div>
-            ) : cfSel !== null && (
-              <label className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
-                <span>{currentLang === 'pt-br' ? `Para confirmar, digite o número do disco (${cfSel}):` : `To confirm, type the disk number (${cfSel}):`}</span>
-                <input value={cfTyped} onChange={e => setCfTyped(e.target.value.replace(/[^0-9]/g, ''))} className="input-text py-1 text-xs font-mono" style={{ width: 56 }} />
-              </label>
+            )}
+            {!cfBusy && cfSel !== null && (
+              <div className="text-[11px] text-amber-300/90">{currentLang === 'pt-br' ? `Disco ${cfSel} selecionado. Clique em "Gravar cartão" para confirmar — APAGA todo o cartão.` : `Disk ${cfSel} selected. Click "Write card" to confirm — ERASES the whole card.`}</div>
             )}
             {cfError && !cfBusy && (
               <div className="text-xs rounded-md p-2.5 flex items-start gap-2 break-words" style={{ background: 'rgba(220,38,38,0.12)', border: '1px solid rgba(248,113,113,0.4)', color: '#fca5a5' }}>
@@ -5646,7 +5783,7 @@ export default function App() {
             )}
             <div className="flex justify-end gap-3 pt-1">
               <button onClick={() => setCfModal(null)} disabled={cfBusy} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
-              <button onClick={doCfFlash} disabled={cfBusy || cfSel === null || cfTyped !== String(cfSel) || cfAdmin === false} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5 disabled:opacity-30" style={{ background: '#b91c1c' }}>
+              <button onClick={doCfFlash} disabled={cfBusy || cfSel === null} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5 disabled:opacity-30" style={{ background: '#b91c1c' }}>
                 <Database size={13} /> {currentLang === 'pt-br' ? 'Gravar cartão' : 'Write card'}
               </button>
             </div>
@@ -5731,6 +5868,36 @@ export default function App() {
               >
                 <Save size={13} /> {currentLang === 'pt-br' ? 'Gravar como novo' : 'Save as new'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* BASIC "Salvar" in-place — opções: Cancelar / Salvar / Salvar e fechar o arquivo */}
+      {basicSaveOptions && (
+        <div className="glass-modal-overlay" onClick={() => setBasicSaveOptions(null)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-emerald-950/30 text-emerald-400 flex-shrink-0"><Save size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Salvar no disco de origem' : 'Save to source disk'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? <>Atualizar <b className="font-mono">{basicSaveOptions.name}</b> na imagem do <b>Painel {basicSaveOptions.which}</b> com a versão atual do editor? Lembre-se de salvar a imagem (.DSK) depois.</>
+                : <>Update <b className="font-mono">{basicSaveOptions.name}</b> in <b>Pane {basicSaveOptions.which}</b>'s image with the current editor version? Remember to save the image (.DSK) afterwards.</>}
+            </p>
+            <div className="flex justify-end gap-2 pt-1 flex-wrap">
+              <button onClick={() => setBasicSaveOptions(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button
+                onClick={async () => { const o = basicSaveOptions; setBasicSaveOptions(null); if (o) await doBasicUpdateCommit(o.which, o.entry); }}
+                className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"
+              ><Save size={13} /> {currentLang === 'pt-br' ? 'Salvar' : 'Save'}</button>
+              <button
+                onClick={async () => { const o = basicSaveOptions; setBasicSaveOptions(null); if (o) { await doBasicUpdateCommit(o.which, o.entry); closeBasicTab(o.docIdx); } }}
+                className="btn btn-primary py-2 px-4 text-xs font-bold uppercase flex items-center gap-1.5"
+                style={{ background: '#059669' }}
+                title={currentLang === 'pt-br' ? 'Salva no disco e FECHA esta aba do editor BASIC' : 'Saves to the disk and CLOSES this BASIC editor tab'}
+              ><Save size={13} /><X size={12} /> {currentLang === 'pt-br' ? 'Salvar e fechar' : 'Save & close'}</button>
             </div>
           </div>
         </div>
@@ -5956,6 +6123,65 @@ export default function App() {
               <button onClick={() => setClearPaneConfirm(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
               <button onClick={() => { const w = clearPaneConfirm.which; setClearPaneConfirm(null); doClearPane(w); }} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase" style={{ background: '#b91c1c' }}>
                 {currentLang === 'pt-br' ? 'Limpar assim mesmo' : 'Clear anyway'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LIMPAR INTERVALO de discos do contêiner (XX..YY → imagens vazias) */}
+      {clearRangeModal && (
+        <div className="glass-modal-overlay" onClick={() => { if (!crBusy) setClearRangeModal(null); }}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 460, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-red-950/30 text-red-400 flex-shrink-0"><Eraser size={20} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Limpar intervalo de discos' : 'Clear a range of disks'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? <>Substitui os discos do intervalo abaixo por <b>imagens VAZIAS</b> (discos em branco), de uma vez. Use para limpar vários discos sem ir de um em um. <b className="text-red-400">Isto APAGA permanentemente os dados desses discos no arquivo.</b> (Discos de arte são pulados.)</>
+                : <>Replaces the disks in the range below with <b>EMPTY images</b> (blank disks), all at once. Use it to clear many disks without going one by one. <b className="text-red-400">This PERMANENTLY ERASES those disks' data in the file.</b> (Art disks are skipped.)</>}
+            </p>
+            <div className="flex items-center gap-3 text-xs">
+              <label className="flex items-center gap-1.5">{currentLang === 'pt-br' ? 'De' : 'From'}
+                <input type="number" min={clearRangeModal.minSlot} max={clearRangeModal.maxSlot} value={crFrom} disabled={crBusy} onChange={e => setCrFrom(e.target.value.replace(/[^0-9]/g, ''))} className="input-text py-1 text-xs font-mono text-center" style={{ width: 64 }} /></label>
+              <label className="flex items-center gap-1.5">{currentLang === 'pt-br' ? 'até' : 'to'}
+                <input type="number" min={clearRangeModal.minSlot} max={clearRangeModal.maxSlot} value={crTo} disabled={crBusy} onChange={e => setCrTo(e.target.value.replace(/[^0-9]/g, ''))} className="input-text py-1 text-xs font-mono text-center" style={{ width: 64 }} /></label>
+              <span className="text-[10px] text-[var(--text-muted)]">({currentLang === 'pt-br' ? 'discos' : 'disks'} {clearRangeModal.minSlot}–{clearRangeModal.maxSlot})</span>
+            </div>
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setClearRangeModal(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={requestClearRange} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5" style={{ background: '#b91c1c' }}>
+                <Eraser size={13} /> {currentLang === 'pt-br' ? 'Continuar' : 'Continue'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CONFIRMAÇÃO FINAL do "Limpar intervalo" — operação IRREVERSÍVEL */}
+      {clearRangeConfirm && (
+        <div className="glass-modal-overlay" onClick={() => { if (!crBusy) setClearRangeConfirm(null); }}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 440, maxWidth: '92%' }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-full bg-red-950/40 text-red-400 flex-shrink-0"><AlertTriangle size={22} /></div>
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Confirmar limpeza?' : 'Confirm clearing?'}</h3>
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+              {currentLang === 'pt-br'
+                ? <>Os <b className="text-red-400">{clearRangeConfirm.count} disco(s)</b> do intervalo <b>{clearRangeConfirm.lo}–{clearRangeConfirm.hi}</b> serão <b>APAGADOS</b> e substituídos por imagens vazias, gravando direto no arquivo. <b className="text-red-400">Esta operação NÃO pode ser desfeita.</b></>
+                : <>The <b className="text-red-400">{clearRangeConfirm.count} disk(s)</b> in the range <b>{clearRangeConfirm.lo}–{clearRangeConfirm.hi}</b> will be <b>ERASED</b> and replaced with empty images, written straight to the file. <b className="text-red-400">This operation CANNOT be undone.</b></>}
+            </p>
+            {crBusy && (
+              <div className="flex flex-col gap-1">
+                <div className="text-[11px] text-[var(--text-secondary)]">{currentLang === 'pt-br' ? 'Limpando…' : 'Clearing…'} {crProgress.done}/{crProgress.total}</div>
+                <div style={{ height: 8, background: 'rgba(255,255,255,0.08)', borderRadius: 4, overflow: 'hidden' }}><div style={{ width: `${crProgress.total ? Math.round((crProgress.done / crProgress.total) * 100) : 0}%`, height: '100%', background: '#f87171' }} /></div>
+              </div>
+            )}
+            <div className="flex justify-end gap-3 pt-1">
+              <button onClick={() => setClearRangeConfirm(null)} disabled={crBusy} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+              <button onClick={doClearRange} disabled={crBusy} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase flex items-center gap-1.5 disabled:opacity-40" style={{ background: '#b91c1c' }}>
+                <Eraser size={13} /> {currentLang === 'pt-br' ? 'Sim, apagar' : 'Yes, erase'}
               </button>
             </div>
           </div>

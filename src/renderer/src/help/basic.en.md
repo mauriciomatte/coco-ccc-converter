@@ -43,8 +43,10 @@ and the editing area. The **?** button (in the toolbar) reopens this help.
 
 If a program is already in the editor, the app asks before replacing it. When there are **unsaved changes**,
 the **tab name turns red** (with "●") and the **Save** button lights up; saving dims it. **Save** writes back
-**into the source disk** (section 6), keeping name/extension. If you **close/clear the source DSK pane** with
-pending edits, the app **warns** you (the text stays here; write it with "New DSK on →").
+**into the source disk** (section 6), keeping name/extension. Clicking **Save** opens a modal with three options:
+**Cancel**, **Save** (writes and keeps editing) and **Save & close** (writes and **closes the editor tab**). If
+you **close/clear the source DSK pane** with pending edits, the app **warns** you (the text stays here; write it
+with "New DSK on →").
 
 > In **Find/Replace**, next to "Next" the app shows the **occurrence count** (e.g. `3/7 match.`); the search is
 > case-insensitive.

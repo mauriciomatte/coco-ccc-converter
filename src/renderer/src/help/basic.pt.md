@@ -44,8 +44,10 @@ toolbar e a área de edição. O botão **?** (na toolbar) reabre esta ajuda.
 
 Se já houver um programa no editor, o app pergunta antes de substituir. Quando há **alterações não salvas**, o
 **nome da aba fica em vermelho** (com "●") e o botão **Salvar** acende; ao salvar, ele esmaece. O **Salvar**
-regrava **no próprio disco de origem** (seção 6), mantendo nome/extensão. Se você **fechar/limpar o painel DSK**
-de origem com edições pendentes, o app **avisa** (o texto continua aqui; grave com "Novo DSK em →").
+regrava **no próprio disco de origem** (seção 6), mantendo nome/extensão. Ao clicar em **Salvar**, abre um modal
+com três opções: **Cancelar**, **Salvar** (grava e continua editando) e **Salvar e fechar** (grava e **fecha a
+aba** do editor). Se você **fechar/limpar o painel DSK** de origem com edições pendentes, o app **avisa** (o texto
+continua aqui; grave com "Novo DSK em →").
 
 > Em **Procurar/Substituir**, ao lado de "Próximo" aparece a **contagem de ocorrências** (ex.: `3/7 ocorr.`);
 > a busca ignora maiúsculas/minúsculas.

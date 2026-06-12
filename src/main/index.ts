@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { spawn } from 'child_process';
 import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8, buildEraTapeWav, tapeDiagnostics, decodeRegion, mergeCaptures } from './converter/wav';
 import { parseCas, fixCas } from './converter/cas';
@@ -1183,6 +1184,7 @@ ipcMain.handle('image-analyze', async () => {
         // a régua percorre todos os 256 como no SIDEKICK e os vazios ficam visíveis p/ formatar/inserir.
         const entries = disks.map(d => ({
           id: d.slot, slot: d.slot, state: d.state, label: d.label,
+          name: d.name ?? null,   // NOME do drive SIDEKICK (LSN 322) — usado no rótulo "DISCO (nome)" do painel
           info: d.state === 'occupied' ? `${d.fileCount} arq · ${d.freeGranules} livres`
               : d.state === 'empty' ? 'slot vazio — disponível p/ formatar/inserir' : 'não-RS-DOS (sobra/lixo)',
           sub: d.state === 'occupied' ? (d.name ? d.filePreview : '') : '',
@@ -1750,53 +1752,109 @@ ipcMain.handle('cf-list-removable', async () => {
 ipcMain.handle('cf-flash', async (e, filePath: string, diskNumber: number) => {
   if (process.platform !== 'win32') return { success: false, error: 'Disponível só no Windows.' };
   try {
-    // Falha RÁPIDA e clara se o app não estiver elevado (senão Set-Disk/abertura do disco dá erro críptico).
-    if (!(await isElevated())) return { success: false, error: 'NÃO ESTÁ COMO ADMINISTRADOR. Feche o app e reabra com "Executar como administrador" para gravar no cartão.' };
+    // VALIDAÇÃO (não precisa de admin): só removível, não-sistema, e cabe.
     const d = JSON.parse(await runPwsh(`Get-Disk -Number ${diskNumber} | Select-Object Size,BusType,IsSystem,IsBoot,IsRemovable | ConvertTo-Json -Compress`));
     if (d.IsSystem || d.IsBoot) return { success: false, error: 'ABORTADO: o disco alvo é do sistema/boot.' };
     if (!(d.IsRemovable || ['USB', 'SD', 'MMC'].includes(d.BusType))) return { success: false, error: 'ABORTADO: o disco alvo não é removível.' };
     const st = fs.statSync(filePath);
     if (Number(d.Size) > 0 && st.size > Number(d.Size)) return { success: false, error: `A imagem (${st.size} B) é MAIOR que o cartão (${d.Size} B).` };
-    // Mídia REMOVÍVEL não pode ir offline (Set-Disk -IsOffline dá "Removable media cannot be set to offline").
-    // Então a escrita é ONLINE: liberamos o read-only e LIMPAMOS a tabela de partições — isso desmonta/elimina
-    // os volumes que o Explorer mantém montados (a trava de volume é a causa do "EIO"). Sem volumes montados,
-    // a escrita crua dos primeiros setores é permitida. Ignora erro se o disco já estiver RAW.
-    await runPwsh(`Set-Disk -Number ${diskNumber} -IsReadOnly $false -ErrorAction SilentlyContinue`).catch(() => {});
-    await runPwsh(`Clear-Disk -Number ${diskNumber} -RemoveData -RemoveOEM -Confirm:$false`).catch(() => {});
-    // A escrita CRUA é feita por .NET FileStream DENTRO do PowerShell — o fs.openSync do Node CORROMPE o
-    // caminho do dispositivo (\\.\PhysicalDriveN vira "\\.\PhysicalDriveN\" / "C:\.PhysicalDriveN") → EIO.
-    // O .NET abre o device corretamente. Cópia em blocos de 4 MB alinhados a 512 B; progresso por linha.
-    const imgPs = filePath.replace(/'/g, "''");
-    const flashScript = [
+
+    if (await isElevated()) {
+      // JÁ é admin → caminho direto (progresso por stdout, mais simples e rápido).
+      await runPwsh(`Set-Disk -Number ${diskNumber} -IsReadOnly $false -ErrorAction SilentlyContinue`).catch(() => {});
+      await runPwsh(`Clear-Disk -Number ${diskNumber} -RemoveData -RemoveOEM -Confirm:$false`).catch(() => {});
+      const imgPs = filePath.replace(/'/g, "''");
+      const flashScript = [
+        `$ErrorActionPreference='Stop'`,
+        `$src=[System.IO.File]::Open('${imgPs}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read)`,
+        `$dst=New-Object System.IO.FileStream('\\\\.\\PhysicalDrive${diskNumber}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::ReadWrite)`,
+        `try{`,
+        `  $total=$src.Length; $chunk=4194304; $buf=New-Object byte[] $chunk; [long]$pos=0`,
+        `  while($pos -lt $total){`,
+        `    $want=[int][Math]::Min([long]$chunk,$total-$pos); $got=0`,
+        `    while($got -lt $want){ $r=$src.Read($buf,$got,$want-$got); if($r -le 0){break}; $got+=$r }`,
+        `    if($got -le 0){break}`,
+        `    $wlen=$got; if($wlen % 512 -ne 0){ $wlen=[int]([Math]::Ceiling($got/512)*512); [Array]::Clear($buf,$got,$wlen-$got) }`,
+        `    $dst.Write($buf,0,$wlen); $pos+=$got`,
+        `    [Console]::Out.WriteLine('PROGRESS '+$pos+' '+$total)`,
+        `  }`,
+        `  $dst.Flush($true); [Console]::Out.WriteLine('DONE '+$total)`,
+        `} finally { $src.Close(); $dst.Close() }`,
+      ].join('\n');
+      await runPwshStream(flashScript, (line) => {
+        const m = /^PROGRESS (\d+) (\d+)/.exec(line);
+        if (m) e.sender.send('cf-flash-progress', { written: Number(m[1]), total: Number(m[2]) });
+      });
+      await runPwsh(`Update-Disk -Number ${diskNumber} -ErrorAction SilentlyContinue`).catch(() => {});
+      return { success: true, bytes: st.size };
+    }
+
+    // NÃO é admin → ELEVAÇÃO SOB DEMANDA: dispara o UAC só p/ a gravação. Um .ps1 self-contido faz
+    // Clear-Disk + escrita (.NET FileStream) e reporta progresso/resultado em ARQUIVOS temporários (não dá
+    // p/ capturar stdout de um processo elevado via -Verb RunAs). O main faz POLL do arquivo de progresso.
+    const tmp = os.tmpdir(), stamp = Date.now();
+    const scriptPath = path.join(tmp, `ccc-cf-${stamp}.ps1`);
+    const progFile = path.join(tmp, `ccc-cf-${stamp}.prog`);
+    const resFile = path.join(tmp, `ccc-cf-${stamp}.res`);
+    const psq = (s: string) => s.replace(/'/g, "''");
+    const cleanup = () => { for (const f of [scriptPath, progFile, resFile]) { try { fs.unlinkSync(f); } catch { /* */ } } };
+    const script = [
       `$ErrorActionPreference='Stop'`,
-      `$src=[System.IO.File]::Open('${imgPs}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read)`,
-      `$dst=New-Object System.IO.FileStream('\\\\.\\PhysicalDrive${diskNumber}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::ReadWrite)`,
-      `try{`,
-      `  $total=$src.Length; $chunk=4194304; $buf=New-Object byte[] $chunk; [long]$pos=0`,
-      `  while($pos -lt $total){`,
-      `    $want=[int][Math]::Min([long]$chunk,$total-$pos); $got=0`,
-      `    while($got -lt $want){ $r=$src.Read($buf,$got,$want-$got); if($r -le 0){break}; $got+=$r }`,
-      `    if($got -le 0){break}`,
-      `    $wlen=$got; if($wlen % 512 -ne 0){ $wlen=[int]([Math]::Ceiling($got/512)*512); [Array]::Clear($buf,$got,$wlen-$got) }`,
-      `    $dst.Write($buf,0,$wlen); $pos+=$got`,
-      `    [Console]::Out.WriteLine('PROGRESS '+$pos+' '+$total)`,
-      `  }`,
-      `  $dst.Flush($true); [Console]::Out.WriteLine('DONE '+$total)`,
-      `} finally { $src.Close(); $dst.Close() }`,
-    ].join('\n');
-    await runPwshStream(flashScript, (line) => {
-      const m = /^PROGRESS (\d+) (\d+)/.exec(line);
-      if (m) e.sender.send('cf-flash-progress', { written: Number(m[1]), total: Number(m[2]) });
-    });
-    // Força o Windows a reler a nova tabela de partições da .img recém-gravada (remonta o volume no Explorer).
-    await runPwsh(`Update-Disk -Number ${diskNumber} -ErrorAction SilentlyContinue`).catch(() => {});
-    return { success: true, bytes: st.size };
+      `$Img='${psq(filePath)}'; $Disk=${diskNumber}; $ProgFile='${psq(progFile)}'; $ResFile='${psq(resFile)}'`,
+      `function Res($s){ [System.IO.File]::WriteAllText($ResFile,$s) }`,
+      `try {`,
+      `  $d = Get-Disk -Number $Disk`,
+      `  if($d.IsSystem -or $d.IsBoot){ Res 'ERR disco de sistema/boot'; exit }`,
+      `  if(-not ($d.IsRemovable -or @('USB','SD','MMC') -contains $d.BusType)){ Res 'ERR disco nao e removivel'; exit }`,
+      `  Set-Disk -Number $Disk -IsReadOnly $false -ErrorAction SilentlyContinue`,
+      `  try { Clear-Disk -Number $Disk -RemoveData -RemoveOEM -Confirm:$false } catch {}`,
+      `  $src=[System.IO.File]::Open($Img,'Open','Read','Read')`,
+      `  $dst=New-Object System.IO.FileStream("\\\\.\\PhysicalDrive$Disk",'Open','ReadWrite','ReadWrite')`,
+      `  try {`,
+      `    $total=$src.Length; $chunk=4194304; $buf=New-Object byte[] $chunk; [long]$pos=0; [long]$lastW=0`,
+      `    while($pos -lt $total){`,
+      `      $want=[int][Math]::Min([long]$chunk,$total-$pos); $got=0`,
+      `      while($got -lt $want){ $r=$src.Read($buf,$got,$want-$got); if($r -le 0){break}; $got+=$r }`,
+      `      if($got -le 0){break}`,
+      `      $wlen=$got; if($wlen % 512 -ne 0){ $wlen=[int]([Math]::Ceiling($got/512)*512); [Array]::Clear($buf,$got,$wlen-$got) }`,
+      `      $dst.Write($buf,0,$wlen); $pos+=$got`,
+      `      if(($pos-$lastW) -ge 4194304 -or $pos -eq $total){ $lastW=$pos; [System.IO.File]::WriteAllText($ProgFile, ("" + $pos + " " + $total)) }`,
+      `    }`,
+      `    $dst.Flush($true)`,
+      `  } finally { $src.Close(); $dst.Close() }`,
+      `  Update-Disk -Number $Disk -ErrorAction SilentlyContinue`,
+      `  Res ("OK " + $total)`,
+      `} catch { Res ('ERR ' + $_.Exception.Message) }`,
+    ].join('\r\n');
+    fs.writeFileSync(scriptPath, script, 'utf8');
+    try { fs.unlinkSync(progFile); } catch { /* */ } try { fs.unlinkSync(resFile); } catch { /* */ } // limpa restos antigos
+
+    const poll = setInterval(() => {
+      try { const tt = fs.readFileSync(progFile, 'utf8').trim(); const m = /^(\d+)\s+(\d+)/.exec(tt); if (m) e.sender.send('cf-flash-progress', { written: Number(m[1]), total: Number(m[2]) }); } catch { /* ainda não escreveu */ }
+    }, 250);
+    try {
+      // Launcher NÃO-elevado: dispara o UAC e ESPERA o processo elevado terminar.
+      const launcher = `$ErrorActionPreference='Stop'; Start-Process powershell -Verb RunAs -WindowStyle Hidden -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File','${psq(scriptPath)}') -Wait; exit 0`;
+      await runPwsh(launcher);
+    } catch (err: any) {
+      clearInterval(poll);
+      const raw = err?.message || String(err);
+      const msg = /canceled by the user|cancelada pelo|operation was canceled|1223|requested operation requires elevation/i.test(raw)
+        ? 'Elevação cancelada (UAC). A gravação no cartão precisa de Administrador só neste momento — clique em "Gravar cartão" de novo e confirme o aviso do Windows.'
+        : raw;
+      cleanup();
+      return { success: false, error: msg };
+    }
+    clearInterval(poll);
+    let resultText = '';
+    try { resultText = fs.readFileSync(resFile, 'utf8').trim(); } catch { /* */ }
+    cleanup();
+    if (resultText.startsWith('OK')) { const bytes = parseInt(resultText.slice(3), 10) || st.size; e.sender.send('cf-flash-progress', { written: bytes, total: bytes }); return { success: true, bytes }; }
+    if (resultText.startsWith('ERR')) return { success: false, error: resultText.slice(4) };
+    return { success: false, error: 'A gravação elevada terminou sem resultado (o UAC foi confirmado?).' };
   } catch (e2: any) {
     const raw = e2?.message || String(e2);
-    const msg = /EPERM|EACCES|access is denied|acesso negado|negado|denied|elevat|administrador/i.test(raw)
-      ? `Acesso negado — rode o aplicativo como ADMINISTRADOR para gravar no cartão. (${raw})`
-      : raw;
-    return { success: false, error: msg };
+    return { success: false, error: raw };
   }
 });
 

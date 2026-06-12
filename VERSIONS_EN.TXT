@@ -10,6 +10,38 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.64 — 2026-06-11
+--------------------------------------------------------------------------------
+SIDEKICK disk names in the panel + "Clear name", CF card writing with on-demand UAC elevation + success confirmation, "Clear range" of disks, and BASIC save options
+
+ADDED
+  • DRIVE NAME (SIDEKICK) IN THE PANEL: MiniIDE containers now show each disk's NAME (read from the
+    SIDEKICK's LSN 322 sector) in the "DISK (name)" label. The name existed in the image but never reached
+    the UI (the IPC didn't pass the field) — disk 0 showed "(NO NAME)" instead of "MINIIDE".
+  • "CLEAR NAME" BUTTON: in the name/rename drive dialog, a button to REMOVE the name of a disk that
+    already has one — it wipes the LSN 322 sector (back to the authentic "no name" state, like a disk
+    that was never named).
+  • CF CARD WRITING — ON-DEMAND UAC ELEVATION: the app no longer needs to be launched as administrator;
+    permission (UAC) is requested ONLY when writing the physical card (the only feature that needs it).
+    Real progress bar during the elevated write and UAC-cancel detection.
+  • CF WRITE SUCCESS CONFIRMATION: on completion, a green "Write complete!" modal showing the size written
+    and the target disk; removed the "type the disk number" confirmation step.
+  • CLEAR A RANGE OF DISKS: in file containers (MiniIDE/CoCoSDC) opened from .img/.vhd, a button replaces
+    a RANGE of disks (XX..YY) with formatted EMPTY RS-DOS images at once, with a two-step confirmation
+    (irreversible — it ERASES the data in that range).
+  • BASIC SAVE OPTIONS: when saving a program opened from a disk panel, a dialog offers Cancel / Save /
+    Save and close.
+
+FIXED / IMPROVED
+  • CLEARED disks (formatted blank) now appear as USABLE RS-DOS disks (with an insert-image option),
+    instead of "empty slot — insert image".
+  • Renaming a SIDEKICK drive now persists correctly and ENABLES the "Save image" button (pending-change
+    highlight); fixed the renamed buffer being overwritten by stale panel state.
+  • Container panel tweaks: "READ: Container · KB" label, "DISK (name)", an X close-panel button, and more
+    compact buttons.
+  • Manuals (DSK and BASIC tabs) updated, in both Portuguese and English.
+
+--------------------------------------------------------------------------------
 v1.0.63 — 2026-06-11
 --------------------------------------------------------------------------------
 Universal tape-loader detection, degraded-tape recovery R3-R6, audio effects on the wave + unified undo/redo, and a Linux installer fix
