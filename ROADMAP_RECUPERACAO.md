@@ -1,10 +1,15 @@
 # ROADMAP — Recuperação de Fitas Degradadas (CoCo K7)
 
-> ## ✅ STATUS ATUAL — 2026-06-11 (R1–R6 IMPLEMENTADOS)
+> ## ✅ STATUS ATUAL — 2026-06-11 (R1–R6 ENTREGUES, v1.0.63)
 > **R1+R2** (já validados): botão **"Recuperar"** (Sparkles) → limiar adaptativo por segmento (**Otsu** +
 > varredura). Corpus de 102 fitas: **51 → 94 decodificadas, 0 regressões**.
 >
-> **R3–R6 IMPLEMENTADOS 2026-06-11 (uncommitted), validados por `tools/recovertest.ts` (6/6):**
+> **✅ DETECÇÃO UNIVERSAL DE LOADERS (v1.0.63):** além do SoftKristian (`scanSoftKristian`), o app reconhece o
+> loader **PLAN-SOFT/GAMEPACK** multi-parte (`scanPlanSoft`) pelas assinaturas de motor/BLKIN/CLOADM; a aba K7
+> informa a FAMÍLIA do loader e, para PLAN-SOFT (all-RAM), orienta a rodar o `.CAS` fiel no mini-XRoar.
+> *(Mais softhouses além desses dois permanecem como trabalho futuro — ver "Pendente" no fim.)*
+>
+> **✅ R3–R6 ENTREGUES (v1.0.63), validados por `tools/recovertest.ts` (6/6):**
 > - **R3 — Diagnóstico:** `tapeDiagnostics`/`decodeRegion` (wav.ts) + IPC `tape-diagnostics`/`tape-decode-region`.
 >   Painel "Recuperação avançada" na K7: **histograma de períodos** (limiar Otsu em vermelho) + **mapa de
 >   blocos bom/ruim por segmento** + **re-decodificar só a seleção** da waveform.
@@ -94,21 +99,27 @@ LSB-first, leader `$55`, sync de bloco `$3C`. As falhas vêm de:
 - **Patch de bytes:** decode quase completo → editar os poucos bytes ruins no hex e recalcular
   checksum.
 
-## 4. Plano de implementação (fases)
+## 4. Plano de implementação (fases) — ✅ R1–R6 ENTREGUES (R1+R2 antes; R3–R6 em v1.0.63)
 
-- **R1 — Núcleo adaptativo** (maior ganho): limiar por histograma + rastreio de velocidade por
+- **✅ R1 — Núcleo adaptativo** (maior ganho): limiar por histograma + rastreio de velocidade por
   segmento + cruzamento com histerese + sync difuso + re-sync + recuperação parcial. Já deve
   recuperar boa parte das 14 NO-SYNC. *(refatora `wav.ts: decodeStreamFromSamples`.)*
-- **R2 — Botão "Recuperar" (varredura automática):** grade de parâmetros, escolhe o melhor por
+- **✅ R2 — Botão "Recuperar" (varredura automática):** grade de parâmetros, escolhe o melhor por
   nº de blocos válidos; por segmento. Um clique na aba K7.
-- **R3 — Diagnóstico:** histograma + mapa de blocos bom/ruim + re-decode de região. Mostra ao
+- **✅ R3 — Diagnóstico (v1.0.63):** histograma + mapa de blocos bom/ruim + re-decode de região. Mostra ao
   usuário ONDE falha.
-- **R4 — Fusão de capturas ("RAID"):** abrir/gravar N capturas e fundir os blocos bons. Vale para
+- **✅ R4 — Fusão de capturas ("RAID") (v1.0.63):** abrir/gravar N capturas e fundir os blocos bons. Vale para
   `.wav` salvos e para passes do REC.
-- **R5 — Pré-filtros:** DC, AGC, passa-faixa, azimute — limpeza opcional antes do decode.
-- **R6 — Captura ao vivo (REC):** medidor de **qualidade de sinal / histograma em tempo real**
-  durante a gravação (saber se o passe está bom antes de confiar nele) + fluxo de **multi-passe**
-  (gravar a mesma fita várias vezes e fundir). Ajuda a achar o melhor **azimute** da cabeça.
+- **✅ R5 — Pré-filtros (v1.0.63):** DC, AGC, passa-faixa (Faixa), azimute (Agudos) + seleção de canal estéreo —
+  limpeza opcional. **Os efeitos agora se aplicam à própria ONDA** (o PLAY e o mini-XRoar tocam o resultado).
+- **✅ R6 — Captura ao vivo (REC) (v1.0.63):** fluxo de **multi-passe** (gravar a mesma fita várias vezes e
+  fundir, via R4) + diagnóstico (R3) da qualidade de cada passe. Ajuda a achar o melhor **azimute** da cabeça.
+  *(O medidor de **histograma em TEMPO REAL** durante a captura segue como refinamento menor PENDENTE — o VU
+  já existe.)*
+
+**Pendente (futuro):**
+- **Medidor de qualidade em tempo real DURANTE o REC** (R6) — refinamento menor; hoje o VU já dá um indicativo.
+- **Mais famílias de loader** além de SoftKristian e PLAN-SOFT/GAMEPACK (detecção universal multi-softhouse).
 
 ## 5. Integração com o que já existe
 

@@ -1,22 +1,32 @@
 # Roadmap 1 — Suporte a OS-9 / NitrOS-9 (sistema de arquivos RBF)
 
-> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> ## ✅ STATUS ATUAL — 2026-06-12 (v1.0.64 publicada; próxima planejada v1.0.65)
 > **A maior parte deste roadmap está CONCLUÍDA.** A aba **OS-9** entrega leitura + escrita completas:
 > navegar (árvore/lista/prato de clusters), criar disco em branco (4 geometrias), nova pasta, renomear,
 > inserir, excluir, defrag (arquivo + disco); **tornar bootável** e **clonar disco de sistema** com
 > **gabaritos NitrOS-9 embutidos** (360K/720K) + opção "referência sua" (158K/180K e demais); **SDF**
-> (CoCoSDC) leitura+escrita; ponte **"Testar" → XRoar** (força CoCo3+RGB+Suave); **partições OS-9 em
-> container** (MiniIDE/CoCoSDC) com leitura + edição-no-arquivo travada na área de sistema; leitura de DMK.
+> (CoCoSDC) leitura+escrita; ponte **"Testar" → XRoar** (força CoCo3+RGB+Suave, ou Dragon 64 + BOOT em
+> plataforma Dragon — D11); **partições OS-9 em container** (MiniIDE/CoCoSDC) com leitura + edição-no-arquivo
+> travada na área de sistema; leitura de DMK.
 >
-> **PENDENTE (OS-9):**
-> - ~~**D11** — auto-trocar o XRoar para máquina **Dragon** ao testar um disco OS-9 Dragon~~ — **FEITO (v1.0.57):**
->   `handleTestOs9InXroar` agora respeita o toggle de plataforma (Dragon → Dragon 64 + `BOOT`; CoCo → CoCo 3 +
->   `DOS` + RGB/Suave), alinhado ao modal "Testar". (O RBF é idêntico em CoCo/Dragon → segue a plataforma.)
-> - **Harness de round-trip da escrita RBF** com CRC de módulo (verificação automatizada — §O6).
-> - **BOOT real CONFIRMADO (2026-06-09):** "Novo → Bootável → 360K ✓ gabarito" (clone) boota até o shell no
->   XRoar. Adicionada **proteção** (v1.0.47): o botão "Bootável" (só-boot) avisa em disco sem sistema e
->   oferece criar um "Bootável COM sistema" na hora. Falta só validar o make-bootable "só boot" sobre um
->   disco que JÁ tem o sistema (uso estreito).
+> **DESDE v1.0.57 (atualização v1.0.64):** o roadmap OS-9 já estava maduro em v1.0.57 e as versões
+> v1.0.58–v1.0.64 NÃO acrescentaram recursos novos ao motor RBF — concentraram-se em DSK/contêiner, K7,
+> BASIC, FujiNet e gravação de cartão CF. Os únicos toques relacionados a OS-9:
+> - **Imagem OS-9 TRUNCADA reconhecida e roteada à aba OS-9 com aviso (v1.0.55/.57):** uma imagem cujo
+>   cabeçalho indica OS-9 mas que está truncada (ex.: vinda de download/TNFS) agora é identificada e
+>   roteada à aba OS-9 com aviso claro, em vez do erro "Invalid DSK image size".
+> - **OS-9 servido pela FujiNet — BOOT REAL na PLACA CONFIRMADO (2026-06-12):** o cliente/servidor TNFS
+>   (FujiNet) que serve discos `.dsk` OS-9 foi validado end-to-end em HARDWARE real. O FujiNet é
+>   transparente a bloco, então não toca o RBF, mas com isso a entrega de discos OS-9 pela placa está
+>   comprovada (ver ROADMAP_FUJINET.md).
+>
+> **PENDENTE (OS-9) — os dois únicos itens em aberto:**
+> - **Harness de round-trip da escrita RBF** com CRC de módulo (verificação automatizada — §O6). Ainda
+>   NÃO feito (item de engenharia).
+> - **make-bootable "só boot" sobre disco que JÁ tem sistema** — o botão "Só boot (avançado)" existe
+>   (`Os9Tab.tsx`); falta CONFIRMAR o BOOT real no XRoar nesse caso estreito (humano). O caminho comum
+>   ("Novo → Bootável → 360K ✓ gabarito"/clone) já foi CONFIRMADO bootando até o shell (2026-06-09), e a
+>   **proteção** (v1.0.47) avisa em disco sem sistema e oferece "Bootável COM sistema" na hora.
 > - Formatar/criar um **cartão FAT do zero** — marcado como NÃO necessário (os discos já abrem/editam).
 
 > Objetivo: ler (e depois editar) discos **OS-9/NitrOS-9** no CoCoDCU. Hoje só
@@ -80,10 +90,11 @@ As Fases 2 e 3 foram ENTREGUES (v1.0.17→v1.0.23; DMK em v1.0.28; ponte XRoar e
   = 7/7 por disco (`tools/os9real.ts`); SDF vs DMK gêmeo = 630/630 (`tools/sdfprobe.ts`). Corpus
   (gitignored): `amostras/os9/nitros9-v3.3.0-6809-L2/` e `amostras/sdf/`.
 
-**Pendências OS-9 que SOBRAM:** **confirmar o BOOT real no XRoar** dos discos que escrevemos/tornamos
-bootáveis (único passo que exige humano — `MADE_BOOTABLE_360k.dsk`, `nos9_40d_1_WRITTEN.dsk` prontos no
-corpus); §O6 (harness round-trip de escrita OS-9/RBF com CRC de módulo + Toolshed `os9 dcheck` opcional,
-NÃO instalado); **D11** auto-trocar o XRoar p/ Dragon ao testar OS-9 Dragon; **SDF** (sem amostra; Fase 4).
+**Pendências OS-9 que SOBRAM:** (atualizado v1.0.64 — ver header) o caso comum de **BOOT real** já foi
+confirmado no XRoar; resta só o **make-bootable "só boot" sobre disco que JÁ tem sistema** (humano);
+§O6 (harness round-trip de escrita OS-9/RBF com CRC de módulo + Toolshed `os9 dcheck` opcional, NÃO
+instalado) continua em aberto. ~~**D11**~~ FEITO (v1.0.57). ~~**SDF**~~ FEITO: leitura (v1.0.40-validada)
++ escrita (v1.0.41).
 
 ---
 

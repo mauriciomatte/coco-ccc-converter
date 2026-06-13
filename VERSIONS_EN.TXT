@@ -10,6 +10,37 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.65 — 2026-06-13
+--------------------------------------------------------------------------------
+"Servers" tab with a DriveWire (serial) server and four 5.25" floppy drives; unified "Send to..." hub; defragment by rebuild (disk and container); create/expand a DriveWire container; and a Linux installer fix.
+
+ADDED
+  • DRIVEWIRE (SERIAL) SERVER: the "FujiNet" tab became "Servers", with 3 columns (Access servers · WiFi
+    server · DriveWire server) and splitters. DriveWire serves up to 4 drives to a REAL CoCo over a SERIAL
+    CABLE (the CoCo's native transport, no WiFi). Each drive is a DRAWN 5.25" full-height unit: drag/click to
+    mount a .dsk, a "Machine" selector (CoCo 1/2/3 -> baud), read-write and eject inside the drive, an LED,
+    and "View files" with ◀ ▶ navigation when the disk is a container.
+  • "SEND TO..." HUB: a single "Send" button in the DSK tab opens a modal with ALL destinations, in tab
+    order: the DISK (XRoar, Greaseweazle, DriveWire, FujiNet, device .dsk, CF card) and the selected FILE
+    (K7 tape, XRoar, BASIC editor, Windows). XRoar and DriveWire have a D0-D3 drive selector.
+  • CREATE/EXPAND A DRIVEWIRE CONTAINER: a panel button forms a multi-disk container from a single .dsk (and
+    expands existing ones, up to 256 disks). Dropping a .dsk onto a pane that already has content asks: open
+    in the pane / append (container) / import the files.
+  • SEND to DriveWire either the pane's disk OR the WHOLE container.
+
+CHANGED / IMPROVED
+  • DEFRAGMENT BY REBUILD: rewrites to a fresh blank image, writing files sequentially -> 100% contiguous,
+    guaranteed and safe (atomic). The nostalgic animation stays.
+  • "DEFRAGMENT CONTAINER": defragments ALL disks of the container (0 to last), with a per-disk animation,
+    skipping already-contiguous ones (unless reordering A->Z or by size), saving IN-PLACE; cancelling finishes
+    the current disk and stops (nothing left half-done).
+  • The DriveWire "View files" modal now has a FIXED size (the navigation buttons no longer move; the list scrolls).
+
+FIXED
+  • LINUX INSTALLER: the app would not launch on Ubuntu 24.04+ (Chromium sandbox / zygote error). Fixed by
+    disabling the Chromium sandbox on Linux (local app) -> it launches normally, with no manual steps.
+
+--------------------------------------------------------------------------------
 v1.0.64 — 2026-06-11
 --------------------------------------------------------------------------------
 SIDEKICK disk names in the panel + "Clear name", CF card writing with on-demand UAC elevation + success confirmation, "Clear range" of disks, and BASIC save options

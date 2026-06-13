@@ -46,7 +46,8 @@ import {
   MoreHorizontal,
   Search,
   Globe,
-  Send
+  Send,
+  Plug
 } from 'lucide-react';
 import HexEditor from './components/HexEditor';
 import FujiNetTab from './components/FujiNetTab';
@@ -108,7 +109,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
     tabBasic: 'BAS',
-    tabFujinet: 'FujiNet',
+    tabFujinet: 'Servidores',
     hexEditorBtn: 'Editor Hexadecimal / Desmontador 6809 (HEX/DISASM)',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Leitura/Gravação de Discos Reais',
@@ -279,7 +280,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     tabXroar: 'XRoar',
     tabEprom: 'EPROM',
     tabBasic: 'BAS',
-    tabFujinet: 'FujiNet',
+    tabFujinet: 'Servers',
     hexEditorBtn: 'Hex Editor / 6809 Disassembler (HEX/DISASM)',
     tabGw: 'GW',
     gwTitle: 'Greaseweazle — Read/Write Real Disks',
@@ -492,6 +493,12 @@ export default function App() {
   const [currentLang, setCurrentLang] = useState<'pt-br' | 'en-us'>('pt-br');
   const [activeTab, setActiveTab] = useState<'dsk' | 'k7' | 'os9' | 'xroar' | 'gw' | 'basic' | 'fujinet' | 'eprom'>('dsk');
   const [xroarLoad, setXroarLoad] = useState<{ name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string } | null>(null);
+  // Disco enviado da aba DSK para o painel DriveWire (aba Servidores): o painel monta no slot escolhido.
+  const [pendingDw, setPendingDw] = useState<{ filePath: string; name: string; slot?: number; key: number } | null>(null);
+  const [sendHubOpen, setSendHubOpen] = useState(false);  // hub unificado "Enviar para…"
+  const [dwDrive, setDwDrive] = useState(0);               // drive destino (0–3) ao enviar p/ DriveWire (igual ao xroarDrive)
+  const EPROM_UNLOCKED = false;                            // gate ÚNICO do EPROM oculto — destravar JUNTO da aba EPROM (ver memória eprom-hidden-until-tab-unlocked)
+  const [dropDskModal, setDropDskModal] = useState<{ which: 'A' | 'B'; bytes: Uint8Array; name: string } | null>(null); // soltar .dsk em painel c/ conteúdo → abrir/adicionar/importar
   const [xroarExpanded, setXroarExpanded] = useState(false); // aba XRoar em tela cheia (esconde laterais + console)
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null); // modal de ajuda (DSK/GW renderizados no App)
   // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
@@ -624,7 +631,7 @@ export default function App() {
   const [dskRedo, setDskRedo] = useState<any[]>([]);
   const [dskTopHeight, setDskTopHeight] = useState<number>(266); // -5% para dar folga à barra de ferramentas do DSK
   const [diskPicker, setDiskPicker] = useState<{ which: 'A' | 'B' } | null>(null); // modal de busca/salto de disco do contêiner
-  const [defragModal, setDefragModal] = useState<{ which: 'A' | 'B' } | null>(null); // modal de desfragmentação total
+  const [defragModal, setDefragModal] = useState<{ which: 'A' | 'B'; container?: boolean } | null>(null); // modal de desfragmentação (disco ou contêiner inteiro)
   const [defragOrder, setDefragOrder] = useState<'dir' | 'alpha' | 'size'>('dir'); // ordem dos arquivos na desfrag
   // Estado da animação de desfragmentação (modal nostálgico estilo defrag).
   const [defragRun, setDefragRun] = useState<{
@@ -1556,7 +1563,7 @@ export default function App() {
       // Formato do disco (RS-DOS x Dragon DOS) + geometria/setores (Dragon é somente leitura).
       format: res.format, geom: res.geom, totalSectors: res.totalSectors, usedSectors: res.usedSectors, freeSectors: res.freeSectors,
       container: count > 1 ? {
-        source: 'memory', kind: 'driveWire', full, count, index,
+        source: 'memory', kind: 'driveWire', full, count, index, sourcePath, // sourcePath p/ salvar IN-PLACE (desfrag de contêiner)
         entries: Array.from({ length: count }, (_, k) => ({ id: k, label: `Disco ${k}`, info: '', locator: { index: k } })),
       } : null
     });
@@ -1830,11 +1837,7 @@ export default function App() {
           }
         }
         if (aborted) break; // "cancelar tudo": arquivo atual NÃO realocado → descarta
-        if (frag) { // "finalizar arquivo atual" ainda conclui o arquivo em andamento
-          const res = await window.cocoApi.dskDefragFile(working, entry);
-          if (res.success) { working = res.image; processed++; const np = await window.cocoApi.readDskDirectory(working); if (np.success) setDefragRun((s) => s && { ...s, files: np.files, processed }); }
-          else { skipped++; setDefragRun((s) => s && { ...s, skipped }); }
-        }
+        if (frag) { processed++; setDefragRun((s) => s && { ...s, processed }); } // a transformação real é o rebuild no fim
         if (stopAfter) break;
       }
       if (aborted) { // cancelar tudo: descarta (painel intacto)
@@ -1842,17 +1845,118 @@ export default function App() {
         addLog(`Desfragmentação do painel ${which} cancelada.`, `Pane ${which} defragmentation cancelled.`, 'info');
         return;
       }
-      if (order === 'alpha') { const sr = await window.cocoApi.dskSortDirectory(working); if (sr.success) working = sr.image; }
+      // Transformação REAL: reconstrói numa imagem nova em branco (build-fresh) — garante 100% contíguo,
+      // independente de buracos livres. Atômico: o original (pane.buffer) fica intacto até aqui; undo já empilhado.
+      const rb = await window.cocoApi.dskDefragDisk(pane.buffer, order);
+      if (!rb?.success) {
+        setDefragRun((s) => s && { ...s, status: 'cancelled' });
+        addLog(`Desfragmentar (reconstruir): ${rb?.error || '?'}`, `Defrag (rebuild): ${rb?.error || '?'}`, 'warn');
+        return;
+      }
+      working = new Uint8Array(rb.image);
       await refreshPane(which, working);
       setSelectedDsk(null);
       const fp = await window.cocoApi.readDskDirectory(working);
       const endFrag = fp.success ? fragPercent(fp.files) : 0;
       setDefragRun((s) => s && { ...s, files: fp.success ? fp.files : s.files, endFrag, status: 'done', currentName: '', processed, skipped });
-      addLog(`Painel ${which} desfragmentado: ${processed} arquivo(s) movido(s)${skipped ? `, ${skipped} sem espaço contíguo` : ''}, fragmentação ${startFrag}% → ${endFrag}%. Lembre-se de salvar.`,
-        `Pane ${which} defragmented: ${processed} file(s) moved${skipped ? `, ${skipped} without contiguous room` : ''}, fragmentation ${startFrag}% → ${endFrag}%. Remember to save.`, 'success');
+      addLog(`Painel ${which} desfragmentado (reconstruído contíguo): ${parsed.files.length} arquivo(s), fragmentação ${startFrag}% → ${endFrag}%. Lembre-se de salvar.`,
+        `Pane ${which} defragmented (rebuilt contiguous): ${parsed.files.length} file(s), fragmentation ${startFrag}% → ${endFrag}%. Remember to save.`, 'success');
     } catch (err: any) {
       addLog(`Erro na desfragmentação: ${err?.message || err}`, `Defragment error: ${err?.message || err}`, 'error');
       setDefragRun((s) => s && { ...s, status: 'cancelled' }); // permite fechar com OK
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
+  // Desfragmenta o CONTÊINER inteiro: percorre disco 0..N, reconstrói cada um (build-fresh) com animação
+  // e grava de volta no slot. PULA discos já contíguos — A MENOS que o usuário peça reordenar (alpha/size),
+  // que vale p/ todos. Reusa a animação `defragRun`, `dskDefragDisk` e os IPCs de slot do "Limpar intervalo".
+  const handleDefragContainer = async (which: 'A' | 'B', order: 'dir' | 'alpha' | 'size') => {
+    const pane = getPane(which);
+    const c = pane?.container;
+    if (!c || !c.count) { addLog('Sem contêiner para desfragmentar.', 'No container to defragment.', 'warn'); return; }
+    const isMem = c.source === 'memory';
+    const backingFile: string | undefined = isMem ? c.sourcePath : c.filePath; // arquivo onde a desfrag SALVA IN-PLACE
+    const willReorder = order !== 'dir';
+    defragCtl.current = { pause: false, decision: null };
+    setImageBusy(true);
+    const full = isMem ? new Uint8Array(c.full) : null;
+    let processed = 0, skipped = 0, stop = false, touchedMem = false;
+    const waitChunk = async (ms: number) => { let w = 0; while (w < ms && !defragCtl.current.pause) { const s = Math.min(40, ms - w); await sleep(s); w += s; } };
+    try {
+      for (let i = 0; i < c.count; i++) {
+        // 1) lê o disco i
+        let diskBuf: Uint8Array | null = null;
+        const e = c.entries?.[i];
+        if (isMem && full) diskBuf = full.slice(i * STD_DISK, (i + 1) * STD_DISK);
+        else if (e?.locator) { const ex = await window.cocoApi.imageExtract(c.filePath, e.locator); if (ex?.success) diskBuf = new Uint8Array(ex.image); }
+        if (!diskBuf) { skipped++; continue; }
+        // 2) pula disco já contíguo — salvo se for reordenar (alpha/size aplica a TODOS)
+        const dir = await window.cocoApi.readDskDirectory(diskBuf);
+        const frag = dir.success ? fragPercent(dir.files) : 0;
+        if (!dir.success || (frag === 0 && !willReorder)) { skipped++; continue; }
+        // 3) animação nostálgica deste disco
+        const files = dir.files || [];
+        const totalWork = files.reduce((a: number, f: any) => a + (f.granuleChain?.length || 0), 0) || 1;
+        setDefragRun({ which, diskName: `${currentLang === 'pt-br' ? 'Contêiner — disco' : 'Container — disk'} ${i}/${c.count - 1}`, files, totalGranules: dir.totalGranules, currentName: '', doneGranules: 0, totalWork, status: 'spinup', startFrag: frag, endFrag: frag, processed: 0, skipped: 0 });
+        await waitChunk(DEFRAG_SPINUP_MS);
+        setDefragRun((s) => s && { ...s, status: 'running' });
+        let done = 0;
+        for (const f of files) {
+          if (stop) break;
+          if (defragCtl.current.pause) { await waitForDefragDecision(); stop = true; break; } // cancelar = FINALIZA este disco e PARA
+          setDefragRun((s) => s && { ...s, currentName: f.fullName });
+          await waitChunk(DEFRAG_SEEK_MS);
+          if (defragCtl.current.pause) { await waitForDefragDecision(); stop = true; break; }
+          const gch = f.granuleChain || [];
+          for (let g = 0; g < gch.length; g++) {
+            await waitChunk(DEFRAG_GRAN_MS); done++; setDefragRun((s) => s && { ...s, doneGranules: done });
+            if (defragCtl.current.pause) { await waitForDefragDecision(); stop = true; break; }
+          }
+          if (stop) break;
+        }
+        // 4) FINALIZA o disco atual SEMPRE (mesmo ao cancelar): reconstrói + grava no slot — nunca pela metade
+        const rb = await window.cocoApi.dskDefragDisk(diskBuf, order);
+        if (rb?.success) {
+          const rebuilt = new Uint8Array(rb.image);
+          if (isMem && full) { full.set(rebuilt, i * STD_DISK); touchedMem = true; }
+          else if (e?.locator) {
+            if (c.kind === 'miniide' && e.locator.offset != null) await window.cocoApi.imageWriteSlot(c.filePath, e.locator.offset, rebuilt);
+            else if (c.kind === 'cocosdc' && e.locator.path) await window.cocoApi.imageFatWriteback(c.filePath, e.locator.path, rebuilt);
+          }
+          processed++;
+        } else skipped++; // não-RS-DOS / DIR art → pula
+        if (stop) break;
+      }
+      // SALVA IN-PLACE (padrão único): .img já gravado por slot; DriveWire grava o .dsk inteiro no arquivo de origem.
+      let savedToFile = !isMem;
+      if (isMem && full) {
+        if (backingFile && touchedMem) {
+          const sv = await window.cocoApi.saveDskOverwrite(backingFile, full);
+          savedToFile = !!sv?.success;
+          if (!sv?.success) addLog(`Salvar contêiner: ${sv?.error || '?'}`, `Save container: ${sv?.error || '?'}`, 'error');
+        }
+        const cur = c.index;
+        const slice = full.slice(cur * STD_DISK, (cur + 1) * STD_DISK);
+        const res = await window.cocoApi.readDskDirectory(slice);
+        const prev = getPane(which) || {};
+        setPane(which, { ...prev, buffer: slice, size: slice.length, files: res.files, freeGranules: res.freeGranules, totalGranules: res.totalGranules, format: res.format, geom: res.geom, totalSectors: res.totalSectors, usedSectors: res.usedSectors, freeSectors: res.freeSectors, container: { ...c, full } });
+        if (savedToFile) clearDirty(which); else markDirty(which); // sem arquivo de origem (contêiner novo) → exige salvar manual
+      } else {
+        clearDirty(which);
+        await doSelectContainerDisk(which, c.index); // relê o disco atual (já gravado no .img)
+      }
+      setSelectedDsk(null);
+      setDefragRun((s) => s && { ...s, status: 'done', currentName: '', diskName: currentLang === 'pt-br' ? 'Contêiner' : 'Container', processed, skipped, endFrag: 0 });
+      const saveNote = savedToFile
+        ? (currentLang === 'pt-br' ? ' (salvo no arquivo).' : ' (saved to file).')
+        : (currentLang === 'pt-br' ? ' — salve o contêiner (sem arquivo de origem).' : ' — save the container (no source file).');
+      addLog(`Contêiner do painel ${which} desfragmentado: ${processed} disco(s)${stop ? ' (parado pelo usuário, disco atual finalizado)' : ''}${skipped ? `, ${skipped} pulado(s)` : ''}.${saveNote}`,
+        `Pane ${which} container defragmented: ${processed} disk(s)${stop ? ' (stopped by user, current disk finished)' : ''}${skipped ? `, ${skipped} skipped` : ''}.${saveNote}`, 'success');
+    } catch (err: any) {
+      addLog(`Erro na desfragmentação do contêiner: ${err?.message || err}`, `Container defragment error: ${err?.message || err}`, 'error');
+      setDefragRun((s) => s && { ...s, status: 'cancelled' });
     } finally {
       setImageBusy(false);
     }
@@ -2266,6 +2370,26 @@ export default function App() {
       [{ name: 'RS-DOS Disk (.dsk)', extensions: ['dsk'] }, { name: 'All Files', extensions: ['*'] }]);
     if (r?.success) addLog(`Disco enviado: ${r.filePath} — grave/copie no dispositivo (CoCoSDC, etc.).`, `Disk sent: ${r.filePath} — write/copy it to the device (CoCoSDC, etc.).`, 'success');
     else if (r?.error) addLog(`Enviar p/ dispositivo: ${r.error}`, `Send to device: ${r.error}`, 'error');
+  };
+
+  // Enviar o disco do painel ativo para um DRIVE do servidor DriveWire (aba Servidores). Grava o buffer
+  // atual num .dsk temporário e entrega o caminho ao painel DW, que o monta num slot livre. (Futuro: vira
+  // o destino "DriveWire" do dispatcher unificado "Enviar disco".)
+  const handleSendToDriveWire = async () => {
+    const pane = getPane(activePane);
+    if (!pane?.buffer) { addLog('Painel ativo sem imagem.', 'Active pane has no image.', 'warn'); return; }
+    // Contêiner DriveWire (em memória): envia a imagem INTEIRA (todos os discos) — assim o CoCo navega
+    // os discos via HDB-DOS e o "Ver arquivos" mostra ◀ ▶ X/Y. Senão, envia só o disco atual.
+    const isMemContainer = pane.container?.source === 'memory' && pane.container?.full;
+    const buf = isMemContainer ? pane.container.full : pane.buffer;
+    const count = isMemContainer ? pane.container.count : 1;
+    const name = (pane.fileName || (isMemContainer ? 'CONTAINER.DSK' : 'DISCO.DSK')).replace(/[^A-Za-z0-9._-]/g, '_') || 'DISCO.DSK';
+    const r = await window.cocoApi.dwStageDisk(name, buf);
+    if (!r?.success) { addLog(`Enviar p/ DriveWire: ${r?.error || '?'}`, `Send to DriveWire: ${r?.error || '?'}`, 'error'); return; }
+    setPendingDw({ filePath: r.filePath, name: r.name || name, slot: dwDrive, key: Date.now() });
+    setActiveTab('fujinet');
+    addLog(count > 1 ? `Contêiner do painel ${activePane} (${count} discos) enviado ao DriveWire — montado num drive na aba Servidores.` : `Disco do painel ${activePane} enviado ao DriveWire — montado num drive na aba Servidores.`,
+           count > 1 ? `Pane ${activePane} container (${count} disks) sent to DriveWire — mounted on a drive in the Servers tab.` : `Pane ${activePane} disk sent to DriveWire — mounted on a drive in the Servers tab.`, 'success');
   };
 
   // Abre o modal "Gravar em cartão CF" (reflash da .img do contêiner do painel ativo) e lista os removíveis.
@@ -2885,12 +3009,53 @@ export default function App() {
     } catch (err: any) { addLog(`Inserir imagem: ${err.message}`, `Insert image: ${err.message}`, 'error'); }
   };
 
-  // LIMPAR INTERVALO — abre o modal pedindo XX..YY (nº físico dos discos) p/ um contêiner de arquivo.
+  // INSERIR .dsk NO FINAL de um contêiner DriveWire (em memória). Observa o limite de 256 discos
+  // (nº de drive do DriveWire é 1 byte → 0..255). Salvar o contêiner grava o arquivo inteiro.
+  // Adiciona um disco (bytes) ao container do painel: se JÁ for container DriveWire, ANEXA; se for um disco
+  // RS-DOS único de 160 KB (35T), PROMOVE a container de 2 discos. Observa o limite de 256.
+  const addDiskToContainer = (which: 'A' | 'B', bytes: Uint8Array, name: string) => {
+    const pane = getPane(which);
+    if (!pane) return;
+    let nd = bytes;
+    if (nd.length !== STD_DISK) { const f = new Uint8Array(STD_DISK); f.set(nd.subarray(0, STD_DISK)); nd = f; } // normaliza p/ 161.280
+    const c = pane.container;
+    if (c && c.source === 'memory' && c.kind === 'driveWire' && c.full) {
+      if (c.count >= 256) { addLog('Limite de 256 discos atingido.', '256-disk limit reached.', 'warn'); return; }
+      const full = new Uint8Array(c.full.length + STD_DISK); full.set(c.full, 0); full.set(nd, c.full.length);
+      const newCount = c.count + 1;
+      const entries = [...(c.entries || []), { id: newCount - 1, label: `Disco ${newCount - 1}`, info: '', locator: { index: newCount - 1 } }];
+      setPane(which, { ...pane, container: { ...c, full, count: newCount, entries } });
+      markDirty(which);
+      addLog(`Disco "${name}" anexado — container com ${newCount} discos. Salve para gravar.`, `Disk "${name}" appended — container with ${newCount} disks. Save to persist.`, 'success');
+      return;
+    }
+    if (!pane.container && pane.format !== 'dragon' && pane.buffer?.length === STD_DISK) {
+      const full = new Uint8Array(STD_DISK * 2); full.set(pane.buffer, 0); full.set(nd, STD_DISK);
+      const entries = [0, 1].map(k => ({ id: k, label: `Disco ${k}`, info: '', locator: { index: k } }));
+      setPane(which, { ...pane, container: { source: 'memory', kind: 'driveWire', full, count: 2, index: 0, sourcePath: pane.sourcePath, entries } });
+      markDirty(which);
+      addLog(`Container criado: disco atual + "${name}" (2 discos). Salve para gravar o .dsk multi-disco.`, `Container created: current disk + "${name}" (2 disks). Save to persist the multi-disk .dsk.`, 'success');
+      return;
+    }
+    addLog('Para formar container é preciso um disco RS-DOS de 160 KB (35T) ou um container DriveWire já aberto.', 'Forming a container needs a 160 KB (35T) RS-DOS disk or an already-open DriveWire container.', 'warn');
+  };
+
+  // "Adicionar .dsk (formar/expandir container)": escolhe um .dsk no PC e chama addDiskToContainer.
+  const appendDriveWireDisk = async (which: 'A' | 'B') => {
+    const r = await window.cocoApi.pickDiskImage?.();
+    if (!r || r.cancelled) return;
+    if (!r.success) { addLog(`Adicionar: ${r.error}`, `Add: ${r.error}`, 'error'); return; }
+    addDiskToContainer(which, new Uint8Array(r.data), r.name);
+  };
+
+  // LIMPAR INTERVALO — abre o modal pedindo XX..YY (nº físico dos discos) p/ MiniIDE/CoCoSDC (arquivo) ou DriveWire (memória).
   const openClearRange = (which: 'A' | 'B') => {
     const c = getPane(which)?.container;
-    if (!c?.entries?.length || c.source !== 'file' || !(c.kind === 'miniide' || c.kind === 'cocosdc')) {
-      addLog('Limpar intervalo: disponível em contêineres MiniIDE/CoCoSDC abertos de arquivo (.img/.vhd).',
-             'Clear range: available on MiniIDE/CoCoSDC containers opened from a file (.img/.vhd).', 'warn');
+    const isFileMulti = c?.source === 'file' && (c.kind === 'miniide' || c.kind === 'cocosdc');
+    const isDriveWire = c?.source === 'memory' && c.kind === 'driveWire';
+    if (!c?.entries?.length || !(isFileMulti || isDriveWire)) {
+      addLog('Limpar intervalo: disponível em contêineres MiniIDE/CoCoSDC (arquivo) ou DriveWire.',
+             'Clear range: available on MiniIDE/CoCoSDC (file) or DriveWire containers.', 'warn');
       return;
     }
     const slots = c.entries.map((e: any, i: number) => (e.slot ?? e.id ?? i));
@@ -2924,6 +3089,25 @@ export default function App() {
     const blankR = await window.cocoApi.dskNewBlank(35);
     if (!blankR?.success) { addLog('Limpar intervalo: falha ao criar disco em branco.', 'Clear range: failed to create a blank disk.', 'error'); return; }
     const blank = new Uint8Array(blankR.image);
+    // Contêiner DriveWire (em MEMÓRIA): limpa os trechos no buffer e atualiza o painel; "Salvar" grava o arquivo todo.
+    if (c.source === 'memory' && c.full) {
+      const full = new Uint8Array(c.full);
+      for (const e of targets as any[]) { const idx = e.locator?.index ?? e.id ?? 0; full.set(blank, idx * STD_DISK); }
+      const newContainer = { ...c, full };
+      const prev = getPane(which) || {};
+      const curInRange = (targets as any[]).some(e => (e.locator?.index ?? e.id) === c.index);
+      if (curInRange) {
+        const sliceR = await window.cocoApi.readDskDirectory(blank);
+        setPane(which, { ...prev, buffer: blank, size: blank.length, files: sliceR.files, freeGranules: sliceR.freeGranules, totalGranules: sliceR.totalGranules, format: sliceR.format, geom: sliceR.geom, totalSectors: sliceR.totalSectors, usedSectors: sliceR.usedSectors, freeSectors: sliceR.freeSectors, container: newContainer });
+      } else {
+        setPane(which, { ...prev, container: newContainer });
+      }
+      markDirty(which);
+      addLog(`Limpar intervalo ${lo}–${hi}: ${targets.length} disco(s) do contêiner DriveWire viraram VAZIOS (salve para gravar).`,
+             `Clear range ${lo}–${hi}: ${targets.length} DriveWire disk(s) are now EMPTY (save to persist).`, 'success');
+      setClearRangeConfirm(null);
+      return;
+    }
     setCrBusy(true); setCrProgress({ done: 0, total: targets.length });
     let ok = 0, fail = 0; const errs: string[] = [];
     for (let i = 0; i < targets.length; i++) {
@@ -3248,6 +3432,13 @@ export default function App() {
         return;
       }
       // sem .dsk → segue para a importação (doAddBatch cria a imagem nova)
+    } else if (arr.length === 1 && arr[0].name.toLowerCase().endsWith('.dsk')) {
+      // Painel COM imagem + UM .dsk solto → pergunta: abrir / adicionar ao container / importar arquivos.
+      const file = arr[0];
+      const reader = new FileReader();
+      reader.onload = () => setDropDskModal({ which, bytes: new Uint8Array(reader.result as ArrayBuffer), name: file.name });
+      reader.readAsArrayBuffer(file);
+      return;
     }
 
     // Painel COM imagem: importa o conteúdo dos itens soltos para a imagem ativa
@@ -4073,6 +4264,11 @@ export default function App() {
                       ⚠ {currentLang === 'pt-br' ? 'Formato não suportado' : 'Unsupported format'}
                     </span>
                   )}
+                  {/* Disco RS-DOS único: botão p/ FORMAR container — MESMA posição do "Inserir .dsk" do container,
+                      pra não "pular de lugar" quando vira container (vira ◀▶ + "Inserir .dsk no final"). */}
+                  {!pane.container && pane.format !== 'dragon' && pane.buffer?.length === 161280 && (
+                    <button onClick={() => appendDriveWireDisk(which)} className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1" style={{ padding: '2px 6px', color: '#34d399', borderColor: '#34d39955' }} title={currentLang === 'pt-br' ? 'Adicionar um .dsk ao final → forma um container multi-disco (DriveWire/HDBDOS)' : 'Append a .dsk → forms a multi-disk container (DriveWire/HDBDOS)'}><Layers size={11} /> {currentLang === 'pt-br' ? 'Adicionar .dsk (container)' : 'Add .dsk (container)'}</button>
+                  )}
                   {/* Navegação do contêiner: "DISCO" + índice editável + lupa (centralizada). */}
                   {pane.container && (
                     <div className="flex flex-col gap-1 bg-slate-950/40 rounded p-1.5 border border-[#a78bfa]/40 w-full" style={{ maxWidth: 176 }} onClick={(e) => e.stopPropagation()}>
@@ -4133,7 +4329,16 @@ export default function App() {
                           title={currentLang === 'pt-br' ? 'Inserir um .dsk/.os9 do PC no cartão CoCoSDC (grava no arquivo)' : 'Insert a .dsk/.os9 from the PC into the CoCoSDC card (writes to the file)'}
                         ><FileInput size={11} /> {currentLang === 'pt-br' ? 'Inserir disco' : 'Insert disk'}</button>
                       )}
-                      {pane.container.source === 'file' && (pane.container.kind === 'miniide' || pane.container.kind === 'cocosdc') && !pane.container.suspect && (
+                      {pane.container.source === 'memory' && pane.container.kind === 'driveWire' && (
+                        <button
+                          onClick={() => appendDriveWireDisk(which)}
+                          disabled={imageBusy || pane.container.count >= 256}
+                          className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1"
+                          style={{ padding: '2px 6px', color: '#34d399', borderColor: '#34d39955' }}
+                          title={currentLang === 'pt-br' ? 'Anexar um .dsk (35T RS-DOS) ao FINAL do contêiner DriveWire (máx. 256). Salve para gravar.' : 'Append a .dsk (35T RS-DOS) to the END of the DriveWire container (max 256). Save to persist.'}
+                        ><FileInput size={11} /> {currentLang === 'pt-br' ? (pane.container.count >= 256 ? 'Cheio (256 discos)' : 'Inserir .dsk no final') : (pane.container.count >= 256 ? 'Full (256 disks)' : 'Append .dsk')}</button>
+                      )}
+                      {((pane.container.source === 'file' && (pane.container.kind === 'miniide' || pane.container.kind === 'cocosdc')) || (pane.container.source === 'memory' && pane.container.kind === 'driveWire')) && !pane.container.suspect && (
                         <button
                           onClick={() => openClearRange(which)}
                           disabled={imageBusy}
@@ -4141,6 +4346,9 @@ export default function App() {
                           style={{ padding: '2px 6px', color: '#f87171', borderColor: '#f8717155' }}
                           title={currentLang === 'pt-br' ? 'Limpar um INTERVALO de discos (XX..YY) — substitui por imagens VAZIAS de uma só vez. APAGA os dados.' : 'Clear a RANGE of disks (XX..YY) — replaces them with EMPTY images at once. ERASES data.'}
                         ><Eraser size={11} /> {currentLang === 'pt-br' ? 'Limpar intervalo' : 'Clear range'}</button>
+                      )}
+                      {((pane.container.source === 'file' && (pane.container.kind === 'miniide' || pane.container.kind === 'cocosdc')) || (pane.container.source === 'memory' && pane.container.kind === 'driveWire')) && !pane.container.suspect && (
+                        <button onClick={() => { setActivePane(which); setDefragOrder('dir'); setDefragModal({ which, container: true }); }} disabled={imageBusy} className="dsk-tool w-full text-[10px] font-bold uppercase tracking-wide flex items-center justify-center gap-1" style={{ padding: '2px 6px', color: '#34d399', borderColor: '#34d39955' }} title={currentLang === 'pt-br' ? 'Desfragmentar TODO o contêiner (disco 0 até o último): reconstrói cada disco contíguo. Pula os já contíguos, salvo se reordenar.' : 'Defragment the WHOLE container (disk 0 to last): rebuilds each disk contiguous. Skips already-contiguous ones unless reordering.'}><Layers size={11} /> {currentLang === 'pt-br' ? 'Desfragmentar contêiner' : 'Defragment container'}</button>
                       )}
                     </div>
                   )}
@@ -5178,17 +5386,8 @@ export default function App() {
                 <SaveAll size={15} />
               </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              <button onClick={handleTestInXroar} disabled={!getPane(activePane)} title={t('dskToolXroar')} aria-label={t('dskToolXroar')} className="dsk-tool" style={{ color: 'var(--primary)' }}><MonitorPlay size={15} /></button>
-              <select value={xroarDrive} onChange={e => setXroarDrive(Number(e.target.value))} className="input-select text-[10px]" style={{ padding: '1px 2px', width: 42 }} title={currentLang === 'pt-br' ? 'Drive de destino no XRoar (0–3) para o teste do painel e para arquivos abertos' : 'Target XRoar drive (0–3) for the pane test and opened files'}>
-                {[0, 1, 2, 3].map(d => <option key={d} value={d}>D{d}</option>)}
-              </select>
-              <button onClick={handleDskWriteToGw} disabled={!getPane(activePane)} title={t('dskToolGw')} aria-label={t('dskToolGw')} className="dsk-tool"><HardDrive size={15} /></button>
-              {/* M2 — Enviar p/ dispositivo: salva o disco ativo como .dsk no destino (ex.: cartão CoCoSDC). */}
-              <button onClick={handleSendToDevice} disabled={!getPane(activePane)} title={currentLang === 'pt-br' ? 'Enviar para dispositivo: salva o disco ativo como .dsk (ex.: no cartão CoCoSDC montado no Windows)' : 'Send to device: save the active disk as .dsk (e.g. onto the CoCoSDC card mounted in Windows)'} className="dsk-tool"><Send size={15} /></button>
-              {/* Gravar em cartão CF (reflash da .img do contêiner) — só aparece com uma imagem .img aberta. */}
-              {getPane(activePane)?.container?.filePath && (
-                <button onClick={openCfReflash} title={currentLang === 'pt-br' ? 'Gravar a imagem .img (MiniIDE/CoCoSDC) num cartão CF — requer ADMINISTRADOR' : 'Write the .img (MiniIDE/CoCoSDC) image to a CF card — requires ADMINISTRATOR'} className="dsk-tool" style={{ color: '#f59e0b' }}><Database size={15} /></button>
-              )}
+              {/* ENVIAR — hub unificado (XRoar/GW/DriveWire/FujiNet/Dispositivo/CF + o arquivo selecionado). */}
+              <button onClick={() => setSendHubOpen(true)} disabled={!getPane(activePane)} title={currentLang === 'pt-br' ? 'Enviar o disco (ou o arquivo selecionado) para outro destino: XRoar, Greaseweazle, DriveWire, FujiNet, dispositivo, cartão CF…' : 'Send the disk (or the selected file) to another destination: XRoar, Greaseweazle, DriveWire, FujiNet, device, CF card…'} className="dsk-tool flex items-center gap-1" style={{ color: 'var(--primary)' }}><Send size={15} /> {currentLang === 'pt-br' ? 'Enviar' : 'Send'}</button>
               {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)] ml-2">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
               <span className="ml-auto"><HelpButton onClick={() => setHelpTopic('dsk')} lang={currentLang} /></span>
             </div>
@@ -5228,7 +5427,7 @@ export default function App() {
 
         {/* Aba FujiNet — sempre montada (display toggle) p/ preservar listagem/host/favoritos ao trocar de aba */}
         <div style={{ display: activeTab === 'fujinet' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <FujiNetTab lang={currentLang} onLog={addLog} onOpenImage={handleFujinetOpenImage} />
+          <FujiNetTab lang={currentLang} onLog={addLog} onOpenImage={handleFujinetOpenImage} pendingDw={pendingDw} onPendingDwConsumed={() => setPendingDw(null)} />
         </div>
 
         {/* SPLITTER 3 (Horizontal) — escondido quando o XRoar está expandido (tela cheia) */}
@@ -6129,6 +6328,100 @@ export default function App() {
         </div>
       )}
 
+      {/* Soltar UM .dsk num painel com conteúdo: abrir × adicionar ao container × importar arquivos. */}
+      {dropDskModal && (() => {
+        const m = dropDskModal;
+        const pane = getPane(m.which);
+        const pt = currentLang === 'pt-br';
+        const canContainer = !!pane && pane.format !== 'dragon' && (pane.buffer?.length === STD_DISK || (pane.container?.source === 'memory' && pane.container?.kind === 'driveWire'));
+        const close = () => setDropDskModal(null);
+        return (
+          <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={close}>
+            <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 520, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                <FileInput size={18} className="text-[var(--primary)]" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wide">{pt ? 'Imagem .dsk solta' : 'Dropped .dsk image'}</h3>
+              </div>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                <b className="normal-case">{m.name}</b> — {pt ? 'o painel já tem conteúdo. O que fazer com a imagem solta?' : 'the pane already has content. What to do with the dropped image?'}
+              </p>
+              <button onClick={() => { close(); loadPaneFromBuffer(m.which, m.bytes, m.name); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase text-left">{pt ? 'Abrir no painel (substitui o atual)' : 'Open in the pane (replaces current)'}</button>
+              <button onClick={() => { close(); addDiskToContainer(m.which, m.bytes, m.name); }} disabled={!canContainer} title={canContainer ? '' : (pt ? 'Precisa de um disco RS-DOS de 160 KB (35T) no painel' : 'Needs a 160 KB (35T) RS-DOS disk in the pane')} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase text-left disabled:opacity-40">{pt ? 'Adicionar ao final → formar/expandir container' : 'Append → form/expand a container'}</button>
+              <button onClick={async () => { close(); const out = await extractAllFromDsk(m.bytes); if (out.length) { beginAddBatch(m.which, out); } else addLog('Nada para importar do .dsk solto.', 'Nothing to import from the dropped .dsk.', 'warn'); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase text-left">{pt ? 'Importar os arquivos para o disco atual' : 'Import the files into the current disk'}</button>
+              <div className="flex justify-end"><button onClick={close} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button></div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* HUB "Enviar para…" — dispatcher unificado: destinos de DISCO e de ARQUIVO, na ordem das abas. */}
+      {sendHubOpen && (() => {
+        const L = (p: string, e: string) => (currentLang === 'pt-br' ? p : e);
+        const pane = getPane(activePane);
+        const sel = selectedDsk;
+        const hasFile = !!sel?.entries?.length;
+        const fileName = sel?.entries?.[0]?.fullName || sel?.entries?.[0]?.name || '';
+        const isBin = sel?.entries?.[0]?.fileType === 2;
+        const close = () => setSendHubOpen(false);
+        const diskDests: any[] = [
+          { key: 'xroar', icon: <MonitorPlay size={16} />, label: 'XRoar', desc: L('testar no emulador', 'test in the emulator'), enabled: !!pane, drive: 'xroar', run: () => { close(); handleTestInXroar(); } },
+          { key: 'gw', icon: <HardDrive size={16} />, label: 'Greaseweazle', desc: L('gravar disquete físico', 'write a physical floppy'), enabled: !!pane, run: () => { close(); handleDskWriteToGw(); } },
+          { key: 'dw', icon: <Plug size={16} />, label: 'DriveWire', desc: L('montar p/ o CoCo (serial)', 'mount for the CoCo (serial)'), enabled: !!pane, drive: 'dw', run: () => { close(); handleSendToDriveWire(); } },
+          { key: 'fujinet', icon: <Globe size={16} />, label: 'FujiNet', desc: L('servir por WiFi', 'serve over WiFi'), enabled: !!pane, run: () => { close(); setActiveTab('fujinet'); } },
+          { key: 'device', icon: <Send size={16} />, label: L('Dispositivo', 'Device'), desc: L('.dsk p/ CoCoSDC/pasta', '.dsk to CoCoSDC/folder'), enabled: !!pane, run: () => { close(); handleSendToDevice(); } },
+          { key: 'cf', icon: <Database size={16} />, label: L('Cartão CF', 'CF card'), desc: L('gravar .img no cartão', 'write .img to the card'), enabled: !!pane?.container?.filePath, reason: L('abra uma .img (MiniIDE/CoCoSDC)', 'open a .img (MiniIDE/CoCoSDC)'), run: () => { close(); openCfReflash(); } },
+        ];
+        const fileDests: any[] = [
+          { key: 'tape', icon: <AudioLines size={16} />, label: L('Fita (K7)', 'Tape (K7)'), desc: L('→ abrir a aba K7 ("Do disco")', '→ open the K7 tab ("From disk")'), enabled: hasFile, run: () => { close(); if (sel) setActivePane(sel.pane); setActiveTab('k7'); addLog('Use "Do disco" na aba K7 para empacotar o arquivo selecionado como fita.', 'Use "From disk" in the K7 tab to pack the selected file as a tape.', 'info'); } },
+          { key: 'xroarfile', icon: <MonitorPlay size={16} />, label: 'XRoar', desc: L('rodar o arquivo', 'run the file'), enabled: hasFile, run: () => { close(); if (sel?.entries?.[0]) handleRunFileInXroar(sel.pane, sel.entries[0]); } },
+          { key: 'basic', icon: <FileCode2 size={16} />, label: 'BASIC', desc: L('abrir no editor', 'open in the editor'), enabled: hasFile && !isBin, reason: L('só programas BASIC (não binário)', 'BASIC programs only (not binary)'), run: () => { close(); handleDskEditBas(); } },
+          ...(EPROM_UNLOCKED ? [{ key: 'eprom', icon: <FileInput size={16} />, label: 'EPROM', desc: L('converter p/ cartucho', 'convert to cartridge'), enabled: hasFile, run: () => { close(); setActiveTab('eprom'); } }] : []),
+          { key: 'win', icon: <Download size={16} />, label: 'Windows', desc: L('extrair / arrastar', 'extract / drag out'), enabled: hasFile, run: () => { close(); handleDskExtractToPc(); } },
+        ];
+        const Card = (dst: any) => (
+          <button key={dst.key} onClick={() => dst.enabled && dst.run()} disabled={!dst.enabled}
+            title={dst.enabled ? '' : (dst.reason || L('indisponível', 'unavailable'))}
+            className="glass-panel" style={{ textAlign: 'left', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, opacity: dst.enabled ? 1 : 0.4, cursor: dst.enabled ? 'pointer' : 'not-allowed' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: dst.enabled ? 'var(--primary)' : 'var(--text-muted)' }}>
+              {dst.icon}
+              <span className="text-xs font-bold normal-case" style={{ color: dst.enabled ? '#fff' : 'var(--text-muted)' }}>{dst.label}</span>
+              {!dst.enabled && <span style={{ marginLeft: 'auto', fontSize: 11 }}>🔒</span>}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{dst.desc}</span>
+            {dst.drive && dst.enabled && (
+              <span onClick={e => e.stopPropagation()} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
+                drive
+                <select value={dst.drive === 'xroar' ? xroarDrive : dwDrive} onChange={e => (dst.drive === 'xroar' ? setXroarDrive : setDwDrive)(Number(e.target.value))} className="input-select text-[10px]" style={{ padding: '1px 2px', width: 42 }}>
+                  {[0, 1, 2, 3].map(n => <option key={n} value={n}>D{n}</option>)}
+                </select>
+              </span>
+            )}
+          </button>
+        );
+        return (
+          <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={close}>
+            <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 660, maxWidth: '94%', maxHeight: '88%', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                <Send size={18} className="text-[var(--primary)]" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wide">{L('Enviar para…', 'Send to…')}</h3>
+                <button onClick={close} className="ml-auto dsk-tool" style={{ padding: '3px 6px' }}><X size={14} /></button>
+              </div>
+              <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {L('Disco', 'Disk')}: <b className="normal-case">{pane?.fileName || '—'}</b>
+                {hasFile && <> · {L('Arquivo', 'File')}: <b className="normal-case">{fileName}</b></>}
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-wider" style={{ color: 'hsl(120,35%,72%)' }}>{L('Enviar o DISCO', 'Send the DISK')}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>{diskDests.map(Card)}</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider mt-1" style={{ color: 'hsl(120,35%,72%)' }}>
+                {L('Enviar o ARQUIVO selecionado', 'Send the selected FILE')}
+                {!hasFile && <span style={{ color: 'var(--text-muted)', fontWeight: 400, textTransform: 'none' }}> — {L('selecione um arquivo na lista', 'select a file in the list')}</span>}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>{fileDests.map(Card)}</div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* LIMPAR INTERVALO de discos do contêiner (XX..YY → imagens vazias) */}
       {clearRangeModal && (
         <div className="glass-modal-overlay" onClick={() => { if (!crBusy) setClearRangeModal(null); }}>
@@ -6226,14 +6519,14 @@ export default function App() {
               <div className="flex items-center gap-3 p-4 border-b border-[var(--border)]">
                 <div className="p-2 rounded-full bg-[var(--primary-glow)] text-[var(--primary)] flex-shrink-0"><Database size={18} /></div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-sm font-bold text-white uppercase tracking-wide">{currentLang === 'pt-br' ? 'Desfragmentar disco' : 'Defragment disk'}</h3>
+                  <h3 className="text-sm font-bold text-white uppercase tracking-wide">{defragModal.container ? (currentLang === 'pt-br' ? 'Desfragmentar contêiner' : 'Defragment container') : (currentLang === 'pt-br' ? 'Desfragmentar disco' : 'Defragment disk')}</h3>
                   <div className="text-[11px] text-[var(--text-secondary)]">
                     {currentLang === 'pt-br' ? 'Painel' : 'Pane'} {defragModal.which} · {pane.files.length} {currentLang === 'pt-br' ? 'arquivos' : 'files'} · {currentLang === 'pt-br' ? 'fragmentação' : 'fragmentation'} {frag}%
                   </div>
                 </div>
                 <button onClick={() => !imageBusy && setDefragModal(null)} className="dsk-tool" style={{ padding: 6 }}><X size={15} /></button>
               </div>
-              {frag === 0 ? (
+              {(frag === 0 && !defragModal.container) ? (
                 <>
                   <div className="p-5 flex flex-col gap-2 items-center text-center">
                     <span style={{ fontSize: 30, color: 'var(--primary)', lineHeight: 1 }}>✓</span>
@@ -6251,17 +6544,26 @@ export default function App() {
               ) : (
                 <>
                   <div className="p-4 flex flex-col gap-3">
-                    <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
-                      {currentLang === 'pt-br'
-                        ? 'Reescreve numa imagem nova em branco, gravando os arquivos em sequência — fica 100% contíguo (otimiza a leitura em disco físico). Não-destrutivo: o painel fica marcado como não-salvo até você salvar.'
-                        : 'Rewrites to a fresh blank image, writing files sequentially — becomes 100% contiguous (optimizes physical-disk reads). Non-destructive: the pane is marked unsaved until you save.'}
-                    </p>
+                    {!defragModal.container && (
+                      <p className="text-[11px] text-[var(--text-secondary)] leading-relaxed">
+                        {currentLang === 'pt-br'
+                          ? 'Reescreve numa imagem nova em branco, gravando os arquivos em sequência — fica 100% contíguo (otimiza a leitura em disco físico). Não-destrutivo: o painel fica marcado como não-salvo até você salvar.'
+                          : 'Rewrites to a fresh blank image, writing files sequentially — becomes 100% contiguous (optimizes physical-disk reads). Non-destructive: the pane is marked unsaved until you save.'}
+                      </p>
+                    )}
+                    {defragModal.container && (
+                      <p className="text-[11px] leading-relaxed" style={{ color: '#fbbf24' }}>
+                        {currentLang === 'pt-br'
+                          ? '⚠ Desfragmenta TODO o contêiner (disco 0 ao último), um a um com animação, e SALVA DIRETO no arquivo (in-place) — você NÃO precisa salvar depois. Discos já contíguos são pulados (exceto se reordenar). Se cancelar, o disco atual é FINALIZADO e salvo, e a operação para — nada fica pela metade.'
+                          : '⚠ Defragments the WHOLE container (disk 0 to last), one by one with animation, and SAVES DIRECTLY to the file (in-place) — no need to save afterwards. Already-contiguous disks are skipped (unless reordering). If you cancel, the current disk is FINISHED and saved, then it stops — nothing left half-done.'}
+                      </p>
+                    )}
                     <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-bold">{currentLang === 'pt-br' ? 'Ordem dos arquivos' : 'File order'}</span>
                     <div className="flex flex-col gap-2">
                       {opts.map((o) => (
                         <label key={o.id} className="flex items-center gap-2 cursor-pointer text-xs text-white">
                           <input type="radio" name="defragOrder" checked={defragOrder === o.id} onChange={() => setDefragOrder(o.id)} style={{ accentColor: 'var(--primary)' }} />
-                          {currentLang === 'pt-br' ? o.pt : o.en}
+                          {currentLang === 'pt-br' ? o.pt : o.en}{defragModal.container ? (currentLang === 'pt-br' ? ' (cada disco)' : ' (each disk)') : ''}
                         </label>
                       ))}
                     </div>
@@ -6269,7 +6571,7 @@ export default function App() {
                   <div className="flex justify-end gap-3 p-3 border-t border-[var(--border)]">
                     <button onClick={() => setDefragModal(null)} disabled={imageBusy} className="btn btn-secondary py-1.5 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
                     <button
-                      onClick={() => { const w = defragModal.which; const o = defragOrder; setDefragModal(null); startDefragAnimation(w, o); }}
+                      onClick={() => { const w = defragModal.which; const o = defragOrder; const cont = defragModal.container; setDefragModal(null); if (cont) handleDefragContainer(w, o); else startDefragAnimation(w, o); }}
                       disabled={imageBusy}
                       className="btn btn-primary py-1.5 px-5 text-xs font-bold uppercase shadow-[0_0_15px_rgba(20,250,200,0.15)]"
                     >{currentLang === 'pt-br' ? 'Desfragmentar' : 'Defragment'}</button>

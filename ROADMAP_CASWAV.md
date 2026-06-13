@@ -1,6 +1,6 @@
 # ROADMAP — Aba CAS/WAV/VOC (preservação de fita) + suíte de áudio CoCo/Dragon
 
-> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> ## ✅ STATUS ATUAL — 2026-06-11 (v1.0.64)
 > **Implementado na aba K7:** decode FSK, **→CAS (limpo)**, **→WAV (limpo)**, **→Fita completa** (áudio
 > original inteiro), leitura de **VOC**, **REC** line-in, preview de tamanhos. O núcleo deste roadmap foi
 > entregue.
@@ -14,8 +14,20 @@
 > lixo/falso-sync, multi-arquivo, e disco→cas com load/exec do LOADM).
 >
 > **ATUALIZAÇÃO 2026-06-11:** **D11 — sabor Dragon FEITO** (v1.0.57: o XRoar auto-troca p/ Dragon 64 ao
-> abrir/testar disco/fita Dragon — ver ROADMAP_OS9). **PENDENTE:** famílias de loader além de SoftKristian
-> (ligado ao ROADMAP_RECUPERACAO / EPROM-cartucho).
+> abrir/testar disco/fita Dragon — ver ROADMAP_OS9).
+>
+> **ATUALIZAÇÃO 2026-06-11 (v1.0.61–.64):** entregues mais gaps deste roadmap:
+> - **B6/B7 — CAS↔BASIC FEITO (v1.0.61):** "Abrir no BASIC" na K7 detokeniza o programa BASIC lido da fita e
+>   o abre no editor BASIC; o **tokenizador** (crunch fiel ao ROM) + as **tabelas de tokens CoCo 1/2/3
+>   completas** fecham o caminho texto→`.CAS`/`.bas`. Campo EDITÁVEL de nome da fita reescreve a namefile.
+> - **C8 — JVC/.dsk com cabeçalho FEITO (v1.0.62):** imagens `.jvc/.dsk` com 1–5 bytes de header abrem alinhadas.
+> - **Exportador `.WAV` de época (v1.0.61):** `buildEraTapeWav` (mono 8-bit 9600 Hz, fix EOF) — ver ROADMAP_WAV.
+> - **Famílias de loader (A5 relacionado) — DETECÇÃO universal FEITA (v1.0.63):** `loaderscan.ts` reconhece
+>   **SoftKristian** + **PLAN-SOFT/GAMEPACK** (`detectLoaderFamily`). + Recuperação R3–R6 na K7 (ver ROADMAP_K7).
+>
+> **PENDENTE:** **conversão p/ DISCO** dos loaders multi-parte/all-RAM (PLAN-SOFT) — só a detecção está
+> feita (ligado ao ROADMAP_RECUPERACAO / EPROM-cartucho / caminho assistido por emulador); **C9 (DMK)**,
+> **C10 (mais geometrias Dragon)**, **E13 (patcher CoCo↔Dragon)**.
 
 Recurso **futuro**. Origem: análise do material de preservação do worldofdragon.org, PyDragon32/PyDC,
 cas2bas e tlindner (2026-06-03). Estende e absorve o `ROADMAP_WAV.md` (que cobria só `encodeWav`).
@@ -52,21 +64,25 @@ Já temos `decodeWav` (FSK→bytes) e o `basicDetokenize.ts`/editor BASIC.
       checksums, refaz leader/sync, garante EOF) + IPC `cas-fix` + botão **FIXCAS** na K7. Teste `casfixtest.ts`.
 - [x] **W3. Disco → fita — FEITO (2026-06-10).** Botão **"Do disco"** na K7: o arquivo selecionado num painel
       A/B vira `.CAS` (`dsk-file-to-cas`: ML via `parseBin`→load/exec+imagem; BASIC/dados crus) e carrega no deck.
-- [ ] **A5. CAS RAW vs padrão** + metadados de frequência/silêncio (jogos/proteção) — avançado.
+- [~] **A5. CAS RAW vs padrão** + metadados de frequência/silêncio (jogos/proteção) — avançado. **PARCIAL:**
+      a DETECÇÃO de loaders RAW (SoftKristian/PLAN-SOFT) está feita (`loaderscan.ts`, v1.0.63); falta a
+      conversão automática desses RAW em disco.
 
 ### B. CAS ↔ BASIC (reusa nosso tokenizer — vantagem sobre PyDC, que só faz ASCII)
-- [ ] **B6. Abrir `.CAS`, listar e detokenizar BASIC → texto**; e tokenizar (texto → `.CAS`/`.bas`).
-- [ ] **B7. Ligar ao editor BASIC**: "Abrir do CAS" / "Salvar como CAS (fita)".
+- [x] **B6. Abrir `.CAS`, listar e detokenizar BASIC → texto — FEITO (v1.0.61).** "Abrir no BASIC" na K7
+      detokeniza o 1º arquivo BASIC da fita; tokenizador (crunch fiel ao ROM) + tabelas CoCo 1/2/3 fecham texto → `.CAS`/`.bas`.
+- [x] **B7. Ligar ao editor BASIC — FEITO (v1.0.61):** botão "Abrir no BASIC" (K7 → editor); o editor
+      exporta de volta como `.CAS`/`.WAV` de fita (campo de nome editável reescreve a namefile).
 
 ### C. Formatos de imagem — ampliar compatibilidade (tlindner)
-- [ ] **C8. JVC/`.dsk` com header** (CoCo): header 1–5 bytes (setores/trilha, lados, tamanho de
-      setor, 1º ID). Hoje: VDK (Dragon) + DSK cru; JVC cobre a maioria dos `.dsk` CoCo com header.
+- [x] **C8. JVC/`.dsk` com header — FEITO (v1.0.62):** imagens `.jvc/.dsk` com 1–5 bytes de cabeçalho
+      (setores/trilha, lados, tamanho de setor, 1º ID) agora abrem alinhadas.
 - [ ] **C9. DMK** (track-level WD279x): discos com proteção/setores não-padrão. Complexo.
 - [ ] **C10. Novo disco Dragon em mais geometrias** (40DS/80SS/80DS) — engine já faz DS; só expor.
 
 ### D. OS-9 para Dragon (CoCoSDC ALPHA)
-- [ ] **D11. Sabor Dragon do OS-9**: o parser RBF é agnóstico → discos OS-9 Dragon já abrem; falta
-      detectar e auto-trocar o XRoar p/ máquina Dragon ao testar OS-9 Dragon.
+- [x] **D11. Sabor Dragon do OS-9 — FEITO (v1.0.57):** o parser RBF é agnóstico → discos OS-9 Dragon já
+      abrem; o XRoar agora auto-troca p/ Dragon 64 (BOOT) ao abrir/testar disco/fita Dragon (ver ROADMAP_OS9).
 - [x] **D12. Escrever imagens CoCoSDC SD (FAT) — FEITO (v1.0.30, 2026-06-07).** `fat.ts` ganhou motor
       de escrita clean-room (`fatAddFile`/`fatReplaceFile`/`fatDeleteFile` + `Writer` de acesso
       aleatório; atualiza as 2 cópias da FAT, LFN, cresce o diretório; nunca carrega a imagem inteira).

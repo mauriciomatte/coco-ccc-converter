@@ -996,3 +996,51 @@ input[type="number"] {
 /* spin para loaders (ex.: Os9Browser) */
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== DriveWire — drives 5.25" full-height (painel da aba Servidores) ===== */
+/* face: plástico preto texturizado ("pedrinha") + moldagem vertical + relevo, como nos drives reais */
+.dw-drive {
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 7px 9px; border-radius: 6px; position: relative;
+  background-color: #1c1f24;
+  background-image:
+    radial-gradient(#ffffff09 0.5px, transparent 0.6px),
+    linear-gradient(180deg, #2d3138 0%, #1a1d22 100%);
+  background-size: 3px 3px, 100% 100%;
+  border: 1px solid #0e1013;
+  box-shadow: inset 0 1px 0 #ffffff12, inset 0 -3px 7px #0007, 0 1px 2px #0006;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.dw-drive-over {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 1px var(--primary), inset 0 0 14px var(--primary-glow) !important;
+}
+
+/* LED do drive: apagado / aceso-parado (verde fraco) / no-ar (verde pulsando) */
+.dw-led { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; box-shadow: inset 0 0 2px #000a; }
+.dw-led-off  { background: radial-gradient(circle at 35% 30%, #4a5158, #23272c); }
+.dw-led-idle { background: radial-gradient(circle at 35% 30%, #2f8f55, #15602e); }
+.dw-led-on   { background: radial-gradient(circle at 35% 30%, #6ef0a0, #16a34a); animation: dw-pulse 1.6s ease-in-out infinite; }
+@keyframes dw-pulse {
+  0%,100% { box-shadow: 0 0 5px #34d399, inset 0 0 2px #0006; }
+  50%     { box-shadow: 0 0 11px #34d399, inset 0 0 2px #0006; }
+}
+
+/* latch lever CENTRAL (aba elevada em relevo, decorativa) — assinatura do drive 5.25" full-height */
+.dw-latch-lever {
+  align-self: center; width: 42%; min-width: 56px; height: 17px; border-radius: 3px;
+  background: linear-gradient(180deg, #3c4148 0%, #2a2e34 55%, #20242a 100%);
+  border: 1px solid #0c0e11;
+  box-shadow: inset 0 1px 0 #ffffff1c, inset 0 -2px 3px #0008, 0 2px 3px #0009;
+}
+/* fenda do disco (recuada, larga, escura) logo abaixo do latch */
+.dw-slot {
+  height: 13px; border-radius: 3px; margin: 0 1px;
+  background: linear-gradient(180deg, #0a0c0e 0%, #14171b 60%, #0c0e11 100%);
+  box-shadow: inset 0 2px 5px #000d, inset 0 -1px 0 #ffffff08;
+}
+
+/* botõezinhos RW/ejetar dentro do drive */
+.dw-mini-btn { background: transparent; border: 0; padding: 1px; cursor: pointer; display: inline-flex; border-radius: 3px; }
+.dw-mini-btn:hover:not(:disabled) { background: #ffffff14; }
+.dw-mini-btn:disabled { cursor: default; }

@@ -1,9 +1,16 @@
 # ROADMAP — Exportação de áudio .WAV (fita de cassete)
 
-> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46): CONCLUÍDO
-> A exportação de `.WAV` foi entregue na aba **K7**: **→ WAV (limpo)** (FSK numa taxa escolhida 8/11/22/44 kHz)
-> e **→ Fita completa** (áudio original inteiro: header + tela + loader + jogo turbo). Também há **→ CAS**.
-> Este roadmap pode ser considerado **realizado**; mantido como referência de design.
+> ## ✅ STATUS ATUAL — 2026-06-11 (v1.0.64): CONCLUÍDO
+> A exportação de `.WAV` foi entregue na aba **K7**: **→ WAV (limpo)** (FSK numa taxa escolhida 8/11/22/44 kHz,
+> `buildCleanWav`/`encodeCasToWav` em `wav.ts`) e **→ Fita completa** (áudio original inteiro: header + tela +
+> loader + jogo turbo). Também há **→ CAS**. Este roadmap está **realizado**; mantido como referência de design.
+>
+> **AMPLIADO desde então:** exportador `.WAV` no **PADRÃO DA ÉPOCA** (`buildEraTapeWav` em `wav.ts`, **v1.0.61**)
+> — mono **8-bit 9600 Hz**, FSK 1200/2400 exata, silêncio inicial + leader/namefile + **silêncio após o
+> cabeçalho** + dados contínuos + tom de fechamento (corrige o EOF colado no silêncio que dava I/O ERROR).
+> Carrega em **tempo real** no XRoar (CLOAD/CLOADM:EXEC pelo tipo) e grava numa fita K7 REAL para um CoCo
+> físico, sem erros. Disponível também por um botão na aba BASIC (ícone de ondas). Onda quadrada padrão;
+> opção senoide/leader truncável continua como refinamento opcional futuro.
 
 Recurso **futuro**: gerar um arquivo `.WAV` (áudio FSK de fita) a partir de programas do CoCo,
 para tocar num gravador real ou no FujiNet/emulador como se fosse uma fita.

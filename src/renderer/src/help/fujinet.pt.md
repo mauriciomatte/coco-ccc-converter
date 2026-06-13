@@ -1,12 +1,13 @@
-# Aba FujiNet / Acesso Direto Online
+# Aba Servidores (FujiNet WiFi + DriveWire serial)
 
-A aba **FujiNet / Acesso Direto Online** liga o app à rede do ecossistema **FujiNet/TNFS** do CoCo/Dragon.
-Ela tem dois lados, lado a lado:
+A aba **Servidores** liga o app ao CoCo/Dragon — por **WiFi** (FujiNet/TNFS) e por **cabo serial** (DriveWire).
+Ela tem **três painéis**, lado a lado (com **splitters** arrastáveis entre eles):
 
 - **Esquerda — Acessar servidores:** **baixar** imagens/arquivos de **links** e de **hubs TNFS** para dentro
   do app (e então editar/converter como qualquer outra imagem).
-- **Direita — Servidor WiFi (FujiNet):** transformar o seu PC num **servidor de arquivos** que a sua placa
-  **FujiNet** monta ao vivo pela rede.
+- **Meio — Servidor WiFi (FujiNet):** transformar o seu PC num **servidor de arquivos** que a sua placa
+  **FujiNet** monta ao vivo pela **rede**.
+- **Direita — Servidor DriveWire (serial):** servir até **4 drives** a um CoCo real por **cabo serial** (sem WiFi).
 
 Todas as mensagens de conexão/erro saem no **console** (rodapé), igual às outras abas. O botão **?** (canto
 superior direito) reabre esta ajuda.
@@ -172,6 +173,25 @@ sua pasta (ex.: `SAVE`, gravar um setor de uma imagem montada como drive). Cuida
 - **Console (rodapé):** acompanha downloads, conexões de clientes ao seu servidor, gravações e erros.
 - **Ainda não suportado:** login TNFS (usuário/senha), acesso ao **SD da própria placa**, e **escrita em
   container** (MiniIDE/CoCoSDC/DriveWire).
+
+## Servidor DriveWire (serial)
+
+A terceira coluna, **DriveWire**, transforma o PC num **servidor de disco por CABO SERIAL** — o transporte
+nativo do CoCo, sem WiFi. O CoCo real (com a ROM **HDB-DOS/DriveWire** do seu modelo) lê até **4 drives**
+(0–3) direto do PC. Ótimo para **testar ao vivo** uma imagem que você acabou de editar, sem regravar cartão.
+
+- **Conexão (colapsável):** escolha a **Porta** serial (o adaptador USB-serial aparece como COMx) e a
+  **Máquina** — **CoCo 1** (38400 baud), **CoCo 2** (57600) ou **CoCo 3** (115200; exige 1.78 MHz). Use
+  **Personalizado** para outros bauds (até 921600). O baud precisa **casar com a ROM** do CoCo. Depois de
+  definir, clique no cabeçalho para **colapsar** e dar espaço aos drives.
+- **Os 4 drives:** cada drive 5.25" recebe um `.dsk` — **arraste** um arquivo sobre o drive **ou clique** para
+  escolher. A etiqueta mostra o **nome e as informações** do disco. **Dentro** do drive: o **cadeado** alterna
+  **leitura-escrita / só-leitura** e a **seta** **ejeta** o disco. O **LED** acende (verde) quando há disco e
+  **pulsa** com o servidor no ar.
+- **Ligar servidor:** com a porta escolhida e ao menos um disco montado, clique **Ligar servidor**. Ligue o
+  cabo, dê **boot** no CoCo (com a ROM DriveWire) e ele lerá os drives do PC. As conexões saem no console.
+- **No CoCo:** é preciso a ROM **HDB-DOS/DW** do modelo (a velocidade casa com ela) e o cabo serial. Quem tem
+  **FujiNet** já consegue o mesmo por **WiFi** (coluna do meio) — o DriveWire é para quem usa **cabo**.
 
 ## Resumo rápido
 

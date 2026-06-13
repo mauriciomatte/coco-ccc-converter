@@ -105,6 +105,14 @@ const api = {
   tnfsServerStatus: () => ipcRenderer.invoke('tnfs-server-status'),
   tnfsServerPreview: (opts: { mode: string; path: string; hideExtra?: string[]; hideAllow?: string[] }) => ipcRenderer.invoke('tnfs-server-preview', opts),
   tnfsHiddenDefaults: () => ipcRenderer.invoke('tnfs-hidden-defaults'),
+  // Servidor DriveWire (serial) — M4
+  dwListPorts: () => ipcRenderer.invoke('dw-list-ports'),
+  dwServerStart: (opts: { portPath: string; baudRate: number; drives: { slot: number; filePath: string; writable: boolean }[] }) => ipcRenderer.invoke('dw-server-start', opts),
+  dwServerStop: () => ipcRenderer.invoke('dw-server-stop'),
+  dwServerStatus: () => ipcRenderer.invoke('dw-server-status'),
+  dwDiskInfo: (filePath: string) => ipcRenderer.invoke('dw-disk-info', filePath),
+  dwStageDisk: (name: string, buffer: Uint8Array) => ipcRenderer.invoke('dw-stage-disk', name, buffer),
+  dwDiskFiles: (filePath: string, index?: number) => ipcRenderer.invoke('dw-disk-files', filePath, index ?? 0),
   onNetLog: (cb: (m: { pt: string; en: string; type?: string }) => void) => { const h = (_e: any, m: any) => cb(m); ipcRenderer.on('net-log', h); return () => ipcRenderer.removeListener('net-log', h); },
   zipExtract: (zipBytes: Uint8Array, entryName: string) => ipcRenderer.invoke('zip-extract', zipBytes, entryName),
   pickDirectory: () => ipcRenderer.invoke('pick-directory'),
@@ -175,6 +183,10 @@ const api = {
 
   dskDefragFile: (dskBuffer: Uint8Array, fileEntry: DskFileEntry) =>
     ipcRenderer.invoke('dsk-defrag-file', dskBuffer, fileEntry),
+
+  // Desfragmenta o disco INTEIRO por reconstrução (build-fresh, 100% contíguo). Devolve uma imagem nova.
+  dskDefragDisk: (dskBuffer: Uint8Array, order: 'dir' | 'alpha' | 'size') =>
+    ipcRenderer.invoke('dsk-defrag-disk', dskBuffer, order),
 
   dskDefragDragon: (dskBuffer: Uint8Array) =>
     ipcRenderer.invoke('dsk-defrag-dragon', dskBuffer),

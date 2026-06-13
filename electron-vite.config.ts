@@ -4,7 +4,23 @@ import { resolve } from 'path';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      // serialport é um MÓDULO NATIVO: tem que ficar EXTERNO (carregado de node_modules em runtime).
+      // Se embutido no bundle, o node-gyp-build procura os prebuilds relativos a out/ → "No native build found".
+      // O `external` por string do rollup não basta (o Vite já resolveu o specifier p/ caminho absoluto);
+      // este plugin marca external ANTES da resolução, preservando o specifier puro no require().
+      {
+        name: 'externalize-native-serialport',
+        enforce: 'pre' as const,
+        resolveId(source: string) {
+          if (source === 'serialport' || source === 'node-gyp-build' || source === 'bindings' || source.startsWith('@serialport/')) {
+            return { id: source, external: true };
+          }
+          return null;
+        }
+      },
+      externalizeDepsPlugin()
+    ],
     build: {
       rollupOptions: {
         input: {

@@ -673,6 +673,31 @@ export function writeSidekickName(disk: Buffer, name: string): Buffer {
  * Observação: NÃO toca a trilha 17 setor ~17 (LSN 322 — onde o SIDEKICK guarda o nome do drive), então
  * o 'quick' preserva o nome automaticamente; no 'full', o chamador restaura o setor do nome se desejar.
  */
+/**
+ * Desfragmenta o disco INTEIRO por RECONSTRUÇÃO (build-fresh): cria uma imagem em branco da mesma
+ * geometria e regrava cada arquivo em sequência → como o disco novo aloca os granules a partir do 0,
+ * tudo fica 100% CONTÍGUO e o espaço livre coalesce no fim — independente de quão fragmentado estava.
+ * NÃO-destrutivo: devolve uma imagem nova; o chamador faz o swap (undo-friendly). Só RS-DOS padrão.
+ * Bloqueia discos com nomes gráficos ("DIR art") — a posição/bytes desses não sobrevivem à regravação.
+ */
+export function defragDiskRebuild(dskBuffer: Buffer, order: 'dir' | 'alpha' | 'size' = 'dir'): { success: boolean; image?: Buffer; error?: string } {
+  if (!isRsDosDisk(dskBuffer)) return { success: false, error: 'Não é um disco RS-DOS padrão.' };
+  let parsed: ParsedDsk;
+  try { parsed = parseDsk(dskBuffer); } catch (e: any) { return { success: false, error: e?.message || 'Falha ao ler o diretório.' }; }
+  const files = [...(parsed.files || [])];
+  if (files.some((f) => f.hasGraphics)) return { success: false, error: 'Disco com nomes gráficos (DIR art) — reconstrução não suportada.' };
+  if (order === 'alpha') files.sort((a, b) => a.fullName.localeCompare(b.fullName));
+  else if (order === 'size') files.sort((a, b) => (b.totalSize || 0) - (a.totalSize || 0));
+  let img = formatRsDosDisk(dskBuffer, 'full'); // imagem em branco da MESMA geometria
+  try {
+    for (const f of files) {
+      const data = extractDskFile(dskBuffer, f);
+      img = addDskFile(img, f.name, f.ext, f.fileType, f.asciiFlag, data); // disco fresco → alocação contígua
+    }
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha ao reconstruir a imagem.' }; }
+  return { success: true, image: img };
+}
+
 export function formatRsDosDisk(dskBuffer: Buffer, mode: 'quick' | 'full'): Buffer {
   const BPT = 18 * 256; // 4608
   if (dskBuffer.length < 18 * BPT || dskBuffer.length % BPT !== 0) {

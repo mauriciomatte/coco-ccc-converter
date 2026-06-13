@@ -5,7 +5,7 @@ import * as os from 'os';
 import { spawn } from 'child_process';
 import { decodeWav, decodeCasTapeGapAware, buildFaithfulCas, buildCleanWav, encodeCasToWav, resampleWav8, buildEraTapeWav, tapeDiagnostics, decodeRegion, mergeCaptures } from './converter/wav';
 import { parseCas, fixCas } from './converter/cas';
-import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
+import { parseDsk, extractDskFile, addDskFile, deleteDskFile, renameDskFile, sortDskDirectory, defragFileInPlace, defragDiskRebuild, isRsDosDisk, deDoubleDisk, scanMiniIdeImage, formatRsDosDisk, writeSidekickName, DskFileEntry } from './converter/dsk';
 import { readDragonDirectory, stripVdk, extractDragonFile, encodeDragonBlank, looksDragon, addDragonFile, deleteDragonFile, renameDragonFile, cocoToDragonBin, recommendDragonMode, sortDragonDirectory, defragDragonDisk } from './converter/dragondos';
 import { readFatVolume, listFatFiles, readFatFile, fatReplaceFile, fatAddFile, fatDeleteFile, Reader, Writer } from './converter/fat';
 import { isDmk, dmkToRaw, normalizeDiskImage } from './converter/dmk';
@@ -13,8 +13,10 @@ import { rawToSdf } from './converter/sdf';
 import { downloadUrl } from './net/download';
 import { tnfsList, tnfsReadFile, parseTnfsStatusHtml } from './net/tnfs';
 import { startTnfsServer, folderProvider, containerProvider, localIPv4, localIPv4sRanked, DEFAULT_HIDDEN_NAMES, TnfsServerHandle, TnfsProvider } from './net/tnfsServer';
+import { startDriveWireServer, listSerialPorts, DwServerHandle } from './net/drivewire';
 
 let tnfsSrv: TnfsServerHandle | null = null;
+let dwSrv: DwServerHandle | null = null;
 function buildProvider(mode: string, p: string, writable?: boolean, hideExtra?: string[], hideAllow?: string[]): TnfsProvider {
   // gravação só faz sentido (e só é segura) no modo PASTA; container fica sempre só-leitura.
   // hideExtra/hideAllow só valem no modo PASTA (container já filtra por extensão de imagem).
@@ -47,7 +49,83 @@ ipcMain.handle('tnfs-server-preview', async (_, opts: { mode: string; path: stri
   } catch (e: any) { return { success: false, error: e?.message }; }
   finally { try { prov?.dispose?.(); } catch { /* */ } }
 });
+
+// --- Servidor DriveWire (serial) — M4. Espelha os IPCs do TNFS, mas por porta serial. ---
+ipcMain.handle('dw-list-ports', async () => {
+  try { return { success: true, ports: await listSerialPorts() }; }
+  catch (e: any) { return { success: false, error: e?.message, ports: [] }; }
+});
+ipcMain.handle('dw-server-start', async (_, opts: { portPath: string; baudRate: number; drives: { slot: number; filePath: string; writable: boolean }[] }) => {
+  try {
+    if (dwSrv) { dwSrv.stop(); dwSrv = null; }
+    dwSrv = await startDriveWireServer(opts, (pt, en, type) => mainWindow?.webContents.send('net-log', { pt, en, type }));
+    return { success: true, portPath: dwSrv.portPath, baudRate: dwSrv.baudRate, drives: dwSrv.drives };
+  } catch (e: any) { return { success: false, error: e?.message || 'Falha ao iniciar o servidor DriveWire.' }; }
+});
+ipcMain.handle('dw-server-stop', async () => {
+  try { dwSrv?.stop(); dwSrv = null; return { success: true }; }
+  catch (e: any) { return { success: false, error: e?.message }; }
+});
+ipcMain.handle('dw-server-status', async () => ({ running: !!dwSrv, portPath: dwSrv?.portPath || '', baudRate: dwSrv?.baudRate || 0, drives: dwSrv?.drives || [] }));
+// Info de um .dsk para a etiqueta do drive (nome/tamanho/tipo/nº de arquivos).
+ipcMain.handle('dw-disk-info', async (_, filePath: string) => {
+  try {
+    const buf = fs.readFileSync(filePath);
+    const size = buf.length;
+    const STD = 161280;
+    let count = 1; // nº de discos se for CONTÊINER (N×161.280 com fatias RS-DOS válidas)
+    if (size > STD && size % STD === 0) { const n = size / STD; if (n > 1 && isRsDosDisk(buf.subarray(0, STD)) && isRsDosDisk(buf.subarray(STD, 2 * STD))) count = n; }
+    const slice = count > 1 ? buf.subarray(0, STD) : buf; // info vem do disco 0 quando contêiner
+    let kind = ''; let files = -1; let tracks = 0;
+    try {
+      if (isRsDosDisk(slice)) { kind = 'RS-DOS'; tracks = Math.round(slice.length / (18 * 256)); files = (parseDsk(Buffer.from(slice)).files || []).length; }
+    } catch { /* não-RS-DOS: só mostra tamanho */ }
+    return { success: true, name: path.basename(filePath), size, kind, files, tracks, count };
+  } catch (e: any) { return { success: false, error: e?.message }; }
+});
+// Grava o buffer de um disco num .dsk TEMPORÁRIO e devolve o caminho — p/ "Enviar para DriveWire" (aba DSK → painel DW).
+ipcMain.handle('dw-stage-disk', async (_, name: string, buffer: Uint8Array) => {
+  try {
+    const dir = path.join(os.tmpdir(), 'cocofiu-dw');
+    fs.mkdirSync(dir, { recursive: true });
+    let safe = (name || 'DISCO.DSK').replace(/[^A-Za-z0-9._-]/g, '_');
+    if (!safe.toLowerCase().endsWith('.dsk')) safe += '.dsk';
+    const fp = path.join(dir, safe);
+    fs.writeFileSync(fp, Buffer.from(buffer));
+    return { success: true, filePath: fp, name: path.basename(fp) };
+  } catch (e: any) { return { success: false, error: e?.message }; }
+});
+// Lista os arquivos de um .dsk de um drive DriveWire. Se for CONTÊINER (N×161.280 c/ fatias RS-DOS válidas),
+// devolve count+index e os arquivos do disco interno `index` — a UI navega com ◀ ▶.
+ipcMain.handle('dw-disk-files', async (_, filePath: string, index = 0) => {
+  try {
+    const buf = fs.readFileSync(filePath);
+    const STD = 161280;
+    let count = 1;
+    if (buf.length > STD && buf.length % STD === 0) {
+      const n = buf.length / STD;
+      if (n > 1 && isRsDosDisk(buf.subarray(0, STD)) && isRsDosDisk(buf.subarray(STD, 2 * STD))) count = n;
+    }
+    const idx = Math.max(0, Math.min(count - 1, index | 0));
+    const slice = count > 1 ? buf.subarray(idx * STD, (idx + 1) * STD) : buf;
+    let files: any[] = [];
+    try { files = (parseDsk(Buffer.from(slice)).files || []).map((f) => ({ fullName: f.fullName, type: f.fileTypeName, ascii: f.asciiFlag !== 0, size: f.totalSize })); } catch { /* vazio/não-RS-DOS */ }
+    return { success: true, name: path.basename(filePath), count, index: idx, files };
+  } catch (e: any) { return { success: false, error: e?.message }; }
+});
+
 import { isZip, listZip, extractZipByName } from './converter/zip';
+
+// LINUX — desliga o SANDBOX do Chromium.
+// Por quê: Ubuntu 24.04+ (e derivados) RESTRINGEM user namespaces não privilegiados (política do AppArmor),
+// e o SETUID-sandbox (chrome-sandbox 4755) ainda falha quando o binário roda de partição/montagem `nosuid`
+// (AppImage via FUSE, ou rodando o executável direto da pasta). Sintoma:
+//   "zygote_host_impl_linux.cc Check failed: ... Invalid argument (22)" + "failed to execvp" + "Trace/breakpoint trap".
+// App desktop LOCAL (sem conteúdo remoto; webSecurity já é false) → desligar o sandbox é seguro e garante o boot
+// em qualquer kernel/AppArmor, sem o usuário precisar mexer em SUID nem em sysctl. PRECISA ser antes do whenReady().
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('no-sandbox');
+}
 
 // Escolher uma PASTA (p/ a pasta compartilhada do servidor FujiNet, etc.).
 ipcMain.handle('pick-directory', async () => {
@@ -588,6 +666,15 @@ ipcMain.handle('dsk-defrag-file', async (_, dskUint8Array: Uint8Array, entry: Ds
   try {
     const img = defragFileInPlace(Buffer.from(dskUint8Array), entry);
     return { success: true, image: new Uint8Array(img) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+// Desfragmenta o disco INTEIRO por reconstrução (build-fresh, 100% contíguo). Só RS-DOS padrão.
+ipcMain.handle('dsk-defrag-disk', async (_, dskUint8Array: Uint8Array, order: 'dir' | 'alpha' | 'size') => {
+  try {
+    const r = defragDiskRebuild(Buffer.from(dskUint8Array), order || 'dir');
+    return r.success ? { success: true, image: new Uint8Array(r.image!) } : { success: false, error: r.error };
   } catch (error: any) {
     return { success: false, error: error.message };
   }

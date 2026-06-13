@@ -1,6 +1,6 @@
 {
   "name": "coco-file-image-utility",
-  "version": "1.0.64",
+  "version": "1.0.65",
   "description": "TRS-80 Color Computer File Image Utility - CoCo File Image Utility - CoCoFIU",
   "main": "./out/main/index.js",
   "author": "Mauricio Matte",
@@ -20,7 +20,8 @@
     "buffer": "^6.0.3",
     "lucide-react": "^0.395.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "serialport": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.8",
@@ -64,7 +65,10 @@
       }
     ],
     "asarUnpack": [
-      "**/xroar/**"
+      "**/xroar/**",
+      "**/node_modules/@serialport/**",
+      "**/node_modules/serialport/**",
+      "**/*.node"
     ],
     "win": {
       "icon": "resources/icon-512.png",

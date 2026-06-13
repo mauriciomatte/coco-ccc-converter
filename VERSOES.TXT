@@ -10,6 +10,38 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.65 — 2026-06-13
+--------------------------------------------------------------------------------
+Aba "Servidores" com servidor DriveWire (serial) e 4 floppy drives 5.25"; hub unificado "Enviar para..."; desfragmentacao por reconstrucao (disco e container); criar/expandir container DriveWire; e fix do instalador Linux.
+
+ADICIONADO
+  • SERVIDOR DRIVEWIRE (SERIAL): a aba "FujiNet" virou "Servidores", com 3 colunas (Acesso aos servidores ·
+    Servidor WiFi · Servidor DriveWire) e splitters. O DriveWire serve ate 4 drives a um CoCo REAL por CABO
+    SERIAL (transporte nativo do CoCo, sem WiFi). Cada drive e um 5.25" full-height DESENHADO: arraste/clique
+    para montar um .dsk, seletor de "Maquina" (CoCo 1/2/3 -> baud), leitura-escrita e ejetar dentro do drive,
+    LED, e "Ver arquivos" com navegacao ◀ ▶ quando o disco e um container.
+  • HUB "ENVIAR PARA...": um unico botao "Enviar" na aba DSK abre um modal com TODOS os destinos, na ordem
+    das abas: DISCO (XRoar, Greaseweazle, DriveWire, FujiNet, dispositivo .dsk, cartao CF) e ARQUIVO
+    selecionado (fita K7, XRoar, editor BASIC, Windows). XRoar e DriveWire tem seletor de drive D0-D3.
+  • CRIAR/EXPANDIR CONTAINER DRIVEWIRE: botao no painel forma um container multi-disco a partir de um .dsk
+    unico (e expande os existentes, ate 256 discos). Ao soltar um .dsk num painel com conteudo, um modal
+    pergunta: abrir no painel / adicionar ao final (container) / importar os arquivos.
+  • ENVIAR para o DriveWire o disco OU o container INTEIRO do painel.
+
+ALTERADO / MELHORADO
+  • DESFRAGMENTACAO POR RECONSTRUCAO: reescreve numa imagem nova em branco, gravando os arquivos em
+    sequencia -> fica 100% contigua, garantida e segura (atomica). A animacao nostalgica continua.
+  • "DESFRAGMENTAR CONTAINER": desfragmenta TODOS os discos do container (0 ao ultimo), com animacao por
+    disco, pulando os ja contiguos (salvo se reordenar A->Z ou por tamanho), e SALVA IN-PLACE; ao cancelar,
+    finaliza o disco atual e para (nada fica pela metade).
+  • O modal "Ver arquivos" do DriveWire agora tem TAMANHO FIXO (os botoes de navegacao nao se movem mais;
+    a lista rola com scroll).
+
+CORRIGIDO
+  • INSTALADOR LINUX: o app nao abria no Ubuntu 24.04+ (erro de sandbox do Chromium / zygote). Corrigido
+    desligando o sandbox do Chromium no Linux (app local) -> abre normalmente, sem mexer em nada.
+
+--------------------------------------------------------------------------------
 v1.0.64 — 2026-06-11
 --------------------------------------------------------------------------------
 Nomes de disco do SIDEKICK no painel + "Apagar nome", gravacao de cartao CF com elevacao UAC sob demanda + confirmacao de sucesso, "Limpar intervalo" de discos, e opcoes ao salvar BASIC

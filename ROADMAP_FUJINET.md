@@ -3,7 +3,12 @@
 > Status: **implementação futura** — registrado com os achados da pesquisa e o escopo
 > que isolamos. Não bloqueia o roadmap OS-9.
 
-> ## STATUS ATUAL — 2026-06-10 (v1.0.59 + ajustes não commitados): CLIENTE e SERVIDOR COMPLETOS e VALIDADOS
+> ## STATUS ATUAL — 2026-06-12 (v1.0.64): CLIENTE e SERVIDOR COMPLETOS e VALIDADOS NA PLACA REAL ✅
+> **BOOT NA PLACA FUJINET REAL CONFIRMADO (2026-06-12):** a placa física reconheceu o servidor WiFi (TNFS)
+> do app, **montou um `.dsk` num slot e RODOU o programa**. Esse era o ÚLTIMO portão humano/hardware de toda a
+> funcionalidade FujiNet → marcado como **FEITO/validado**. Todas as correções de OPENDIRX/READDIRX/TELLDIR/
+> SEEKDIR/LSEEK (v1.0.57→.59) estão agora validadas ponta-a-ponta na **placa real**, não só em loopback.
+>
 > A aba **FujiNet / Online** (`FujiNetTab.tsx`) está madura: esquerda = **cliente** (acessar servidores),
 > direita = **servidor WiFi**. Resumo do que está PRONTO:
 >
@@ -35,20 +40,26 @@
 > no servidor; (2) a placa montava sempre o 1º arquivo → faltavam TELLDIR/SEEKDIR; (3) erro de I/O no DIR → o
 > LSEEK precisava devolver a posição. Tudo validado por `tools/tnfsdirxtest.ts` (32/32) e no hub real.
 >
-> **ATUALIZAÇÃO 2026-06-11 — M2 FEITO + GRAVAR CARTÃO CF FEITO (uncommitted):**
-> - **M2 "Enviar p/ dispositivo"** — botão Send na toolbar DSK (`handleSendToDevice`) injeta o arquivo baixado
->   da FujiNet na imagem ativa do painel.
-> - **GRAVAR a `.img` num cartão CF direto do app** — botão Database (laranja), modal `cfModal` com checagem de
->   Administrador, lista só de drives removíveis, confirmação digitando o nº do disco e barra de progresso. A
->   escrita crua é feita por **.NET `FileStream` via PowerShell** (o `fs` do Node corrompe `\\.\PhysicalDriveN`)
->   após `Clear-Disk` (remove o volume montado; mídia removível NÃO aceita offline). **PENDENTE: teste físico
->   real** (gravar um CF e bootar) — ver [[driveweire-and-miniide-formats]] / ROADMAP_MINIIDE.
+> **CLIENTE — acesso mais inteligente (FEITO v1.0.60):** **timeout de retransmissão ADAPTATIVO** (Jacobson/
+> Karels) e **barra de progresso da LISTAGEM** (X/N via total do OPENDIRX) — já descritos acima, shipados na
+> v1.0.60.
 >
-> **AINDA PENDENTE:** fluxo "baixar ARQUIVO avulso → INJETAR na imagem ativa" (parcial via M2); **M4** (opc.)
-> DriveWire serial (`serialport` = módulo nativo); **Fase 4 — write-back em discos INTERNOS de containers**
-> (MiniIDE/CoCoSDC/DriveWire — remap de setor + bookkeeping de FAT/slot, risco de corrupção); **boot/validação
-> REAIS na placa do usuário** (humano — em andamento, já lista, monta o arquivo certo e o DIR funciona após o
-> fix do LSEEK).
+> **M2 FEITO (v1.0.62) + GRAVAR CARTÃO CF FEITO E VALIDADO NA PLACA REAL (v1.0.62→.64):**
+> - **M2 "Enviar p/ dispositivo"** — botão Send na toolbar DSK (`handleSendToDevice`) injeta o arquivo baixado
+>   da FujiNet na imagem ativa do painel. (v1.0.62)
+> - **GRAVAR a `.img` num cartão CF direto do app** — botão Database (laranja), modal `cfModal`, lista só de
+>   drives removíveis e barra de progresso real. A escrita crua é feita por **.NET `FileStream` via PowerShell**
+>   (o `fs` do Node corrompe `\\.\PhysicalDriveN`) após `Clear-Disk` (remove o volume montado; mídia removível
+>   NÃO aceita offline). **v1.0.64: elevação UAC SOB DEMANDA** (não precisa abrir como admin — a permissão é
+>   pedida só na hora de gravar) + **modal verde de confirmação de sucesso** (some a etapa de "digite o nº do
+>   disco"). **VALIDADO em CF físico + CoCo+MiniIDE reais** (um "write failed" anterior era o ADAPTADOR LEITOR de
+>   CF do usuário, não o app). Ver [[driveweire-and-miniide-formats]] / ROADMAP_MINIIDE.
+>
+> **AINDA PENDENTE:** **FujiNet → INJETAR `.dsk` baixado num CONTAINER** (MiniIDE/CoCoSDC/DriveWire) → salvar →
+> confirmar integridade E que o disco injetado RODA, na placa real (engine pronta + round-trip testado em
+> software; a cadeia completa FujiNet→container→hardware ainda não foi exercitada); **M4** (opc.) DriveWire
+> serial (`serialport` = módulo nativo); **Fase 4 — write-back em discos INTERNOS de containers** (MiniIDE/
+> CoCoSDC/DriveWire — remap de setor + bookkeeping de FAT/slot, risco de corrupção, ADIADO).
 >
 > **DESCARTADO (2026-06-10):** **autenticação TNFS por usuário/senha** — a placa FujiNet REAL monta o nosso
 > servidor de forma **anônima** sem problema, então o login por senha saiu do roadmap. O servidor continua
@@ -116,7 +127,10 @@ Fontes: manual *"FujiNet for CoCo — The Basics"* (Rich Stephens) + `FujiNetWIF
 - Esforço/risco: **médio** (robustez do UDP). Teste: `tools/tnfsprobe.ts` (monta/lista/baixa de
   `tnfs.fujinet.online/COCO` e de um `tnfsd` local), round-trip sem UI.
 
-### M2 — "Enviar para dispositivo" (fecha a ponte offline, sem placa)
+### M2 — "Enviar para dispositivo" — ✅ FEITO (v1.0.62)
+> Botão **Send** na toolbar DSK (`handleSendToDevice`) injeta o arquivo baixado da FujiNet na imagem ativa.
+> Gravar `.img` em cartão CF físico direto do app: FEITO e VALIDADO na placa real (v1.0.62→.64). Ver topo.
+
 Botão **"Enviar p/ dispositivo"** no painel ativo:
 - **CoCoSDC:** o cartão SD monta como **drive no Windows** → escolher pasta/drive → **cópia de arquivo** do
   `.dsk` (IPC `copy-to-path`). Não precisa de write-back FAT nem da placa.
@@ -134,7 +148,8 @@ Botão **"Enviar p/ dispositivo"** no painel ativo:
 > desligar, IP do host slot, log de conexões. Persiste origem. Validado loopback (`tools/tnfsservetest.ts`):
 > LIST + READ idêntico (368.640 B). **ATUALIZAÇÃO (v1.0.57→.59): OPENDIRX/READDIRX + TELLDIR/SEEKDIR + LSEEK
 > (posição) + ESCRITA em pasta + filtro de ocultos configurável + dropdown de recentes — TODOS FEITOS** (ver
-> bloco STATUS no topo). **PENDENTE:** confirmação final de boot/uso na placa real (humano).
+> bloco STATUS no topo). **CONFIRMADO NA PLACA REAL (2026-06-12):** boot/uso ponta-a-ponta — a placa montou um
+> `.dsk` do servidor e RODOU o programa (ver bloco STATUS no topo).
 > **IDEIA do usuário (2026-06-09): servir um CONTAINER, não só uma pasta.** Projetar o servidor em torno
 > de um **provedor de arquivos** plugável: (a) **pasta real** (arquivos no disco); (b) **container**
 > (MiniIDE/DriveWire/CoCoSDC) — a árvore TNFS exibe **cada disco interno como um `.dsk`** (extraído sob

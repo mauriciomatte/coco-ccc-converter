@@ -1,6 +1,6 @@
 # ESTUDO DE IMPLEMENTAÇÃO — Aba K7 (fita cassete) com waveform, captura real e preservação
 
-> ## ✅ STATUS ATUAL — 2026-06-09 (v1.0.46)
+> ## ✅ STATUS ATUAL — 2026-06-11 (v1.0.64) — essencialmente COMPLETO
 > **A aba K7 está IMPLEMENTADA** (o "nada implementado" abaixo é histórico). Entrega: abrir WAV/CAS/C10/VOC,
 > waveform (estilos linha/barras/pico/RMS, zoom, seleção), player com cassete animada + velocidade **Época**,
 > decodificação FSK + lista de programas, painel **Ajustes de som** + **Recuperar** (Otsu adaptativo),
@@ -8,12 +8,28 @@
 > crop/normalizar/pausa + desfazer), **REC** (line-in), e as conversões **→CAS, →WAV, →Fita completa,
 > →Sem loader, Reverter, →DSK, →XRoar, Abrir no BASIC**.
 >
-> **PENDENTE (K7):**
-> - **Detecção UNIVERSAL de loaders** — hoje só **SoftKristian** (Família A). Família B (PLAN-SOFT/GAMEPACK,
->   ex.: SAILOR) já foi analisada; a **conversão para disco** de jogos multi-parte/all-RAM é projeto futuro
->   (liga-se ao trabalho de EPROM/cartucho).
+> **NOVO desde v1.0.46:**
+> - ✅ **Detecção UNIVERSAL de loaders — FEITO (v1.0.63)** (`src/main/converter/loaderscan.ts`):
+>   além da **SoftKristian** (Família A), reconhece **PLAN-SOFT/GAMEPACK** (Família B, multi-parte, ex.:
+>   SAILOR) pelas assinaturas de motor/BLKIN/CLOADM. A aba informa a família e, p/ PLAN-SOFT (all-RAM),
+>   orienta a rodar o `.CAS` fiel no mini-XRoar. (`detectLoaderFamily` → `softkristian`/`plansoft`/null.)
+> - ✅ **Recuperação R3–R6 — FEITO (v1.0.63)**, painel "Recuperação avançada" da K7: **R3** diagnóstico
+>   (`tapeDiagnostics`/`decodeRegion` em `wav.ts` — histograma de períodos Otsu + mapa bom/ruim + re-decode
+>   da seleção), **R4** fundir capturas (`mergeCaptures` — RAID de fita), **R5** efeitos de áudio
+>   (DC/Faixa/AGC/Agudos/Canal, `preprocessSamples`, aplicados à própria ONDA), **R6** multi-passe REC.
+> - ✅ **Edição da onda + efeitos com DESFAZER/REFAZER UNIFICADO — FEITO (v1.0.63):** um histórico único
+>   cobre edições da onda, efeitos de áudio e mudanças de ajuste (Limiar/Amplitude/Recuperar). Os efeitos
+>   passam a aplicar-se à ONDA (PLAY e mini-XRoar tocam o resultado). Estilo de onda padrão "linha" + zoom
+>   mais profundo (vê os ciclos FSK reais).
+> - ✅ **Exportador `.WAV` no PADRÃO DA ÉPOCA — FEITO (v1.0.61)** (`buildEraTapeWav` em `wav.ts`): mono
+>   8-bit 9600 Hz, FSK 1200/2400 exata, silêncio inicial + leader/namefile + **silêncio após o cabeçalho**
+>   + dados contínuos + tom de fechamento (fix EOF/I-O). Carrega em tempo normal no XRoar e numa fita REAL.
+>
+> **PENDENTE (K7) — só itens dependentes de recompilar o WASM ou de projeto futuro maior:**
+> - **Conversão para DISCO de jogos PLAN-SOFT (multi-parte/all-RAM)** — a DETECÇÃO está feita; a conversão
+>   automática p/ .DSK desses títulos segue como projeto futuro (liga-se ao trabalho de EPROM/cartucho e ao
+>   caminho assistido por emulador — §11).
 > - **Transport real na aba XRoar principal** (play/rewind/contador) — exige recompilar o `xroar.wasm`.
-> - **Recuperação R3–R6** (ver ROADMAP_RECUPERACAO): diagnósticos, merge multi-captura, estéreo, medidor REC.
 
 Absorve e amplia `ROADMAP_CASWAV.md` e `ROADMAP_WAV.md`. CoCo e Dragon compartilham o MESMO FSK de
 fita (~1200 baud, 6809) → um pipeline serve aos dois.
@@ -160,12 +176,14 @@ Captura/playback e o canvas ficam no renderer (Web Audio + Canvas). Demod/parse 
 
 ## 8. Fases de implementação (K0 → K10)
 
-**STATUS (2026-06-04):** ✅ **K0** (casco+waveform) · ✅ **K1** (player+cassete animada+zoom) ·
-✅ **K2** (decode FSK→painel Programa+lista) · ✅ **K8** (ajuste fino: limiar/amplitude — destrava
-o dinowars) · ✅ **K10** (Normalizar→CAS/WAV limpo e menor) · ✅ **extrair arquivo p/ PC** (parte de
-K5/K6). Codec validado nas amostras reais (QUASAR/STINGER/dinowars). **FALTAM:** K3 (edição na
-waveform+undo/redo) · K4 (REC line-in) · K5 pontes (→XRoar/↔Painel DSK) · K6 (detokenizar BASIC) ·
-K7 (render tela $400) · K9 (fita-loader→DSK via emulador).
+**STATUS (2026-06-11, v1.0.64):** ✅ **K0** (casco+waveform) · ✅ **K1** (player+cassete animada+zoom) ·
+✅ **K2** (decode FSK→painel Programa+lista) · ✅ **K3** (edição na waveform + **undo/redo unificado**,
+v1.0.63) · ✅ **K4** (REC line-in) · ✅ **K5** pontes (→XRoar via mini-XRoar / ↔Painel DSK "Do disco")
+· ✅ **K6** (detokenizar BASIC → "Abrir no BASIC") · ✅ **K8** (ajuste fino: limiar/amplitude — destrava
+o dinowars) · ✅ **K10** (Normalizar→CAS/WAV limpo e menor) · ✅ **extrair arquivo p/ PC**. Acrescido:
+detecção universal de loaders + recuperação R3–R6 (v1.0.63) e exportador .WAV de época (v1.0.61). Codec
+validado nas amostras reais (QUASAR/STINGER/dinowars). **FALTAM:** K7 (render tela $400) · K9
+(fita-loader→DSK via emulador) — ambos dependem de leitura de RAM/snapshot do XRoar (WASM a recompilar).
 
 
 - **K0** — Casco da aba + **barra de ferramentas** + canvas waveform + Abrir WAV (drag-drop + botão) +

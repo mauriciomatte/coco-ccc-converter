@@ -1,12 +1,13 @@
-# FujiNet / Direct Online Access Tab
+# Servers Tab (FujiNet WiFi + DriveWire serial)
 
-The **FujiNet / Direct Online Access** tab connects the app to the CoCo/Dragon **FujiNet/TNFS** network
-ecosystem. It has two sides, side by side:
+The **Servers** tab connects the app to the CoCo/Dragon — over **WiFi** (FujiNet/TNFS) and over a **serial
+cable** (DriveWire). It has **three panels**, side by side (with draggable **splitters** between them):
 
 - **Left — Access servers:** **download** images/files from **links** and from **TNFS hubs** into the app
   (then edit/convert them like any other image).
-- **Right — WiFi server (FujiNet):** turn your PC into a **file server** that your **FujiNet** board mounts
-  live over the network.
+- **Middle — WiFi server (FujiNet):** turn your PC into a **file server** that your **FujiNet** board mounts
+  live over the **network**.
+- **Right — DriveWire server (serial):** serve up to **4 drives** to a real CoCo over a **serial cable** (no WiFi).
 
 All connection/error messages appear in the **console** (bottom), like the other tabs. The **?** button
 (top-right) reopens this help.
@@ -172,6 +173,25 @@ folder (e.g. `SAVE`, or write a sector of an image mounted as a drive). Caveats:
 - **Console (bottom):** tracks downloads, client connections to your server, writes and errors.
 - **Not supported yet:** TNFS login (user/password), access to the **board's own SD card**, and **writing into a
   container** (MiniIDE/CoCoSDC/DriveWire).
+
+## DriveWire server (serial)
+
+The third column, **DriveWire**, turns the PC into a **disk server over a SERIAL CABLE** — the CoCo's native
+transport, no WiFi. The real CoCo (with its model's **HDB-DOS/DriveWire** ROM) reads up to **4 drives** (0–3)
+straight from the PC. Great for **live-testing** an image you just edited, without re-flashing a card.
+
+- **Connection (collapsible):** pick the serial **Port** (the USB-serial adapter shows as COMx) and the
+  **Machine** — **CoCo 1** (38400 baud), **CoCo 2** (57600) or **CoCo 3** (115200; requires 1.78 MHz). Use
+  **Custom** for other bauds (up to 921600). The baud must **match the CoCo's ROM**. Once set, click the header
+  to **collapse** it and free room for the drives.
+- **The 4 drives:** each 5.25" drive takes a `.dsk` — **drag** a file onto the drive **or click** to choose.
+  The label shows the disk's **name and info**. **Inside** the drive: the **lock** toggles **read-write /
+  read-only** and the **arrow ejects** the disk. The **LED** lights (green) when a disk is present and
+  **pulses** while the server is live.
+- **Start server:** with a port chosen and at least one disk mounted, click **Start server**. Connect the
+  cable, **boot** the CoCo (with the DriveWire ROM) and it will read the PC's drives. Connections show in the console.
+- **On the CoCo:** you need the model's **HDB-DOS/DW** ROM (the baud matches it) and the serial cable. Anyone
+  with a **FujiNet** gets the same over **WiFi** (middle column) — DriveWire is for **cable** users.
 
 ## Quick summary
 

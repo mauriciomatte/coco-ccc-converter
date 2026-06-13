@@ -1,6 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Globe, Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw, Copy, Check, Lock, Pencil, EyeOff, ChevronDown } from 'lucide-react';
 import { HelpButton, TabHelpModal } from './TabHelp';
+import DriveWirePanel from './DriveWirePanel';
+
+// Splitter VERTICAL arrastável entre colunas (reaproveita .splitter-v do index.css). onDelta = dx do mouse.
+function VSplitter({ onDelta }: { onDelta: (dx: number) => void }) {
+  const onDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    let last = e.clientX;
+    const mv = (ev: MouseEvent) => { onDelta(ev.clientX - last); last = ev.clientX; };
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  };
+  return <div className="splitter-v" onMouseDown={onDown} title="Arraste para redimensionar" style={{ flexShrink: 0, alignSelf: 'stretch' }} />;
+}
 
 interface FavServer { host: string; label?: string; path?: string }
 interface CommunityServer { host: string; tcpUp: boolean; udpUp: boolean }
@@ -23,12 +36,16 @@ interface Props {
   lang: Lang;
   onLog: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
   onOpenImage: (name: string, bytes: Uint8Array) => void; // App decide: abrir no painel / rotear OS-9
+  pendingDw?: { filePath: string; name: string; slot?: number; key: number } | null; // disco enviado da aba DSK → painel DriveWire
+  onPendingDwConsumed?: () => void;
 }
 
-export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
+export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPendingDwConsumed }: Props) {
   const pt = lang === 'pt-br';
   const t = (p: string, e: string) => (pt ? p : e);
   const [showHelp, setShowHelp] = useState(false);
+  const [wifiWidth, setWifiWidth] = useState(320);  // largura da coluna do servidor WiFi (splitter)
+  const [dwWidth, setDwWidth] = useState(360);       // largura da coluna do servidor DriveWire (splitter)
   const [busy, setBusy] = useState(false);
   // QUAL operação está em curso — separa as animações/cores por botão (connect ≠ url ≠ download).
   const [busyKind, setBusyKind] = useState<'connect' | 'url' | 'download' | ''>('');
@@ -282,7 +299,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
       {/* Título + Ajuda */}
       <div className="flex items-center gap-2 mb-3 flex-shrink-0">
         <Globe size={16} className="text-[var(--primary)]" />
-        <span className="text-sm font-bold text-white uppercase tracking-wide">{t('FujiNet / Acesso Direto Online', 'FujiNet / Direct Online Access')}</span>
+        <span className="text-sm font-bold text-white uppercase tracking-wide">{t('Servidores', 'Servers')}</span>
         <span className="ml-auto"><HelpButton onClick={() => setShowHelp(true)} lang={lang} /></span>
       </div>
 
@@ -421,11 +438,11 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
           </div>
         </div>
 
-        {/* Divisória vertical */}
-        <div style={{ width: 1, background: 'var(--border)', flexShrink: 0 }} />
+        {/* Splitter: cliente ↔ servidor WiFi */}
+        <VSplitter onDelta={(dx) => setWifiWidth(w => Math.max(260, Math.min(460, w - dx)))} />
 
-        {/* DIREITA — SERVIDOR WiFi */}
-        <div className="flex flex-col gap-3 overflow-y-auto" style={{ width: 320, flexShrink: 0 }}>
+        {/* MEIO — SERVIDOR WiFi */}
+        <div className="flex flex-col gap-3 overflow-y-auto" style={{ width: wifiWidth, flexShrink: 0 }}>
           <div className="flex items-center gap-2">
             <Server size={14} className="text-[var(--primary)]" />
             <span className="text-xs font-bold text-white uppercase tracking-wide">{t('Servidor WiFi (FujiNet)', 'WiFi server (FujiNet)')}</span>
@@ -568,6 +585,10 @@ export default function FujiNetTab({ lang, onLog, onOpenImage }: Props) {
             )}
           </div>
         </div>
+
+        {/* Splitter: servidor WiFi ↔ DriveWire + COLUNA 3 (servidor DriveWire serial) */}
+        <VSplitter onDelta={(dx) => setDwWidth(w => Math.max(300, Math.min(520, w - dx)))} />
+        <DriveWirePanel lang={lang} onLog={onLog} width={dwWidth} pendingDisk={pendingDw} onConsumed={onPendingDwConsumed} />
       </div>
 
       {/* Modal: gerenciar servidores favoritos + ver comunidade */}
