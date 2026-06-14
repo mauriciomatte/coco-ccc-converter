@@ -49,7 +49,7 @@ interface PendingType { text: string; key: number; reset?: boolean; }
 const AUDIT_DELAY_MS = 0;
 const getTypeDelay = () => {
   if (AUDIT_DELAY_MS > 0) return AUDIT_DELAY_MS;
-  try { return localStorage.getItem('xroarTypeSpeed') === 'fast' ? 12 : 25; } catch { return 25; }
+  try { const v = localStorage.getItem('xroarTypeSpeed'); if (v === 'fast') return 12; if (v === 'normal') return 25; const n = parseInt(v || '25', 10); return [25, 12, 8, 2].includes(n) ? n : 25; } catch { return 25; }
 };
 
 interface Props {
@@ -57,18 +57,21 @@ interface Props {
   active?: boolean;
   pendingLoad?: PendingLoad | null;
   pendingType?: PendingType | null;
+  onDrivesChange?: (drives: string[]) => void; // reporta ao App quais drives do XRoar estao ocupados (RODAR NO XROAR do BASIC)
   onLog?: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
   platform?: 'coco' | 'dragon';
   expanded?: boolean;
   onToggleExpand?: () => void;
 }
 
-export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onLog, platform, expanded, onToggleExpand }: Props) {
+export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onDrivesChange, onLog, platform, expanded, onToggleExpand }: Props) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [machine, setMachine] = useState('coco3');
   const [tvInput, setTvInput] = useState('cmp-br');
   const [glFilter, setGlFilter] = useState('nearest'); // 'nearest'=pixel-perfect (jogos) | 'linear'=suave (texto 80col)
+  const [kbdLayout, setKbdLayout] = useState<'coco' | 'pc'>('coco'); // 'coco'=matriz física do CoCo | 'pc'=tradução (o que digita aparece)
+  const [kbdLang, setKbdLang] = useState('auto'); // idioma do teclado do host p/ o modo PC (-kbd-lang): auto/br/us/gb/de/fr/es/it…
   const [rightJoy, setRightJoy] = useState(0); // joystick 0
   const [leftJoy, setLeftJoy] = useState(0);    // joystick 1
   const [colour, setColour] = useState(50);
@@ -78,6 +81,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState('');
   const [drives, setDrives] = useState<string[]>(['', '', '', '']);
+  useEffect(() => { onDrivesChange?.(drives); }, [drives]); // espelha os drives ocupados pro App (RODAR NO XROAR do BASIC)
   const [tapeName, setTapeName] = useState('');                                  // fita montada (.cas/.wav)
   const [tapeAutorun, setTapeAutorun] = useState(false);                          // CLOAD(M) automático: ON=XRoar roda sozinho; OFF=espera o usuário
   const [binAutorun, setBinAutorun] = useState(true);                             // .bin AutoRun: ON=boot com o arquivo (-run); OFF=só carrega
@@ -105,7 +109,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   // Toda a config visual vai no boot (URL). Trocar máquina ou saída de vídeo reinicia (rápido
   // e mostra a tela corretamente); brilho/contraste/cor são ao vivo (set_float ao arrastar).
   const src = new URL('xroar/xroar.html', window.location.href).href +
-    `?machine=${machine}&tvInput=${tvInput}&tvType=ntsc&ccr=${tvInput.startsWith('cmp') ? 1 : 0}&glFilter=${glFilter}${bootProg ? '&bootfile=1' : ''}`;
+    `?machine=${machine}&tvInput=${tvInput}&tvType=ntsc&ccr=${tvInput.startsWith('cmp') ? 1 : 0}&glFilter=${glFilter}&kbdTranslate=${kbdLayout === 'pc' ? 1 : 0}&kbdLang=${kbdLang}${bootProg ? '&bootfile=1' : ''}`;
 
   const sendCmd = (fn: string, extra: Record<string, any> = {}) => {
     const w = iframeRef.current?.contentWindow;
@@ -296,7 +300,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
     // Remontagem (não a 1ª montagem) limpa as drives → re-aplica o disco/texto pendente no novo boot,
     // senão a imagem some do emulador (mas o nome ficava no D1) e o usuário tinha que testar 2×.
     if (mounted) { setReady(false); lastLoadKey.current = 0; lastTypeKey.current = 0; }
-  }, [machine, tvInput, glFilter, bootProgKey]);
+  }, [machine, tvInput, glFilter, kbdLayout, kbdLang, bootProgKey]);
 
   // Aplica TODAS as configurações ao vivo quando o emulador (re)fica pronto — o boot
   // começa nos defaults, então empurramos o estado atual (vídeo, cor, ccr, joysticks).
@@ -371,6 +375,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
           if (x.machine) setMachine(x.machine);
           if (x.tvInput) setTvInput(x.tvInput);
           if (x.glFilter) setGlFilter(x.glFilter);
+          if (x.kbdLayout === 'pc' || x.kbdLayout === 'coco') setKbdLayout(x.kbdLayout);
+          if (typeof x.kbdLang === 'string') setKbdLang(x.kbdLang);
           if (typeof x.rightJoy === 'number') setRightJoy(x.rightJoy);
           if (typeof x.leftJoy === 'number') setLeftJoy(x.leftJoy);
           if (typeof x.colour === 'number') setColour(x.colour);
@@ -387,10 +393,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
   useEffect(() => {
     if (!loaded || !window.cocoApi || typeof window.cocoApi.saveConfig !== 'function') return;
     const id = setTimeout(() => {
-      window.cocoApi.saveConfig({ xroar: { machine, tvInput, glFilter, colour, brightness, contrast, rightJoy, leftJoy } });
+      window.cocoApi.saveConfig({ xroar: { machine, tvInput, glFilter, kbdLayout, kbdLang, colour, brightness, contrast, rightJoy, leftJoy } });
     }, 400);
     return () => clearTimeout(id);
-  }, [loaded, machine, tvInput, glFilter, colour, brightness, contrast, rightJoy, leftJoy]);
+  }, [loaded, machine, tvInput, glFilter, kbdLayout, kbdLang, colour, brightness, contrast, rightJoy, leftJoy]);
 
   const togglePause = () => {
     if (paused) { sendCmd('resume'); setPaused(false); }
@@ -494,6 +500,44 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
               </select>
             </label>
           ))}
+          {/* Layout de teclado: CoCo (matriz física) ↔ PC (tradução — o que você digita aparece). Remonta o emulador. */}
+          <button onClick={() => setKbdLayout(v => (v === 'coco' ? 'pc' : 'coco'))} disabled={!ready}
+            className="dsk-tool flex items-center gap-1.5 justify-start mt-0.5"
+            style={{ padding: '3px 7px', color: kbdLayout === 'pc' ? 'var(--primary)' : 'var(--text-muted)' }}
+            title={t('Layout do teclado. CoCo = posições FÍSICAS do teclado do CoCo (a tecla mapeia pela posição na matriz). PC = TRADUÇÃO (o que você digita no PC aparece — Shift+2=@, etc.). Trocar reinicia o emulador.',
+                     'Keyboard layout. CoCo = PHYSICAL CoCo key positions (a key maps by its matrix position). PC = TRANSLATION (what you type on the PC appears — Shift+2=@, etc.). Switching reboots the emulator.')}>
+            {kbdLayout === 'pc' ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
+            <span className="text-[10px] font-bold">{t('Teclado', 'Keyboard')}: {kbdLayout === 'pc' ? t('layout PC', 'PC layout') : t('layout CoCo', 'CoCo layout')}</span>
+          </button>
+          {/* Idioma do teclado do host (só no modo PC): o "auto" não enxerga o layout do SO no navegador →
+              o usuário escolhe (ex.: Brasil = ABNT2). Trocar reinicia o emulador. */}
+          {kbdLayout === 'pc' && (
+            <label className="flex flex-col gap-0.5 text-[10px] text-[var(--text-secondary)]">
+              <span>{t('Idioma do teclado', 'Keyboard language')}</span>
+              <select value={kbdLang} onChange={(e) => setKbdLang(e.target.value)} disabled={!ready} className="input-select text-xs py-1 w-full"
+                title={t('Casa o seu teclado FÍSICO. Brasil = ABNT2. "Automático" costuma cair em US no navegador.', 'Match your PHYSICAL keyboard. Brazil = ABNT2. "Automatic" usually falls back to US in the browser.')}>
+                <option value="auto">{t('Automático (sistema)', 'Automatic (system)')}</option>
+                <option value="br">{t('Brasil (ABNT2)', 'Brazil (ABNT2)')}</option>
+                <option value="us">{t('EUA (US)', 'USA (US)')}</option>
+                <option value="gb">{t('Reino Unido (UK)', 'United Kingdom (UK)')}</option>
+                <option value="de">{t('Alemanha', 'Germany')}</option>
+                <option value="fr">{t('França', 'France')}</option>
+                <option value="es">{t('Espanha', 'Spain')}</option>
+                <option value="it">{t('Itália', 'Italy')}</option>
+                <option value="be">{t('Bélgica', 'Belgium')}</option>
+                <option value="nl">{t('Holanda', 'Netherlands')}</option>
+                <option value="dk">{t('Dinamarca', 'Denmark')}</option>
+                <option value="no">{t('Noruega', 'Norway')}</option>
+                <option value="fi">{t('Finlândia', 'Finland')}</option>
+                <option value="jp">{t('Japão', 'Japan')}</option>
+              </select>
+            </label>
+          )}
+          <div className="text-[9px] text-[var(--text-muted)] leading-tight mt-0.5">
+            {kbdLayout === 'pc'
+              ? t('Layout PC: símbolos batem com o seu teclado (escolha o idioma acima). ⚠ Mas a CAIXA fica presa em maiúscula — Shift/CapsLock não alternam aqui. Para maiúsc/minúsc use o layout CoCo.', 'PC layout: symbols match your keyboard (pick the language above). ⚠ But CASE is stuck on uppercase — Shift/CapsLock don\'t toggle here. For upper/lowercase use CoCo layout.')
+              : t('Layout CoCo: teclado autêntico do CoCo. SHIFT+0 trava minúsculas e o Shift alterna maiúsc/minúsc. (Símbolos seguem a posição no teclado do CoCo.)', 'CoCo layout: authentic CoCo keyboard. SHIFT+0 locks lowercase and Shift toggles upper/lowercase. (Symbols follow the CoCo key positions.)')}
+          </div>
           <div className="text-[9px] text-[var(--text-muted)] leading-tight mt-0.5">
             {t('No CoCo o joystick 0 é o direito. Use um teclado-joystick para jogar.', 'On the CoCo joystick 0 is the right one. Use a keyboard-joystick to play.')}
           </div>
@@ -514,7 +558,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onL
         {mounted ? (
           <iframe
             ref={iframeRef}
-            key={`${machine}|${tvInput}|${glFilter}|${bootProgKey}`}
+            key={`${machine}|${tvInput}|${glFilter}|${kbdLayout}|${kbdLang}|${bootProgKey}`}
             src={src}
             title="XRoar"
             allow="autoplay; gamepad"

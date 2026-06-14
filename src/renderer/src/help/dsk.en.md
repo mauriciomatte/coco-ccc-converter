@@ -74,8 +74,10 @@ it uses), **Tracks** (which tracks it lives on, as ranges like "0-2, 4") and **F
 - **Select:** click a row (turns orange). **Shift+click** selects a **range** (from the last anchor);
   **Ctrl+click** **toggles** individual files (sparse multi-select), so you can copy/delete/extract several
   at once.
-- **Double-click:** mounts the disk in XRoar and **runs** the file right away — `RUN` for BASIC,
-  `LOADM/EXEC` for machine code. The emulator machine follows the format (CoCo/Dragon).
+- **Double-click:** opens the **Send to…** hub (just like the Servers tab) — from there you pick the destination,
+  including **XRoar**. The file's XRoar card has a **"Send and run"** checkbox (on by default): **on** mounts the
+  disk and **runs** the selected file (`RUN` for BASIC, `LOADM/EXEC` for machine code; the emulator machine follows
+  the format CoCo/Dragon); **off** just **mounts** the disk in XRoar (no run).
 - **Drag the row to the other pane:** copies (with **Ctrl**) or moves (with **Shift**) the file A↔B.
 - **Handle ⠿ (left):** drag it to **Windows Explorer** and the file is **extracted** (native OS drag) to
   that folder — it works even inside a container (the current disk is captured when the drag starts).
@@ -224,8 +226,8 @@ external tools). **Full** = zeroes everything with `0xFF`.
 
 **Test Pane** mounts the active pane's disk into the embedded emulator's **drive 0**. You choose **Test
 without reset** (swap the disk live, keep what's running) or **Reset and test** (clean boot). The XRoar
-machine follows the format (Dragon → Dragon; CoCo → CoCo). To run a specific file, **double-click** it (it
-does `RUN`/`LOADM:EXEC` automatically).
+machine follows the format (Dragon → Dragon; CoCo → CoCo). To run a specific file, **double-click** it → in the
+**Send to…** hub pick **XRoar** (it does `RUN`/`LOADM:EXEC` automatically).
 
 **Result:** you validate the disk/program instantly, without physical media.
 
@@ -279,7 +281,7 @@ and extract** normally, but editing is blocked so the art isn't scrambled (badge
 
 **Ctrl+C** copy · **Ctrl+X** cut (no toolbar button) · **Ctrl+V** paste · **Delete** delete · **Ctrl+Z**
 undo · **Ctrl+Y** (or **Ctrl+Shift+Z**) redo. In the list: **click** selects, **Shift+click** = range,
-**Ctrl+click** = toggle individual files, **double-click** runs in XRoar. **Drag** a row between panes:
+**Ctrl+click** = toggle individual files, **double-click** opens **Send to…**. **Drag** a row between panes:
 **Ctrl** = copy, **Shift** = move; the **⠿ handle** drags out (to the PC).
 
 ---

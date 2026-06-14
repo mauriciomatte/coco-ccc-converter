@@ -164,7 +164,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolGw: 'Gravar painel ativo em disco físico (Greaseweazle)',
     dskToolGwShort: 'Gravar GW',
     dskUnsaved: 'alterações não salvas',
-    dskRunHint: 'Duplo-clique: rodar no XRoar',
+    dskRunHint: 'Duplo-clique: Enviar para…',
     dskDragOutHint: 'Arraste para o Windows Explorer (solta o arquivo numa pasta). Arrastar a linha = mover para o outro painel.',
     dskToolCopyAtoB: 'Copiar Painel A → B (disco ativo)',
     dskToolSave: 'Salvar',
@@ -335,7 +335,7 @@ const DEFAULT_TRANSLATIONS: Record<string, Record<string, string>> = {
     dskToolGw: 'Write active pane to physical disk (Greaseweazle)',
     dskToolGwShort: 'Write GW',
     dskUnsaved: 'unsaved changes',
-    dskRunHint: 'Double-click: run in XRoar',
+    dskRunHint: 'Double-click: Send to…',
     dskDragOutHint: 'Drag to Windows Explorer (drops the file into a folder). Dragging the row = move to the other pane.',
     dskToolCopyAtoB: 'Copy Pane A → B (active disk)',
     dskToolSave: 'Save',
@@ -496,9 +496,14 @@ export default function App() {
   // Disco enviado da aba DSK para o painel DriveWire (aba Servidores): o painel monta no slot escolhido.
   const [pendingDw, setPendingDw] = useState<{ filePath: string; name: string; slot?: number; key: number } | null>(null);
   const [sendHubOpen, setSendHubOpen] = useState(false);  // hub unificado "Enviar para…"
+  const [xroarSendRun, setXroarSendRun] = useState(true);  // hub→XRoar (arquivo): "Enviar e rodar" (montar + RUN) vs só montar
+  const [saveHubOpen, setSaveHubOpen] = useState(false);  // hub "Salvar arquivo…" (saídas que gravam arquivo no PC)
   const [dwDrive, setDwDrive] = useState(0);               // drive destino (0–3) ao enviar p/ DriveWire (igual ao xroarDrive)
+  const [xroarDrives, setXroarDrives] = useState<string[]>(['', '', '', '']); // drives ocupados no XRoar (reportados pelo XRoarPanel)
+  const [basicRunDrive, setBasicRunDrive] = useState<{ image: Uint8Array; name: string } | null>(null); // modal de escolha de drive p/ "RODAR NO XROAR" do BASIC
+  const [reloadConfirm, setReloadConfirm] = useState<{ which: 'A' | 'B'; path: string } | null>(null); // recarregar painel com alterações não salvas
   const EPROM_UNLOCKED = false;                            // gate ÚNICO do EPROM oculto — destravar JUNTO da aba EPROM (ver memória eprom-hidden-until-tab-unlocked)
-  const [dropDskModal, setDropDskModal] = useState<{ which: 'A' | 'B'; bytes: Uint8Array; name: string } | null>(null); // soltar .dsk em painel c/ conteúdo → abrir/adicionar/importar
+  const [dropDskModal, setDropDskModal] = useState<{ which: 'A' | 'B'; bytes: Uint8Array; name: string; path?: string } | null>(null); // soltar .dsk em painel c/ conteúdo → abrir/adicionar/importar
   const [xroarExpanded, setXroarExpanded] = useState(false); // aba XRoar em tela cheia (esconde laterais + console)
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null); // modal de ajuda (DSK/GW renderizados no App)
   // Injeção de texto/BASIC no XRoar (aba BASIC). reset=true força boot limpo antes de digitar.
@@ -2234,10 +2239,10 @@ export default function App() {
 
   // Abre QUALQUER imagem no painel: .dsk simples, contêiner DriveWire, MiniIDE ou CoCoSDC.
   // MiniIDE/CoCoSDC viram um contêiner de ARQUIVO (lê cada disco sob demanda, sem recarregar).
-  const handleImageImport = async (which: 'A' | 'B') => {
+  const handleImageImport = async (which: 'A' | 'B', forcedPath?: string) => {
     setImageBusy(true);
     try {
-      const res = await window.cocoApi.imageAnalyze();
+      const res = await window.cocoApi.imageAnalyze(forcedPath);
       if (res?.cancelled) return;
       if (!res?.success) { addLog(`Imagem: ${res?.error}`, `Image: ${res?.error}`, 'error'); return; }
 
@@ -2457,10 +2462,12 @@ export default function App() {
 
   // Duplo-clique num arquivo: monta o disco do painel no XRoar (drive 0) e AUTO-RODA o arquivo
   // (RUN para BASIC tipo 0; LOADM:EXEC para código de máquina). Usa o buffer atual (inclui edições).
-  const handleRunFileInXroar = (which: 'A' | 'B', f: any) => {
+  // `run=true` (padrão): monta o disco no XRoar E roda o arquivo (RUN/LOADM:EXEC). `run=false`: só MONTA o
+  // disco no drive 0 (sem auto-rodar) — o checkbox "Enviar e rodar" do hub controla isso.
+  const handleRunFileInXroar = (which: 'A' | 'B', f: any, run = true) => {
     const pane = getPane(which);
     if (!pane) return;
-    const cmd = f.fileType === 0 ? `RUN"${f.name}"\r` : `LOADM"${f.name}":EXEC\r`;
+    const cmd = run ? (f.fileType === 0 ? `RUN"${f.name}"\r` : `LOADM"${f.name}":EXEC\r`) : undefined;
     setActivePane(which);
     const targetPlatform: 'coco' | 'dragon' = pane.format === 'dragon' ? 'dragon' : 'coco';
     if (platform !== targetPlatform) setPlatform(targetPlatform); // máquina do XRoar segue o formato do disco
@@ -2468,8 +2475,9 @@ export default function App() {
     setXroarLoad({ name: d.name, ext: d.ext, data: new Uint8Array(pane.buffer), key: Date.now(), drive: 0, runCmd: cmd });
     setActiveTab('xroar');
     // Diagnóstico: tamanho do disco, tipo do arquivo e comando exato enviado.
-    const dbg = `disco=${d.name} ${pane.buffer.length}B${pane.container ? ` (contêiner ${pane.container.kind} #${pane.container.index})` : ''} | ${f.fullName} type=${f.fileType} | cmd=${cmd.replace(/\r/g, '\\r')}`;
-    addLog(`Rodando "${f.fullName}" no XRoar (drive 0)… [${dbg}]`, `Running "${f.fullName}" in XRoar (drive 0)… [${dbg}]`, 'info');
+    const dbg = `disco=${d.name} ${pane.buffer.length}B${pane.container ? ` (contêiner ${pane.container.kind} #${pane.container.index})` : ''} | ${f.fullName} type=${f.fileType} | cmd=${cmd ? cmd.replace(/\r/g, '\\r') : '(só montar)'}`;
+    addLog(run ? `Rodando "${f.fullName}" no XRoar (drive 0)… [${dbg}]` : `Disco montado no XRoar (drive 0) — "${f.fullName}" NÃO rodado. [${dbg}]`,
+           run ? `Running "${f.fullName}" in XRoar (drive 0)… [${dbg}]` : `Disk mounted in XRoar (drive 0) — "${f.fullName}" NOT run. [${dbg}]`, 'info');
   };
 
   // Aba BASIC: injeta o programa digitado no XRoar (via type_string). reset=true reinicia
@@ -2504,6 +2512,28 @@ export default function App() {
     addLog('Programa com sintaxe incomum: gravado como ASCII (o CoCo tokeniza no carregamento).',
            'Program has unusual syntax: saved as ASCII (the CoCo tokenizes on load).', 'info');
     return { payload: basicTextToAsciiBytes(program), ascii: true };
+  };
+
+  // "RODAR NO XROAR" (aba BASIC): cria um DSK em memoria, injeta o programa e roda com RUN"NOME".
+  // Monta no drive 0; se ocupado, abre um modal para escolher outro (drive ocupado e SUBSTITUIDO).
+  const mountBasicDiskInXroar = (drive: number, dsk: Uint8Array, safe: string) => {
+    const runCmd = drive === 0 ? `RUN"${safe}"\r` : `RUN"${safe}:${drive}"\r`;
+    setXroarLoad({ name: `${safe}.dsk`, ext: 'dsk', data: dsk, key: Date.now(), drive, runCmd, reset: true });
+    setActiveTab('xroar');
+    addLog(`BASIC "${safe}" -> XRoar (drive ${drive}): reset + ${runCmd.trim()}.`,
+           `BASIC "${safe}" -> XRoar (drive ${drive}): reset + ${runCmd.trim()}.`, 'success');
+  };
+  const handleRunBasicDiskInXroar = async (name: string, program: string) => {
+    if (!program.trim()) { addLog('Editor BASIC vazio.', 'BASIC editor is empty.', 'warn'); return; }
+    const safe = (name || 'PROG').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8) || 'PROG';
+    const { payload, ascii } = basicToTapePayload(program); // tokeniza (ou ASCII se sintaxe incomum)
+    const blank = await window.cocoApi.dskNewBlank(35);
+    if (!blank?.success) { addLog('Falha ao criar o DSK em memoria.', 'Failed to create the in-memory DSK.', 'error'); return; }
+    const added = await window.cocoApi.dskAddBytes(new Uint8Array(blank.image), safe, 'BAS', 0, ascii ? 0xFF : 0, payload);
+    if (!added?.success) { addLog(`Injetar BASIC no DSK: ${added?.error || '?'}`, `Inject BASIC into DSK: ${added?.error || '?'}`, 'error'); return; }
+    const dsk = new Uint8Array(added.image);
+    if (!xroarDrives[0]) mountBasicDiskInXroar(0, dsk, safe);  // D0 vazio -> usa D0
+    else setBasicRunDrive({ image: dsk, name: safe });          // D0 ocupado -> modal de escolha
   };
 
   // Lê bytes de um arquivo .BAS e devolve o texto editável. Tokenizado (binário) não é suportado.
@@ -3357,6 +3387,42 @@ export default function App() {
     } catch (err: any) { addLog(`Salvar: ${err.message}`, `Save: ${err.message}`, 'error'); }
   };
 
+  // RECARREGAR a imagem do painel do arquivo de origem (single .dsk OU contêiner). Se houver alterações
+  // não salvas, pede confirmação: "Salvar e recarregar" ou "Recarregar (descartar)".
+  const reloadSourcePath = (pane: any): string | undefined => pane?.container?.filePath || pane?.container?.sourcePath || pane?.sourcePath;
+  const doReloadPane = async (which: 'A' | 'B', path: string) => {
+    if (selectedDsk?.pane === which) setSelectedDsk(null);
+    clearDirty(which);
+    await handleImageImport(which, path); // re-analisa o mesmo caminho, sem diálogo
+  };
+  const handleReloadPane = (which: 'A' | 'B') => {
+    const pane = getPane(which);
+    if (!pane) return;
+    const path = reloadSourcePath(pane);
+    if (!path) { addLog('Esta imagem não veio de um arquivo (ex.: imagem NOVA ainda não salva) — não há o que recarregar.', 'This image did not come from a file (e.g. a NEW image not yet saved) — nothing to reload.', 'warn'); return; }
+    setActivePane(which);
+    if (dskDirty[which]) setReloadConfirm({ which, path });
+    else doReloadPane(which, path);
+  };
+  const reloadSaveThenReload = async () => {
+    if (!reloadConfirm) return;
+    const { which, path } = reloadConfirm;
+    setReloadConfirm(null);
+    const pane = getPane(which);
+    if (pane?.sourcePath && !pane.container) { // disco único → grava direto e recarrega
+      const r = await window.cocoApi.saveDskOverwrite(pane.sourcePath, pane.buffer);
+      if (!r?.success) { addLog(`Salvar: ${r?.error || '?'}`, `Save: ${r?.error || '?'}`, 'error'); return; }
+      clearDirty(which); await doReloadPane(which, path);
+    } else if (pane?.container?.source === 'memory' && pane.container?.sourcePath) { // contêiner DriveWire → grava o .dsk inteiro e recarrega
+      const r = await window.cocoApi.saveDskOverwrite(pane.container.sourcePath, pane.container.full);
+      if (!r?.success) { addLog(`Salvar: ${r?.error || '?'}`, `Save: ${r?.error || '?'}`, 'error'); return; }
+      clearDirty(which); await doReloadPane(which, path);
+    } else { // contêiner de arquivo (MiniIDE/CoCoSDC) → usa o save padrão (tem confirmação própria); recarregue depois
+      setActivePane(which); handleDskSaveOverwrite();
+      addLog('Salve o contêiner pela confirmação; depois clique em Recarregar de novo.', 'Save the container via the confirmation; then click Reload again.', 'info');
+    }
+  };
+
   // Drop externo num painel: .dsk abre a imagem; .bin/.bas injeta (aceita múltiplos)
   // Extrai TODOS os arquivos de um buffer .dsk (ciente de contêiner multi-disco)
   const extractAllFromDsk = async (bytes: Uint8Array): Promise<any[]> => {
@@ -3426,7 +3492,8 @@ export default function App() {
         const reader = new FileReader();
         reader.onload = async () => {
           if (selectedDsk?.pane === which) setSelectedDsk(null);
-          await loadPaneFromBuffer(which, new Uint8Array(reader.result as ArrayBuffer), dskFile.name);
+          const fp = window.cocoApi.getPathForFile(dskFile); // guarda o caminho → habilita o "Recarregar"
+          await loadPaneFromBuffer(which, new Uint8Array(reader.result as ArrayBuffer), dskFile.name, 0, fp || undefined);
         };
         reader.readAsArrayBuffer(dskFile);
         return;
@@ -3436,7 +3503,7 @@ export default function App() {
       // Painel COM imagem + UM .dsk solto → pergunta: abrir / adicionar ao container / importar arquivos.
       const file = arr[0];
       const reader = new FileReader();
-      reader.onload = () => setDropDskModal({ which, bytes: new Uint8Array(reader.result as ArrayBuffer), name: file.name });
+      reader.onload = () => setDropDskModal({ which, bytes: new Uint8Array(reader.result as ArrayBuffer), name: file.name, path: window.cocoApi.getPathForFile(file) || undefined });
       reader.readAsArrayBuffer(file);
       return;
     }
@@ -4018,6 +4085,18 @@ export default function App() {
     } catch (e: any) { addLog(`FujiNet abrir: ${e?.message}`, `FujiNet open: ${e?.message}`, 'error'); }
   };
 
+  // Servidores → XRoar: monta a imagem baixada no drive 0 do emulador (reset = boot limpo). VDK → máquina Dragon.
+  const handleFujinetSendXroar = (name: string, bytes: Uint8Array) => {
+    const isVdk = bytes.length > 2 && bytes[0] === 0x64 && bytes[1] === 0x6b; // cabeçalho "dk"
+    const ext: 'dsk' | 'vdk' = isVdk ? 'vdk' : 'dsk';
+    const base = (name || 'disk').replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'disk';
+    const targetPlatform: 'coco' | 'dragon' = isVdk ? 'dragon' : 'coco';
+    if (platform !== targetPlatform) { setPlatform(targetPlatform); addLog(`Plataforma do XRoar ajustada para ${targetPlatform === 'dragon' ? 'Dragon' : 'CoCo'}.`, `XRoar platform set to ${targetPlatform === 'dragon' ? 'Dragon' : 'CoCo'}.`, 'info'); }
+    setXroarLoad({ name: `${base}.${ext}`, ext, data: new Uint8Array(bytes), key: Date.now(), drive: 0, reset: true });
+    setActiveTab('xroar');
+    addLog(`XRoar resetado e recebendo "${base}.${ext}" (drive 0).`, `XRoar reset and loading "${base}.${ext}" (drive 0).`, 'info');
+  };
+
   const renderGwTab = () => {
     const geo = GW_FORMATS.find(f => f.id === gwFormat) || { cyls: 35, heads: 1 };
     const total = geo.cyls * geo.heads;
@@ -4218,7 +4297,7 @@ export default function App() {
             {/* LINHA 1: badge do painel | ABRIR imagem (ícone) | LIMPAR painel (ícone) */}
             <div className="flex items-center gap-1.5">
               <span
-                className="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-md flex-1 text-center whitespace-nowrap"
+                className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-md flex-1 text-center whitespace-nowrap"
                 style={which === activePane
                   ? { color: '#000', background: '#ff8c1a', border: '1px solid #ff8c1a', boxShadow: '0 0 10px rgba(255,140,26,0.8)' }
                   : { color: 'var(--text-secondary)', border: '1px solid var(--border)' }}
@@ -4227,6 +4306,9 @@ export default function App() {
               </span>
               <button onClick={(e) => { e.stopPropagation(); handleImageImport(which); }} disabled={imageBusy} className="dsk-tool" style={{ padding: '4px 6px' }} title={t('openImageBtn')} aria-label={t('openImageBtn')}>
                 <FolderOpen size={14} />
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); handleReloadPane(which); }} disabled={imageBusy || !pane || !reloadSourcePath(pane)} className="dsk-tool" style={{ padding: '4px 6px' }} title={currentLang === 'pt-br' ? `Recarregar a imagem do Painel ${which} do arquivo de origem (avisa se houver alterações não salvas)` : `Reload the Pane ${which} image from its source file (warns about unsaved changes)`} aria-label={currentLang === 'pt-br' ? 'Recarregar' : 'Reload'}>
+                <RefreshCw size={14} />
               </button>
               <button onClick={(e) => { e.stopPropagation(); handleClearPane(which); }} disabled={!pane} className="dsk-tool" style={{ padding: '4px 6px' }} title={currentLang === 'pt-br' ? `Fechar Painel ${which} (descarrega a imagem aberta)` : `Close Pane ${which} (unloads the open image)`} aria-label={currentLang === 'pt-br' ? `Fechar Painel ${which}` : `Close Pane ${which}`}>
                 <X size={14} />
@@ -4426,7 +4508,7 @@ export default function App() {
                       }}
                       onDragEnd={() => { dskDragItem.current = null; }} // ESC / soltar fora: limpa o arraste (não vaza a cópia do disco)
                       onClick={(e) => handleSelectDskFile(which, f, e)}
-                      onDoubleClick={() => handleRunFileInXroar(which, f)}
+                      onDoubleClick={() => setSendHubOpen(true)}
                       title={t('dskRunHint')}
                       className={`cursor-pointer border-b border-[var(--border)]/40 hover:bg-slate-800 ${selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName) ? 'font-semibold' : 'text-[var(--text-secondary)]'}`}
                       style={selectedDsk && selectedDsk.pane === which && selectedDsk.entries.some((x: any) => x.fullName === f.fullName)
@@ -5314,6 +5396,7 @@ export default function App() {
               bold={basicBold}
               onBoldChange={setBasicBold}
               onRun={handleBasicRun}
+              onRunDisk={handleRunBasicDiskInXroar}
               onSaveToDisk={handleBasicSaveToDisk}
               onSaveTextFile={handleBasicSaveTextFile}
               onSaveCasFile={handleBasicSaveCasFile}
@@ -5375,19 +5458,11 @@ export default function App() {
                 <Save size={15} />
                 {dskDirty[activePane] && <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'hsl(45,95%,60%)', display: 'inline-block', marginLeft: 3, boxShadow: '0 0 5px hsl(45,95%,60%)' }} />}
               </button>
-              {/* Salvar Como = abre o diálogo "Salvar como" e grava numa nova imagem (preserva a anterior). */}
-              <button
-                onClick={handleDskSaveAs}
-                disabled={!getPane(activePane)}
-                title={t('dskToolSaveAs')}
-                aria-label={t('dskToolSaveAs')}
-                className="dsk-tool"
-              >
-                <SaveAll size={15} />
-              </button>
               <div className="w-[1px] h-5 bg-[var(--border)] mx-1" />
-              {/* ENVIAR — hub unificado (XRoar/GW/DriveWire/FujiNet/Dispositivo/CF + o arquivo selecionado). */}
-              <button onClick={() => setSendHubOpen(true)} disabled={!getPane(activePane)} title={currentLang === 'pt-br' ? 'Enviar o disco (ou o arquivo selecionado) para outro destino: XRoar, Greaseweazle, DriveWire, FujiNet, dispositivo, cartão CF…' : 'Send the disk (or the selected file) to another destination: XRoar, Greaseweazle, DriveWire, FujiNet, device, CF card…'} className="dsk-tool flex items-center gap-1" style={{ color: 'var(--primary)' }}><Send size={15} /> {currentLang === 'pt-br' ? 'Enviar' : 'Send'}</button>
+              {/* ENVIAR PARA… — destinos que são outra aba/dispositivo (XRoar/GW/DriveWire/FujiNet/CF + arquivo). */}
+              <button onClick={() => setSendHubOpen(true)} disabled={!getPane(activePane)} title={currentLang === 'pt-br' ? 'Enviar o disco (ou o arquivo selecionado) para outro destino: XRoar, Greaseweazle, DriveWire, FujiNet, cartão CF…' : 'Send the disk (or the selected file) to another destination: XRoar, Greaseweazle, DriveWire, FujiNet, CF card…'} className="dsk-tool flex items-center gap-1" style={{ color: 'var(--primary)' }}><Send size={15} /> {currentLang === 'pt-br' ? 'Enviar para…' : 'Send to…'}</button>
+              {/* SALVAR ARQUIVO… — saídas que gravam um arquivo no PC (Salvar Como / Dispositivo / Extrair). */}
+              <button onClick={() => setSaveHubOpen(true)} disabled={!getPane(activePane)} title={currentLang === 'pt-br' ? 'Salvar em arquivo no PC: Salvar Como (.dsk), Dispositivo (.dsk numa pasta/cartão) ou Extrair arquivo(s) p/ Windows' : 'Save to a PC file: Save As (.dsk), Device (.dsk to a folder/card) or Extract file(s) to Windows'} className="dsk-tool flex items-center gap-1" style={{ color: 'var(--primary)' }}><SaveAll size={15} /> {currentLang === 'pt-br' ? 'Salvar arquivo…' : 'Save file…'}</button>
               {dskClipboard && <span className="text-[10px] text-[var(--text-secondary)] ml-2">📋 {dskClipboard.name}.{dskClipboard.ext}{dskClipboard.cut ? ' ✂' : ''}</span>}
               <span className="ml-auto"><HelpButton onClick={() => setHelpTopic('dsk')} lang={currentLang} /></span>
             </div>
@@ -5422,12 +5497,12 @@ export default function App() {
 
         {/* XRoar emulator — always mounted (hidden unless active) so it never reboots on tab switch */}
         <div style={{ display: activeTab === 'xroar' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} pendingType={xroarType} onLog={addLog} platform={platform} expanded={xroarExpanded} onToggleExpand={() => setXroarExpanded(v => !v)} />
+          <XRoarPanel lang={currentLang} active={activeTab === 'xroar'} pendingLoad={xroarLoad} pendingType={xroarType} onDrivesChange={setXroarDrives} onLog={addLog} platform={platform} expanded={xroarExpanded} onToggleExpand={() => setXroarExpanded(v => !v)} />
         </div>
 
         {/* Aba FujiNet — sempre montada (display toggle) p/ preservar listagem/host/favoritos ao trocar de aba */}
         <div style={{ display: activeTab === 'fujinet' ? 'flex' : 'none', flex: '1 1 0%', minHeight: 0, flexDirection: 'column' }}>
-          <FujiNetTab lang={currentLang} onLog={addLog} onOpenImage={handleFujinetOpenImage} pendingDw={pendingDw} onPendingDwConsumed={() => setPendingDw(null)} />
+          <FujiNetTab lang={currentLang} onLog={addLog} onOpenImage={handleFujinetOpenImage} onSendXroar={handleFujinetSendXroar} pendingDw={pendingDw} onPendingDwConsumed={() => setPendingDw(null)} />
         </div>
 
         {/* SPLITTER 3 (Horizontal) — escondido quando o XRoar está expandido (tela cheia) */}
@@ -6345,10 +6420,93 @@ export default function App() {
               <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
                 <b className="normal-case">{m.name}</b> — {pt ? 'o painel já tem conteúdo. O que fazer com a imagem solta?' : 'the pane already has content. What to do with the dropped image?'}
               </p>
-              <button onClick={() => { close(); loadPaneFromBuffer(m.which, m.bytes, m.name); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase text-left">{pt ? 'Abrir no painel (substitui o atual)' : 'Open in the pane (replaces current)'}</button>
+              <button onClick={() => { close(); loadPaneFromBuffer(m.which, m.bytes, m.name, 0, m.path); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase text-left">{pt ? 'Abrir no painel (substitui o atual)' : 'Open in the pane (replaces current)'}</button>
               <button onClick={() => { close(); addDiskToContainer(m.which, m.bytes, m.name); }} disabled={!canContainer} title={canContainer ? '' : (pt ? 'Precisa de um disco RS-DOS de 160 KB (35T) no painel' : 'Needs a 160 KB (35T) RS-DOS disk in the pane')} className="btn btn-primary py-2 px-4 text-xs font-bold uppercase text-left disabled:opacity-40">{pt ? 'Adicionar ao final → formar/expandir container' : 'Append → form/expand a container'}</button>
               <button onClick={async () => { close(); const out = await extractAllFromDsk(m.bytes); if (out.length) { beginAddBatch(m.which, out); } else addLog('Nada para importar do .dsk solto.', 'Nothing to import from the dropped .dsk.', 'warn'); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase text-left">{pt ? 'Importar os arquivos para o disco atual' : 'Import the files into the current disk'}</button>
               <div className="flex justify-end"><button onClick={close} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button></div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* RECARREGAR painel com alterações não salvas: Salvar e recarregar / Recarregar (descartar) / Cancelar. */}
+      {reloadConfirm && (() => {
+        const m = reloadConfirm; const pt = currentLang === 'pt-br'; const close = () => setReloadConfirm(null);
+        return (
+          <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={close}>
+            <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 500, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2"><RefreshCw size={18} className="text-[var(--primary)]" /><h3 className="text-sm font-bold text-white uppercase tracking-wide">{pt ? `Recarregar Painel ${m.which}` : `Reload Pane ${m.which}`}</h3></div>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {pt ? `O Painel ${m.which} tem alterações NÃO salvas. Salvar antes de recarregar, ou recarregar DESCARTANDO as alterações?` : `Pane ${m.which} has UNSAVED changes. Save before reloading, or reload DISCARDING the changes?`}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button onClick={close} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button>
+                <button onClick={() => { const w = m.which, p = m.path; setReloadConfirm(null); doReloadPane(w, p); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase" style={{ color: '#fbbf24' }}>{pt ? 'Recarregar (descartar)' : 'Reload (discard)'}</button>
+                <button onClick={reloadSaveThenReload} className="btn btn-primary py-2 px-5 text-xs font-bold uppercase">{pt ? 'Salvar e recarregar' : 'Save & reload'}</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* "RODAR NO XROAR" (BASIC) com D0 ocupado: escolher drive (ocupado e substituido). */}
+      {basicRunDrive && (() => {
+        const m = basicRunDrive;
+        const close = () => setBasicRunDrive(null);
+        const pt = currentLang === 'pt-br';
+        return (
+          <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={close}>
+            <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 460, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2"><MonitorPlay size={18} className="text-[var(--primary)]" /><h3 className="text-sm font-bold text-white uppercase tracking-wide">{pt ? 'Rodar BASIC no XRoar — escolher drive' : 'Run BASIC in XRoar — choose drive'}</h3></div>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                {pt ? `O drive 0 esta ocupado (${xroarDrives[0]}). Escolha um drive para "${m.name}" — um drive ocupado sera SUBSTITUIDO:` : `Drive 0 is busy (${xroarDrives[0]}). Choose a drive for "${m.name}" — a busy drive will be REPLACED:`}
+              </p>
+              <div className="flex flex-col gap-2">
+                {[0, 1, 2, 3].map(d => (
+                  <button key={d} onClick={() => { close(); mountBasicDiskInXroar(d, m.image, m.name); }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase text-left flex items-center gap-2" style={{ borderColor: xroarDrives[d] ? '#f59e0b55' : '#34d39955' }}>
+                    <span className="font-mono">D{d}</span>
+                    <span className="normal-case flex-1 truncate" style={{ color: xroarDrives[d] ? '#fbbf24' : '#34d399' }}>{xroarDrives[d] ? `⬤ ${pt ? 'ocupado' : 'busy'}: ${xroarDrives[d]}` : `○ ${pt ? 'vazio' : 'empty'}`}</span>
+                  </button>
+                ))}
+              </div>
+              <div className="flex justify-end"><button onClick={close} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('modalCancel')}</button></div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* HUB "Salvar arquivo…" — saídas que gravam um arquivo no PC (Salvar Como / Dispositivo / Extrair). */}
+      {saveHubOpen && (() => {
+        const L = (p: string, e: string) => (currentLang === 'pt-br' ? p : e);
+        const pane = getPane(activePane);
+        const sel = selectedDsk;
+        const hasFile = !!sel?.entries?.length;
+        const close = () => setSaveHubOpen(false);
+        const dests: any[] = [
+          { icon: <SaveAll size={16} />, label: L('Salvar Como (.dsk)', 'Save As (.dsk)'), desc: L('grava uma nova imagem .dsk', 'write a new .dsk image'), enabled: !!pane, run: () => { close(); handleDskSaveAs(); } },
+          { icon: <Send size={16} />, label: L('Dispositivo (.dsk)', 'Device (.dsk)'), desc: L('.dsk numa pasta / cartão CoCoSDC', '.dsk to a folder / CoCoSDC card'), enabled: !!pane, run: () => { close(); handleSendToDevice(); } },
+          { icon: <Download size={16} />, label: L('Extrair p/ Windows', 'Extract to Windows'), desc: L('arquivo(s) selecionado(s) → pasta', 'selected file(s) → folder'), enabled: hasFile, reason: L('selecione um arquivo na lista', 'select a file in the list'), run: () => { close(); handleDskExtractToPc(); } },
+        ];
+        const Card = (dst: any, i: number) => (
+          <button key={i} onClick={() => dst.enabled && dst.run()} disabled={!dst.enabled} title={dst.enabled ? '' : (dst.reason || '')}
+            className="glass-panel" style={{ textAlign: 'left', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, opacity: dst.enabled ? 1 : 0.4, cursor: dst.enabled ? 'pointer' : 'not-allowed' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: dst.enabled ? 'var(--primary)' : 'var(--text-muted)' }}>
+              {dst.icon}<span className="text-xs font-bold normal-case" style={{ color: dst.enabled ? '#fff' : 'var(--text-muted)' }}>{dst.label}</span>
+              {!dst.enabled && <span style={{ marginLeft: 'auto', fontSize: 11 }}>🔒</span>}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{dst.desc}</span>
+          </button>
+        );
+        return (
+          <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={close}>
+            <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 560, maxWidth: '94%' }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                <SaveAll size={18} className="text-[var(--primary)]" />
+                <h3 className="text-sm font-bold text-white uppercase tracking-wide">{L('Salvar arquivo…', 'Save file…')}</h3>
+                <button onClick={close} className="ml-auto dsk-tool" style={{ padding: '3px 6px' }}><X size={14} /></button>
+              </div>
+              <div className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>{L('Disco', 'Disk')}: <b className="normal-case">{pane?.fileName || '—'}</b>{hasFile && <> · {L('Arquivo', 'File')}: <b className="normal-case">{sel?.entries?.[0]?.fullName}</b></>}</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>{dests.map(Card)}</div>
             </div>
           </div>
         );
@@ -6368,15 +6526,15 @@ export default function App() {
           { key: 'gw', icon: <HardDrive size={16} />, label: 'Greaseweazle', desc: L('gravar disquete físico', 'write a physical floppy'), enabled: !!pane, run: () => { close(); handleDskWriteToGw(); } },
           { key: 'dw', icon: <Plug size={16} />, label: 'DriveWire', desc: L('montar p/ o CoCo (serial)', 'mount for the CoCo (serial)'), enabled: !!pane, drive: 'dw', run: () => { close(); handleSendToDriveWire(); } },
           { key: 'fujinet', icon: <Globe size={16} />, label: 'FujiNet', desc: L('servir por WiFi', 'serve over WiFi'), enabled: !!pane, run: () => { close(); setActiveTab('fujinet'); } },
-          { key: 'device', icon: <Send size={16} />, label: L('Dispositivo', 'Device'), desc: L('.dsk p/ CoCoSDC/pasta', '.dsk to CoCoSDC/folder'), enabled: !!pane, run: () => { close(); handleSendToDevice(); } },
           { key: 'cf', icon: <Database size={16} />, label: L('Cartão CF', 'CF card'), desc: L('gravar .img no cartão', 'write .img to the card'), enabled: !!pane?.container?.filePath, reason: L('abra uma .img (MiniIDE/CoCoSDC)', 'open a .img (MiniIDE/CoCoSDC)'), run: () => { close(); openCfReflash(); } },
         ];
         const fileDests: any[] = [
           { key: 'tape', icon: <AudioLines size={16} />, label: L('Fita (K7)', 'Tape (K7)'), desc: L('→ abrir a aba K7 ("Do disco")', '→ open the K7 tab ("From disk")'), enabled: hasFile, run: () => { close(); if (sel) setActivePane(sel.pane); setActiveTab('k7'); addLog('Use "Do disco" na aba K7 para empacotar o arquivo selecionado como fita.', 'Use "From disk" in the K7 tab to pack the selected file as a tape.', 'info'); } },
-          { key: 'xroarfile', icon: <MonitorPlay size={16} />, label: 'XRoar', desc: L('rodar o arquivo', 'run the file'), enabled: hasFile, run: () => { close(); if (sel?.entries?.[0]) handleRunFileInXroar(sel.pane, sel.entries[0]); } },
+          { key: 'xroarfile', icon: <MonitorPlay size={16} />, label: 'XRoar', desc: xroarSendRun ? L('montar e rodar o arquivo', 'mount and run the file') : L('só montar o disco (não rodar)', 'mount the disk only (no run)'), enabled: hasFile,
+            checkbox: { label: L('Enviar e rodar', 'Send and run'), checked: xroarSendRun, onToggle: () => setXroarSendRun(v => !v) },
+            run: () => { close(); if (sel?.entries?.[0]) handleRunFileInXroar(sel.pane, sel.entries[0], xroarSendRun); } },
           { key: 'basic', icon: <FileCode2 size={16} />, label: 'BASIC', desc: L('abrir no editor', 'open in the editor'), enabled: hasFile && !isBin, reason: L('só programas BASIC (não binário)', 'BASIC programs only (not binary)'), run: () => { close(); handleDskEditBas(); } },
           ...(EPROM_UNLOCKED ? [{ key: 'eprom', icon: <FileInput size={16} />, label: 'EPROM', desc: L('converter p/ cartucho', 'convert to cartridge'), enabled: hasFile, run: () => { close(); setActiveTab('eprom'); } }] : []),
-          { key: 'win', icon: <Download size={16} />, label: 'Windows', desc: L('extrair / arrastar', 'extract / drag out'), enabled: hasFile, run: () => { close(); handleDskExtractToPc(); } },
         ];
         const Card = (dst: any) => (
           <button key={dst.key} onClick={() => dst.enabled && dst.run()} disabled={!dst.enabled}
@@ -6388,6 +6546,12 @@ export default function App() {
               {!dst.enabled && <span style={{ marginLeft: 'auto', fontSize: 11 }}>🔒</span>}
             </span>
             <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{dst.desc}</span>
+            {dst.checkbox && dst.enabled && (
+              <label onClick={e => e.stopPropagation()} className="text-[10px] flex items-center gap-1 cursor-pointer" style={{ color: 'var(--text-secondary)' }} title={L('Marcado: monta o disco e roda o arquivo. Desmarcado: só monta no XRoar.', 'Checked: mounts the disk and runs the file. Unchecked: just mounts in XRoar.')}>
+                <input type="checkbox" checked={dst.checkbox.checked} onChange={dst.checkbox.onToggle} />
+                {dst.checkbox.label}
+              </label>
+            )}
             {dst.drive && dst.enabled && (
               <span onClick={e => e.stopPropagation()} className="text-[10px] flex items-center gap-1" style={{ color: 'var(--text-secondary)' }}>
                 drive

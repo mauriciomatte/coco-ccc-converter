@@ -157,6 +157,25 @@
                 args.push('-no-tape-fast');
             }
 
+            // Layout de teclado: kbdTranslate=1 → TRADUÇÃO ligada (layout PC: o que você digita no PC
+            // aparece — Shift+2=@, etc.). Sem isso = layout CoCo (matriz/posições físicas do teclado do CoCo).
+            if (urlParams.get('kbdTranslate') === '1') {
+                args.push('-kbd-translate');
+                // Idioma do teclado do HOST (-kbd-lang) + FORMATO FÍSICO (-kbd-layout: ansi/iso/jis).
+                // O formato importa: no ABNT2 (ISO) a tecla extra perto do Enter gera ']' — se o XRoar
+                // assumir ANSI ela vira '\'. 'auto' → detectado em resolveAutoKbdLang.
+                var kl = urlParams.get('kbdLang');
+                var explicit = (kl && kl !== 'auto');
+                var eff = explicit ? kl : _autoKbdLang;
+                if (eff) {
+                    args.push('-kbd-lang', eff);
+                    var lay = explicit
+                        ? ((eff === 'us') ? 'ansi' : (eff === 'jp') ? 'jis' : 'iso')   // br e europeus = ISO
+                        : (_autoKbdLayout || ((eff === 'us') ? 'ansi' : 'iso'));
+                    args.push('-kbd-layout', lay);
+                }
+            }
+
             return args;
         }
 
@@ -168,9 +187,42 @@
         var _cwrap_xroar_insert_disk = null;    // cwrap: xroar_insert_disk(number, string)
         var _cwrap_wasm_insert_disk = null;     // cwrap: wasm_insert_disk(number, string)
 
+        // ─── Auto-detecção do layout de teclado do HOST ──────────────────────────────
+        // O "auto" do XRoar não enxerga o layout do SO dentro do navegador. Mas o Chromium (Electron)
+        // expõe navigator.keyboard.getLayoutMap() → o CARACTERE que cada tecla FÍSICA gera. Com isso
+        // fazemos um "fingerprint" e escolhemos o -kbd-lang certo (br/fr/de/es/it/us…).
+        var _autoKbdLang = null;
+        var _autoKbdLayout = null;
+        async function resolveAutoKbdLang() {
+            if (urlParams.get('kbdTranslate') !== '1') return;          // só importa no modo PC (tradução)
+            var kl = urlParams.get('kbdLang');
+            if (kl && kl !== 'auto') return;                            // usuário escolheu explicitamente
+            try {
+                if (!navigator.keyboard || !navigator.keyboard.getLayoutMap) {
+                    _log('xroar-boot', 'kbd auto: navigator.keyboard.getLayoutMap indisponível — usando US');
+                    return;
+                }
+                var m = await navigator.keyboard.getLayoutMap();
+                var g = function (c) { return String(m.get(c) || '').toLowerCase(); };
+                var keyQ = g('KeyQ'), keyY = g('KeyY'), semi = g('Semicolon'), keyW = g('KeyW');
+                var lang = 'us';
+                if (keyQ === 'a' || keyW === 'z') lang = 'fr';          // AZERTY (francês/belga)
+                else if (keyY === 'z') lang = 'de';                     // QWERTZ (alemão)
+                else if (semi === 'ç') lang = 'br';                     // ABNT2 brasileiro (ç no ;)
+                else if (semi === 'ñ') lang = 'es';                     // espanhol (ñ no ;)
+                else if (semi === 'ò' || semi === '@') lang = 'it';     // italiano
+                _autoKbdLang = lang;
+                // Formato FÍSICO: a tecla extra do ISO (IntlBackslash, o 102º) existe → ISO; senão ANSI (US típico).
+                var hasIso = !!m.get('IntlBackslash');
+                _autoKbdLayout = (lang === 'us' && !hasIso) ? 'ansi' : 'iso';
+                _log('xroar-boot', 'kbd auto: KeyQ=' + keyQ + ' KeyY=' + keyY + ' KeyW=' + keyW + ' ;=' + semi + ' IntlBackslash=' + (m.get('IntlBackslash') || '-') + ' → -kbd-lang ' + lang + ' -kbd-layout ' + _autoKbdLayout);
+            } catch (e) { _log('xroar-error', 'kbd auto: ' + (e && e.message)); }
+        }
+
         // ─── Phase 2: Configure Module and load xroar.js ────────────────────────────
         async function startEmulator() {
             var loadedCount = await fetchAllRoms();
+            await resolveAutoKbdLang();
             var args = buildArgs();
 
             // BOOT PROGRAM (.bin/.rom/.ccc/.sna): se bootfile=1, espera o app mandar o arquivo e o passa

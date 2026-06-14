@@ -149,6 +149,35 @@ Two selectors configure **Joystick 0 (right)** and **Joystick 1 (left)**: **None
 **keyboard-joystick** (cursors+Alt, WASD+O,P, IJKL+X,Z, QAOP+Space). Adjust live; on the CoCo the joystick
 games use is usually **0 (right)**.
 
+**Keyboard layout (the "Keyboard: …" toggle):** switches between **CoCo layout** and **PC layout**:
+- **CoCo layout** (default) — **physical matrix**: each PC key maps by its **position** on the CoCo keyboard,
+  like the real hardware. Best for games that read keys by position and for the authentic feel.
+- **PC layout** — **translation** on: what you **type** on the PC **appears** (symbols and **Shift** match —
+  `Shift+2` = `@`, etc.). More comfortable for typing BASIC/commands.
+
+In **PC** layout a **"Keyboard language"** selector appears — pick the one for **your physical keyboard** (e.g.
+**Brazil (ABNT2)**). **"Automatic"** tries to **detect** your layout from the browser (Chromium exposes the
+character each physical key produces) and picks the language by itself; if detection fails or is wrong, select
+your country manually.
+
+> **Symbols like `]` depend on the PHYSICAL form (ISO vs ANSI).** On **ABNT2** (which is **ISO**) the `]` sits on
+> the extra key next to **Enter**; on an **ANSI** keyboard (typical US) that key doesn't even exist. So, along with
+> the language, the app passes the right `-kbd-layout` (**ISO** for Brazil and Europe, **ANSI** for US) — so both
+> `[` **and** `]` come out. If a symbol is still missing, try another language in the selector.
+
+> **Upper vs lower case:** the CoCo has **no lowercase key** — it's a keyboard state, and how you control it
+> **depends on the layout**:
+> - **⚠ PC layout:** in this build the translation **does NOT control case** — letters stay **stuck on uppercase**
+>   and **neither Shift nor CapsLock** toggle. Use PC layout only when you need your keyboard's **symbols** and
+>   uppercase-only is fine.
+> - **✅ CoCo layout (recommended for typing):** works like the real CoCo — **SHIFT+0** locks **lowercase** and
+>   **Shift** toggles upper/lowercase. That's how you get both cases.
+> - **To see lowercase with normal glyphs:** in **VDG** mode (CoCo 1/2, or CoCo 3 at 32 columns) lowercase shows as
+>   **inverse video** (MC6847 limit) — for normal glyphs use **CoCo 3** + **Columns → 80 columns**.
+
+Switching the layout **or the language** **reboots the emulator** (like changing machine/video), so prefer
+setting it **before** loading a disk. The choices are **remembered** across sessions.
+
 ---
 
 ## 11. How content arrives from the OTHER tabs

@@ -10,6 +10,41 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.66 — 2026-06-14
+--------------------------------------------------------------------------------
+"Send to..." and "Save file..." hubs on the Servers tab (and double-click on the DSK tab opening the hub); CoCo/PC keyboard in XRoar with a keyboard language (ABNT2) and auto-detection; syntax highlighting and "RUN IN XROAR" in the BASIC editor; and a Reload button on the DSK tab.
+
+ADDED
+  • SERVERS TAB — "SEND TO..." and "SAVE FILE..." HUBS: downloading a file from a server (TNFS or URL) opens
+    a HUB RIGHT AWAY; the download only happens once you pick the destination. The disk type (RS-DOS / OS-9 /
+    container) is detected and only the compatible options are enabled. "Send to..." = DSK pane, OS-9 tab,
+    XRoar (test) and DriveWire (with a D0-D3 selector, writing to a folder and mounting on the drive). "Save
+    file..." = Save to PC or "Save & point on Wi-Fi" (lands in the served folder; a container becomes a
+    Container file). The hubs sit on the LEFT of the bar; Help stays on the right.
+  • XRoar — CoCo / PC KEYBOARD: new layout toggle. "CoCo layout" = physical matrix (authentic; SHIFT+0 locks
+    lowercase and Shift toggles case). "PC layout" = translation (symbols match your keyboard). Includes a
+    KEYBOARD LANGUAGE selector (Brazil/ABNT2, US, UK, Germany, ...) with AUTO-DETECTION via the browser plus
+    ISO/ANSI physical-form handling -> so ABNT2's "[" and "]" come out right.
+  • BASIC EDITOR — SYNTAX HIGHLIGHTING in text mode, with 4 themes (VS Code, Monokai, Dracula, Solar) in a
+    selector next to the scale. New "RUN IN XROAR" button: builds a .dsk in memory, injects the program and
+    runs it (drive choice if D0 is busy). The old "Run in XRoar" became "EXP.XROAR". XRoar typing speed now
+    offers 25/12/8/2 ms.
+  • DSK TAB — a "RELOAD" button on the pane (reloads the disk image; offers to SAVE first if there are
+    changes) and a separate "SAVE FILE..." hub (Save As, device, extract to Windows).
+  • K7 TAB — "SEND TO..." (XRoar / DSK / BASIC / no loader) and "SAVE FILE..." (.CAS / .WAV / whole tape /
+    FIXCAS) hubs, consolidating the toolbar buttons.
+
+CHANGED
+  • DSK TAB — DOUBLE-CLICKING a file now opens the "Send to..." hub (instead of running it straight in XRoar);
+    the file's XRoar card has a "Send and run" checkbox (on by default: mount and run; off: just mount). The
+    "Send" button became "Send to...".
+
+NOTES
+  • XRoar: in this emulator's "PC layout" the CASE (upper/lower) is not controllable — to toggle it use the
+    "CoCo layout". Symbols like "[" and "]" depend on the physical form (ISO/ANSI), now set by the language.
+
+
+--------------------------------------------------------------------------------
 v1.0.65 — 2026-06-13
 --------------------------------------------------------------------------------
 "Servers" tab with a DriveWire (serial) server and four 5.25" floppy drives; unified "Send to..." hub; defragment by rebuild (disk and container); create/expand a DriveWire container; and a Linux installer fix.

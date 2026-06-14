@@ -52,8 +52,8 @@ const api = {
   loaderStrip: (binBytes: Uint8Array, name?: string) => ipcRenderer.invoke('loader-strip', binBytes, name),
   loaderRevert: () => ipcRenderer.invoke('loader-revert'),
 
-  imageAnalyze: () =>
-    ipcRenderer.invoke('image-analyze'),
+  imageAnalyze: (filePath?: string) =>
+    ipcRenderer.invoke('image-analyze', filePath),
 
   imageExtract: (filePath: string, locator: any) =>
     ipcRenderer.invoke('image-extract', filePath, locator),
@@ -243,7 +243,9 @@ const api = {
 
   saveDskOverwrite: (filePath: string, data: Uint8Array) =>
     ipcRenderer.invoke('save-dsk-overwrite', filePath, data),
-    
+  fnSaveToDir: (dir: string, name: string, data: Uint8Array) =>
+    ipcRenderer.invoke('fn-save-to-dir', dir, name, data),
+
   loadConfig: () => ipcRenderer.invoke('load-config'),
   saveConfig: (config: any) => ipcRenderer.invoke('save-config', config),
 

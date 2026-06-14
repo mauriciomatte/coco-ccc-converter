@@ -150,6 +150,34 @@ Dois seletores configuram **Joystick 0 (direito)** e **Joystick 1 (esquerdo)**: 
 **teclado-joystick** (setas+Alt, WASD+O,P, IJKL+X,Z, QAOP+Espaço). Ajuste ao vivo; no CoCo o joystick que
 os jogos usam costuma ser o **0 (direito)**.
 
+**Layout de teclado (toggle "Teclado: …"):** alterna entre **layout CoCo** e **layout PC**:
+- **Layout CoCo** (padrão) — **matriz física**: cada tecla do PC mapeia pela **posição** no teclado do CoCo,
+  como no hardware real. Ideal para jogos que leem teclas por posição e para a sensação autêntica.
+- **Layout PC** — **tradução** ligada: o que você **digita** no PC **aparece** (os símbolos e o **Shift** batem —
+  `Shift+2` = `@`, etc.). Mais confortável para digitar BASIC/comandos.
+
+No layout **PC**, aparece o seletor **"Idioma do teclado"** — escolha o do **seu teclado físico** (ex.: **Brasil
+(ABNT2)**). O **"Automático"** tenta **detectar** seu layout pelo navegador (Chromium expõe o caractere de cada
+tecla física) e escolhe o idioma sozinho; se a detecção falhar ou errar, selecione o seu país manualmente.
+
+> **Símbolos como `]` dependem do FORMATO FÍSICO (ISO × ANSI).** No **ABNT2** (que é **ISO**) o `]` fica na tecla
+> extra perto do **Enter**; num teclado **ANSI** (US típico) essa tecla nem existe. Por isso o app passa, junto com
+> o idioma, o `-kbd-layout` certo (**ISO** para Brasil e europeus, **ANSI** para US) — assim `[` **e** `]` saem. Se
+> ainda faltar algum símbolo, experimente outro idioma no seletor.
+
+> **Maiúsculas × minúsculas:** o CoCo **não tem tecla de minúscula** — é um estado do teclado, e o jeito de
+> controlá-lo **depende do layout**:
+> - **⚠ Layout PC:** neste build a tradução **NÃO controla a caixa** — as letras ficam **presas em maiúscula** e
+>   **nem Shift nem CapsLock** alternam. Use o layout PC só quando precisar dos **símbolos** do seu teclado e
+>   maiúscula-só estiver de bom tamanho.
+> - **✅ Layout CoCo (recomendado para digitar):** funciona como o CoCo real — **SHIFT+0** trava em **minúscula** e
+>   o **Shift** alterna maiúsc/minúsc. É o jeito de ter as duas caixas.
+> - **Ver a minúscula com glifo normal:** no **VDG** (CoCo 1/2, ou CoCo 3 em 32 colunas) a minúscula sai em **vídeo
+>   invertido** (limite do MC6847) — para glifo normal use **CoCo 3** + **Colunas → 80 colunas**.
+
+Trocar o layout **ou o idioma** **reinicia o emulador** (como trocar máquina/vídeo), então prefira definir
+**antes** de carregar o disco. As escolhas são **lembradas** entre sessões.
+
 ---
 
 ## 11. Como o conteúdo chega das OUTRAS abas

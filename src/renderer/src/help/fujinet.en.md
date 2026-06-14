@@ -12,6 +12,17 @@ cable** (DriveWire). It has **three panels**, side by side (with draggable **spl
 All connection/error messages appear in the **console** (bottom), like the other tabs. The **?** button
 (top-right) reopens this help.
 
+At the **top of the tab** there are two **hubs** that act on the **file you download** from a server (left-side
+client):
+- **Send to…** — chooses **where to route** the downloaded disk: **DSK pane** (if **RS-DOS**), **OS-9 tab** (if
+  **OS-9/NitrOS-9**), **XRoar** (test in the emulator) or a **DriveWire drive** (with a **D0–D3** selector).
+- **Save file…** — **saves** the downloaded disk: **Save to PC** (free dialog) or **Save & point on Wi-Fi**
+  (drops into the folder served by the WiFi server, so the FujiNet sees it).
+
+> Select a file in the listing (**single click**) and use one of the hubs; **double-click** opens **Send to…**
+> **right away**. **The file is only downloaded when you pick the destination** inside the hub — so the **disk
+> type** (OS-9 × RS-DOS × container) is detected only then (before that, all options are enabled).
+
 > The FujiNet board talks to the **CoCo** and the **Internet** — the app's role is to be the **source/server
 > of images**, not a "driver" for the board.
 
@@ -45,9 +56,12 @@ The "FujiNet" way to access files over the network (TNFS is **UDP, port 16384**)
 **Browsing the listing (after connecting):**
 - **Path bar** with the **↑** button (go up one level) and the current path.
 - **Folders** (purple icon) — click to **enter**.
-- **Files** — click to **download and open** in the active pane. Size shows in **KB** on the right.
-  - **OS-9** disks go automatically to the **OS-9** tab; the rest opens on the **DSK** tab.
-  - **`.zip`** is unzipped on the fly (see "Open by URL").
+- **Files** — **single click selects**; **double-click** opens the **Send to…** hub **right away**. Size shows
+  in **KB** on the right. With a file selected, the top **Send to…** / **Save file…** buttons open the hub
+  immediately; the **download** only happens when you pick the destination.
+  - The **destination** is chosen in the hub by **type**: **RS-DOS** → DSK pane; **OS-9** → OS-9 tab; or
+    **DriveWire** (any type, writing to a folder and mounting on the chosen drive).
+  - **`.zip`** is unzipped on the fly (see "Open by URL") and its content lands in the same hub.
   - **Large downloads:** TNFS transfers **512 bytes per round-trip**, so big files are slow. Above **4 MB** the
     app **asks for confirmation** first (files that size are usually CoCoSDC card images, not floppies). During
     the download a **progress bar** (KB and %) appears with a **Cancel** button.
@@ -76,12 +90,34 @@ A generic convenience, below the TNFS block:
 
 - **URL field:** paste a direct **link** to a `.dsk/.vdk/.sdf/.os9/.dmk/.jvc/.img/.vhd/.ccc/.cas/.bin/.rom`…
   (or a **`.zip`** containing one). **Enter** or the **Open** button download it.
-- **"Open" button:** downloads the file (follows redirects, ~30 s timeout, up to ~64 MB) and **opens it in a
-  pane** — OS-9 goes to the **OS-9** tab, the rest to the **DSK** tab. From there it's the normal pipeline:
-  edit, inject, convert, disk map, test in XRoar, write GW.
+- **"Open" button:** downloads the file (follows redirects, ~30 s timeout, up to ~64 MB) and opens the
+  **Send to…** hub (just like the TNFS client) — from there you pick the destination by type (DSK pane / OS-9 tab
+  / DriveWire). Once open in a pane it follows the normal pipeline: edit, inject, convert, disk map, XRoar, GW.
 
 > **`.zip` files (e.g. Color Computer Archive):** the app **unzips automatically**. If the ZIP has **one**
-> recognizable image, it opens directly; if it has **several**, a **picker** appears so you can choose which.
+> recognizable image, it goes to the hub; if it has **several**, a **picker** appears so you can choose which.
+
+### 4) Top hubs — "Send to…" and "Save file…"
+
+The hub **opens right away** (no waiting for a download). The file is only **downloaded when you pick the
+destination**; then the **type** is detected (OS-9 × RS-DOS × container) and, if you reopen the hub, only the
+compatible options are enabled.
+
+**Send to…** (also via **double-click** on the file):
+- **DSK pane** — downloads and opens in a pane (gated to **RS-DOS** once the type is known).
+- **OS-9 tab** — downloads and opens **editable** in the OS-9 tab (gated to **OS-9/NitrOS-9**; shows the volume).
+- **XRoar** — downloads and **mounts in the emulator** (drive 0, with a **reset**/clean boot). A `.vdk` switches the machine to Dragon.
+- **DriveWire** — pick the **D0–D3** drive and click **Send**. **Folder first**: if the **WiFi server** already
+  has a **folder** set, it writes **there**; otherwise the app **asks for a folder** — which then **becomes the
+  Wi-Fi-served folder**. Then it downloads the disk, **writes it to the folder** and **mounts** it on the drive
+  (so the FujiNet also sees it).
+
+**Save file…** (single click selects → button):
+- **Save to PC** — downloads and opens the free dialog; save anywhere.
+- **Save & point on Wi-Fi** — writes the disk and **points the WiFi server** at it:
+  - **Single disk** → lands in the **served folder** (the one already set, or one you pick).
+  - **Container** (MiniIDE/CoCoSDC/DriveWire) → pointed as a **Container file** (each inner disk becomes a `.dsk`
+    for the FujiNet).
 
 ---
 
@@ -195,6 +231,7 @@ straight from the PC. Great for **live-testing** an image you just edited, witho
 
 ## Quick summary
 
-- **Download and use:** Open by URL / TNFS hub → the file opens in a pane → edit normally.
+- **Download and use:** Open by URL / TNFS hub → the **Send to…** hub opens → pick DSK pane / OS-9 tab /
+  DriveWire (or **Save file…** → PC / Wi-Fi folder).
 - **Serve to the FujiNet:** choose a folder/container → (optional) **Read-write** → **Start server** → copy the
   **"network ✓"** IP → put it in a FujiNet **host slot** (port 16384/UDP) → allow UDP 16384 through the firewall.

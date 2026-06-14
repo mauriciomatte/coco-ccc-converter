@@ -4,6 +4,61 @@ import { Scissors, Copy, Clipboard, Search, Replace, Play, RotateCcw, Save, Fold
 import { X } from 'lucide-react';
 import { HelpButton, TabHelpModal } from './TabHelp';
 
+// === Realce de sintaxe (highlight) do editor BASIC — só no modo TEXTO comum (não-VDG). ===
+// Comandos e funções do BASIC do CoCo (Color/Extended/Disk/CoCo3) — para colorir os tokens.
+const BASIC_KEYWORDS = new Set(('FOR GO GOTO GOSUB REM ELSE IF THEN DATA PRINT ON INPUT END NEXT DIM READ RUN '
+  + 'RESTORE RETURN STOP POKE CONT LIST CLEAR NEW CLOAD CSAVE OPEN CLOSE LLIST SET RESET CLS MOTOR SOUND AUDIO '
+  + 'EXEC SKIPF TAB TO SUB FN STEP OFF USING DEL EDIT TRON TROFF DEF LET LINE PCLS PSET PRESET SCREEN PCLEAR '
+  + 'COLOR CIRCLE PAINT GET PUT DRAW PCOPY PMODE PLAY DLOAD RENUM DIR DRIVE FIELD FILES KILL LOAD LSET MERGE '
+  + 'RENAME SAVE WRITE VERIFY UNLOAD DSKINI BACKUP COPY WIDTH PALETTE HSCREEN LPOKE HCLS HCOLOR HPAINT HCIRCLE '
+  + 'HLINE HGET HPUT HBUFF HPRINT HSET HRESET HDRAW LOCATE ATTR BOLD RGB AND OR NOT LPRINT').split(/\s+/));
+const BASIC_FUNCS = new Set(('SGN INT ABS USR RND SIN PEEK LEN STR$ VAL ASC CHR$ EOF JOYSTK LEFT$ RIGHT$ MID$ '
+  + 'POINT INKEY$ MEM ATN COS TAN EXP FIX LOG POS SQR HEX$ VARPTR INSTR TIMER PPOINT STRING$ CVN FREE LOC LOF '
+  + 'MKN$ LPEEK ERNO ERLIN BUTTON HSTAT').split(/\s+/));
+
+type HlTheme = { cmd: string; fun: string; str: string; num: string; rem: string; op: string };
+// 4 conjuntos de cores baseados nas paletas mais usadas por editores atuais.
+const HL_THEMES: Record<string, { pt: string; en: string; t: HlTheme }> = {
+  '1': { pt: 'VS Code', en: 'VS Code', t: { cmd: '#569CD6', fun: '#DCDCAA', str: '#CE9178', num: '#B5CEA8', rem: '#6A9955', op: '#D4D4D4' } },
+  '2': { pt: 'Monokai', en: 'Monokai', t: { cmd: '#F92672', fun: '#A6E22E', str: '#E6DB74', num: '#AE81FF', rem: '#75715E', op: '#F8F8F2' } },
+  '3': { pt: 'Dracula', en: 'Dracula', t: { cmd: '#FF79C6', fun: '#50FA7B', str: '#F1FA8C', num: '#BD93F9', rem: '#6272A4', op: '#F8F8F2' } },
+  '4': { pt: 'Solar', en: 'Solar', t: { cmd: '#268BD2', fun: '#B58900', str: '#2AA198', num: '#D33682', rem: '#93A1A1', op: '#657B83' } },
+};
+// Tokeniza o texto em <span> coloridos (linha a linha; \n preservado pelo white-space pre-wrap).
+function renderHighlight(text: string, th: HlTheme): React.ReactNode[] {
+  const out: React.ReactNode[] = [];
+  let k = 0;
+  const span = (txt: string, color?: string) => { if (!txt) return; out.push(<span key={k++} style={color ? { color } : undefined}>{txt}</span>); };
+  const lines = text.split('\n');
+  lines.forEach((line, li) => {
+    let i = 0;
+    const ln = line.match(/^(\s*)(\d+)/); // número de linha inicial
+    if (ln) { span(ln[1]); span(ln[2], th.num); i = ln[0].length; }
+    let comment = false;
+    while (i < line.length) {
+      if (comment) { span(line.slice(i), th.rem); break; }
+      const c = line[i];
+      if (c === '"') { let j = i + 1; while (j < line.length && line[j] !== '"') j++; if (j < line.length) j++; span(line.slice(i, j), th.str); i = j; continue; }
+      if (c === "'") { span(line.slice(i), th.rem); break; }
+      if (/[A-Za-z]/.test(c)) {
+        let j = i + 1; while (j < line.length && /[A-Za-z0-9]/.test(line[j])) j++;
+        if (j < line.length && line[j] === '$') j++;
+        const word = line.slice(i, j); const up = word.toUpperCase();
+        if (up === 'REM') { span(word, th.cmd); comment = true; i = j; continue; }
+        if (BASIC_FUNCS.has(up)) span(word, th.fun);
+        else if (BASIC_KEYWORDS.has(up)) span(word, th.cmd);
+        else span(word); // variável → cor base do esquema
+        i = j; continue;
+      }
+      if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(line[i + 1] || ''))) { let j = i; while (j < line.length && /[0-9.eE]/.test(line[j])) j++; span(line.slice(i, j), th.num); i = j; continue; }
+      if ('+-*/^=<>(),:;&'.includes(c)) { span(c, th.op); i++; continue; }
+      span(c); i++;
+    }
+    if (li < lines.length - 1) span('\n');
+  });
+  return out;
+}
+
 interface Props {
   lang: 'pt-br' | 'en-us';
   text: string;
@@ -22,6 +77,7 @@ interface Props {
   onBoldChange: (v: boolean) => void;
   // Roda o programa no XRoar. reset=true força hard-reset (boot limpo) antes de digitar.
   onRun: (program: string, reset: boolean) => void;
+  onRunDisk: (name: string, program: string) => void; // RODAR NO XROAR: cria DSK em memoria, injeta o BASIC e roda com RUN"NOME"
   // Salva no painel DSK (A/B) — name + ext (extensão editável, BAS por padrão) + program. Confirmação no App.
   onSaveToDisk: (name: string, ext: string, program: string) => void;
   // Salva como arquivo de TEXTO (.bas) no sistema de arquivos.
@@ -62,7 +118,7 @@ const schemeOf = (k: string) => SCHEMES[k] || SCHEMES['green-black'];
 export default function BasicEditor({
   lang, text, onTextChange, name, onNameChange, pane, onPaneChange, screen, onScreenChange,
   addNew, onAddNewChange, addRun, onAddRunChange, bold, onBoldChange,
-  onRun, onSaveToDisk, onSaveTextFile, onSaveCasFile, onSaveWavFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
+  onRun, onRunDisk, onSaveToDisk, onSaveTextFile, onSaveCasFile, onSaveWavFile, onOpenTextFile, sourceLabel, onUpdateInDsk,
   initialCaret, onCaretChange, dirty, initialExt,
 }: Props) {
   const t = (pt: string, en: string) => (lang === 'pt-br' ? pt : en);
@@ -138,8 +194,12 @@ export default function BasicEditor({
 
   // Velocidade de digitação do código no XRoar (persistente). 'fast' = 12ms/tecla, 'normal' = 25ms.
   // O XRoarPanel lê esta preferência (localStorage 'xroarTypeSpeed') na hora de digitar.
-  const [typeSpeed, setTypeSpeed] = useState<'fast' | 'normal'>(() => { try { return localStorage.getItem('xroarTypeSpeed') === 'fast' ? 'fast' : 'normal'; } catch { return 'normal'; } });
+  const [typeSpeed, setTypeSpeed] = useState<string>(() => { try { const v = localStorage.getItem('xroarTypeSpeed'); if (v === 'fast') return '12'; if (!v || v === 'normal') return '25'; return ['25', '12', '8', '2'].includes(v) ? v : '25'; } catch { return '25'; } });
   useEffect(() => { try { localStorage.setItem('xroarTypeSpeed', typeSpeed); } catch { /* ignore */ } }, [typeSpeed]);
+  // Realce de sintaxe (highlight) — só no modo texto comum. 'none' = desligado; '1'..'4' = conjunto de cores.
+  const [hlTheme, setHlTheme] = useState<string>(() => { try { return localStorage.getItem('basicHlTheme') || 'none'; } catch { return 'none'; } });
+  useEffect(() => { try { localStorage.setItem('basicHlTheme', hlTheme); } catch { /* ignore */ } }, [hlTheme]);
+  const hlLayerRef = useRef<HTMLDivElement | null>(null); // camada colorida (sincroniza scroll com a textarea)
 
   // "ENTER ao final" (persistente, padrão LIGADO): se a última linha do editor for código sem quebra
   // final, acrescenta um ENTER (CR) ao injetar, validando/inserindo essa última linha no emulador.
@@ -392,12 +452,16 @@ export default function BasicEditor({
         {/* Seta-pra-cima do CoCo (↑ = '^', exponenciação). A tecla ↑ navega; aqui inserimos por botão ou Alt+↑. */}
         <button onClick={insertUpArrow} title={t('Inserir ↑ (seta-pra-cima do CoCo = ^, exponenciação) — atalho: Alt+↑', 'Insert ↑ (CoCo up-arrow = ^, exponentiation) — shortcut: Alt+↑')} className={`${toolBtn} font-bold`} style={{ fontSize: 15, lineHeight: 1 }}>↑</button>
         {sep}
-        <button onClick={() => onRun(buildProgram(), false)} disabled={empty} className="btn btn-primary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
-          title={addNew ? t('Digita NEW + o programa no XRoar (precisa estar no prompt OK)', 'Types NEW + the program into XRoar (must be at the OK prompt)') : t('Digita o programa no XRoar (precisa estar no prompt OK)', 'Types the program into XRoar (must be at the OK prompt)')}>
-          <Play size={13} /> {t('Rodar no XRoar', 'Run in XRoar')}
+        <button onClick={() => onRun(buildProgram(), false)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+          title={t('EXPORTA (digita) o codigo do editor no XRoar, na velocidade escolhida, com NEW/RUN/ENTER conforme as opcoes (precisa estar no prompt OK)', 'EXPORTS (types) the editor code into XRoar, at the chosen speed, with NEW/RUN/ENTER per the options (must be at the OK prompt)')}>
+          <Play size={13} /> {t('EXP.XROAR', 'EXP.XROAR')}
         </button>
         <button onClick={() => onRun(buildProgram(true), true)} disabled={empty} className="btn btn-secondary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed" title={t('Reinicia o emulador (boot limpo, sem NEW — o reset já limpa a RAM) e então digita o programa', 'Resets the emulator (clean boot, no NEW — reset already clears RAM) then types the program')}>
           <RotateCcw size={13} /> {t('RESET+RODAR', 'RESET+RUN')}
+        </button>
+        <button onClick={() => onRunDisk(safeName(), text)} disabled={empty} className="btn btn-primary py-1.5 px-3 text-[11px] font-bold uppercase flex items-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+          title={t('Cria um DSK em memoria, injeta o programa e roda no XRoar com RUN"NOME" (monta no drive 0; se ocupado, escolhe outro)', 'Creates a DSK in memory, injects the program and runs it in XRoar with RUN"NAME" (mounts on drive 0; if busy, choose another)')}>
+          <Disc size={13} /> {t('RODAR NO XROAR', 'RUN IN XROAR')}
         </button>
         <div className="flex-1" />
         {/* SALVAR in-place: atualiza o arquivo na imagem DSK de origem. Cor ATIVA só quando há alteração não
@@ -552,6 +616,25 @@ export default function BasicEditor({
         </div>
           );
         })()
+      ) : hlTheme !== 'none' && HL_THEMES[hlTheme] ? (
+        // Modo texto com REALCE: camada colorida atrás + textarea TRANSPARENTE (cursor nativo) por cima, scroll sincronizado.
+        <div className="flex-1 rounded-lg" style={{ position: 'relative', overflow: 'hidden', minHeight: 0, border: '2px solid rgba(0,0,0,0.35)', background: schemeOf(screen).bg }}>
+          <div ref={hlLayerRef} aria-hidden className="p-3 font-mono text-sm leading-relaxed" style={{ position: 'absolute', inset: 0, margin: 0, color: schemeOf(screen).fg, fontWeight: bold ? 700 : 400, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'hidden', pointerEvents: 'none' }}>
+            {renderHighlight(text || '', HL_THEMES[hlTheme].t)}
+          </div>
+          <textarea
+            ref={taRef}
+            value={text}
+            onChange={e => { const ta = e.currentTarget; caretToRestore.current = { s: ta.selectionStart, e: ta.selectionEnd }; onTextChange(applyCaseDelta(text, ta.value)); }}
+            onKeyDown={handleEditorKeyDown}
+            onScroll={e => { if (hlLayerRef.current) { hlLayerRef.current.scrollTop = e.currentTarget.scrollTop; hlLayerRef.current.scrollLeft = e.currentTarget.scrollLeft; } }}
+            spellCheck={false}
+            autoCapitalize="characters"
+            placeholder={'10 CLS\n20 PRINT "HELLO WORLD"\n30 GOTO 20'}
+            className="p-3 font-mono text-sm leading-relaxed resize-none outline-none"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', margin: 0, color: 'transparent', fontWeight: bold ? 700 : 400, textTransform: 'none', background: 'transparent', border: 0, caretColor: schemeOf(screen).fg, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflow: 'auto', zIndex: 2 }}
+          />
+        </div>
       ) : (
         <textarea
           ref={taRef}
@@ -568,18 +651,17 @@ export default function BasicEditor({
 
       {/* Footer: opções + esquema de cores + contadores */}
       <div className="flex items-center gap-4 mt-2 text-[10px] text-[var(--text-secondary)] flex-wrap flex-shrink-0">
-        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Injeta NEW antes do programa (limpa a memória). Só vale em "Rodar no XRoar" (sem reset); em "Rodar com reset" o hard reset já limpa a RAM e o NEW é ignorado.', 'Injects NEW before the program (clears memory). Only applies to "Run in XRoar" (no reset); with "Run + reset" the hard reset already clears RAM, so NEW is ignored.')}>
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Usa NEW ANTES de injetar o código, para LIMPAR o BASIC (memória). Vale no EXP.XROAR (sem reset); no RESET+RODAR o reset já limpa a RAM e o NEW é ignorado.', 'Uses NEW BEFORE injecting the code, to CLEAR BASIC (memory). Applies in EXP.XROAR (no reset); with RESET+RUN the reset already clears RAM, so NEW is ignored.')}>
           <input type="checkbox" checked={addNew} onChange={e => onAddNewChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
-          {t('NEW antes de injetar', 'NEW before injecting')}
+          {t('Use NEW', 'Use NEW')}
         </label>
-        <label className="flex items-center gap-1.5 cursor-pointer">
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Injeta RUN ao FINAL da injeção do código — roda o programa automaticamente.', 'Injects RUN at the END of the code injection — auto-runs the program.')}>
           <input type="checkbox" checked={addRun} onChange={e => onAddRunChange(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
-          {t('RUN ao final', 'RUN at the end')}
+          {t('RUN', 'RUN')}
         </label>
-        {/* ENTER ao final: dá um ENTER quando a última linha é código sem quebra, inserindo-a no emulador. */}
-        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Dá um ENTER no fim quando a última linha do editor é código (sem quebra final), garantindo que ela seja inserida no emulador. Dispensável se "RUN ao final" estiver ligado (o RUN já gera o ENTER).', 'Adds a final ENTER when the last editor line is code (no trailing newline), so it gets entered into the emulator. Not needed if "RUN at the end" is on (RUN already provides the ENTER).')}>
+        <label className="flex items-center gap-1.5 cursor-pointer" title={t('Dá um ENTER ao FINAL da injeção quando a última linha é código sem quebra, garantindo que ela seja inserida no emulador. Dispensável se RUN estiver ligado (o RUN já gera o ENTER).', 'Adds an ENTER at the END of the injection when the last line is code without a break, so it gets entered into the emulator. Not needed if RUN is on (RUN already provides the ENTER).')}>
           <input type="checkbox" checked={addEnter} onChange={e => setAddEnter(e.target.checked)} style={{ accentColor: 'var(--primary)' }} />
-          {t('ENTER ao final', 'ENTER at the end')}
+          {t('ENTER', 'ENTER')}
         </label>
         {/* Modo de tela: Normal (com temas) / VDG (fonte do sistema) / VDG 6847 (fonte autêntica). */}
         <label className="flex items-center gap-1.5" title={t('Aparência do editor. VDG = visual do CoCo (maiúscula preta no verde, minúscula em vídeo inverso). Editável nos 3 modos.', 'Editor look. VDG = CoCo screen (black uppercase on green, lowercase inverse video). Editable in all 3 modes.')}>
@@ -587,7 +669,7 @@ export default function BasicEditor({
           <select value={display} onChange={e => setDisplay(e.target.value as 'normal' | 'vdg' | 'vdg6847')} className="input-select text-[11px] py-0.5">
             <option value="normal">{t('Normal', 'Normal')}</option>
             <option value="vdg">{t('VDG', 'VDG')}</option>
-            <option value="vdg6847">{t('VDG 6847 (autêntica)', 'VDG 6847 (authentic)')}</option>
+            <option value="vdg6847">{t('VDG 6847', 'VDG 6847')}</option>
           </select>
         </label>
         {!isVdg && (
@@ -595,6 +677,15 @@ export default function BasicEditor({
             <span className="font-semibold">{t('Cores', 'Colors')}:</span>
             <select value={screen} onChange={e => onScreenChange(e.target.value)} className="input-select text-[11px] py-0.5">
               {Object.keys(SCHEMES).map(k => <option key={k} value={k}>{t(SCHEMES[k].pt, SCHEMES[k].en)}</option>)}
+            </select>
+          </label>
+        )}
+        {!isVdg && (
+          <label className="flex items-center gap-1.5" title={t('Realce de sintaxe (highlight) do código. "Sem highlight" desativa; cada conjunto de cores aplica automaticamente.', 'Code syntax highlighting. "No highlight" turns it off; each color set applies automatically.')}>
+            <span className="font-semibold">{t('Destaque', 'Highlight')}:</span>
+            <select value={hlTheme} onChange={e => setHlTheme(e.target.value)} className="input-select text-[11px] py-0.5">
+              <option value="none">{t('Sem highlight', 'No highlight')}</option>
+              {Object.keys(HL_THEMES).map(k => <option key={k} value={k}>{t(HL_THEMES[k].pt, HL_THEMES[k].en)}</option>)}
             </select>
           </label>
         )}
@@ -634,9 +725,11 @@ export default function BasicEditor({
         {/* Velocidade da digitação do programa no XRoar. Rápido pode perder caractere em máquinas lentas. */}
         <label className="flex items-center gap-1.5" title={t('Velocidade com que o programa é digitado no XRoar. Rápido = 12ms/tecla; Padrão = 25ms/tecla (mais seguro).', 'Speed the program is typed into XRoar. Fast = 12ms/key; Standard = 25ms/key (safer).')}>
           <span className="font-semibold">{t('Vel.Export.Código', 'Code export speed')}:</span>
-          <select value={typeSpeed} onChange={e => setTypeSpeed(e.target.value as 'fast' | 'normal')} className="input-select text-[11px] py-0.5">
-            <option value="fast">{t('Rápido (12ms)', 'Fast (12ms)')}</option>
-            <option value="normal">{t('Padrão (25ms)', 'Standard (25ms)')}</option>
+          <select value={typeSpeed} onChange={e => setTypeSpeed(e.target.value)} className="input-select text-[11px] py-0.5">
+            <option value="25">{t('Padrão (25ms)', 'Standard (25ms)')}</option>
+            <option value="12">{t('Rápido (12ms)', 'Fast (12ms)')}</option>
+            <option value="8">{t('Muito rápido (8ms)', 'Very fast (8ms)')}</option>
+            <option value="2">{t('Turbo (2ms)', 'Turbo (2ms)')}</option>
           </select>
         </label>
         <div className="flex-1" />

@@ -95,6 +95,17 @@ ipcMain.handle('dw-stage-disk', async (_, name: string, buffer: Uint8Array) => {
     return { success: true, filePath: fp, name: path.basename(fp) };
   } catch (e: any) { return { success: false, error: e?.message }; }
 });
+// Salva bytes DENTRO de uma pasta (junta dir+nome no main p/ não errar separador) — usado pela aba
+// Servidores ("Salvar e apontar no Wi-Fi" e "Enviar p/ DriveWire": o disco vai p/ a pasta servida).
+ipcMain.handle('fn-save-to-dir', async (_, dir: string, name: string, buffer: Uint8Array) => {
+  try {
+    if (!dir) return { success: false, error: 'No folder.' };
+    const safe = (name || 'DISCO.DSK').replace(/[\\/:*?"<>|]/g, '_');
+    const fp = path.join(dir, safe);
+    fs.writeFileSync(fp, Buffer.from(buffer));
+    return { success: true, filePath: fp, name: path.basename(fp) };
+  } catch (e: any) { return { success: false, error: e?.message }; }
+});
 // Lista os arquivos de um .dsk de um drive DriveWire. Se for CONTÊINER (N×161.280 c/ fatias RS-DOS válidas),
 // devolve count+index e os arquivos do disco interno `index` — a UI navega com ◀ ▶.
 ipcMain.handle('dw-disk-files', async (_, filePath: string, index = 0) => {
@@ -1200,18 +1211,23 @@ ipcMain.handle('loader-revert', async () => {
 });
 
 // 3c1b. Unified storage-image browser: pick an image, detect its kind, list its disks/files.
-ipcMain.handle('image-analyze', async () => {
+ipcMain.handle('image-analyze', async (_, argPath?: string) => {
   if (!mainWindow) return { success: false, error: 'No application window.' };
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Abrir imagem (MiniIDE / CoCoSDC / OS-9 / .dsk / .vdk)',
-    properties: ['openFile'],
-    filters: [
-      { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'os9', 'vdk', 'jvc', 'dmk', 'sdf', 'ima', 'bin', 'raw', 'vhd'] },
-      { name: 'All Files', extensions: ['*'] },
-    ],
-  });
-  if (result.canceled || !result.filePaths.length) return { cancelled: true };
-  const filePath = result.filePaths[0];
+  let filePath: string;
+  if (argPath) {
+    filePath = argPath; // RECARREGAR: re-analisa o MESMO caminho, sem diálogo
+  } else {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Abrir imagem (MiniIDE / CoCoSDC / OS-9 / .dsk / .vdk)',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Imagens de armazenamento', extensions: ['img', 'dsk', 'os9', 'vdk', 'jvc', 'dmk', 'sdf', 'ima', 'bin', 'raw', 'vhd'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled || !result.filePaths.length) return { cancelled: true };
+    filePath = result.filePaths[0];
+  }
   const fileName = path.basename(filePath);
   try {
     const stat = fs.statSync(filePath);

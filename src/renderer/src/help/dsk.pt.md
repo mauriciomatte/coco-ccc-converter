@@ -74,8 +74,10 @@ granules ocupa), **Trilhas** (em quais trilhas está, em faixas tipo "0-2, 4") e
 - **Selecionar:** clique numa linha (fica laranja). **Shift+clique** seleciona um **intervalo** (a partir
   da última âncora); **Ctrl+clique** **liga/desliga** arquivos avulsos (multi-seleção esparsa). Assim você
   copia/exclui/extrai vários de uma vez.
-- **Duplo-clique:** monta o disco no XRoar e **roda** o arquivo na hora — `RUN` para BASIC, `LOADM/EXEC`
-  para máquina. A máquina do emulador acompanha o formato (CoCo/Dragon).
+- **Duplo-clique:** abre o hub **Enviar para…** (igual à aba Servidores) — dali você escolhe o destino, inclusive
+  **XRoar**. O card XRoar do arquivo tem o checkbox **"Enviar e rodar"** (ligado por padrão): **ligado** monta o
+  disco e **roda** o arquivo selecionado (`RUN` p/ BASIC, `LOADM/EXEC` p/ máquina; a máquina do emulador acompanha
+  o formato CoCo/Dragon); **desligado** só **monta** o disco no XRoar (sem rodar).
 - **Arrastar a linha para o outro painel:** copia (com **Ctrl**) ou move (com **Shift**) o arquivo de A↔B.
 - **Alça ⠿ (esquerda):** arraste para o **Windows Explorer** e o arquivo é **extraído** (arraste nativo do
   sistema) para a pasta — funciona mesmo num contêiner (o disco daquele momento é capturado no início do
@@ -228,7 +230,7 @@ antigos com ferramentas externas). **Completa** = zera tudo com `0xFF`.
 **Testar Painel** monta o disco do painel ativo no **drive 0** do emulador embutido. Você escolhe **Testar
 sem reset** (troca o disco ao vivo, mantém o que roda) ou **Reset e testar** (boot limpo). A máquina do
 XRoar acompanha o formato (Dragon → Dragon; CoCo → CoCo). Para rodar um arquivo específico, dê
-**duplo-clique** nele (faz `RUN`/`LOADM:EXEC` automaticamente).
+**duplo-clique** nele → no hub **Enviar para…** escolha **XRoar** (faz `RUN`/`LOADM:EXEC` automaticamente).
 
 **Resultado:** você valida o disco/programa na hora, sem mídia física.
 
@@ -284,7 +286,7 @@ Discos cujo diretório usa **caracteres semigráficos** (desenho no DIR) abrem e
 
 **Ctrl+C** copiar · **Ctrl+X** recortar (não há botão na barra) · **Ctrl+V** colar · **Delete** excluir ·
 **Ctrl+Z** desfazer · **Ctrl+Y** (ou **Ctrl+Shift+Z**) refazer. Na lista: **clique** seleciona,
-**Shift+clique** = intervalo, **Ctrl+clique** = liga/desliga avulsos, **duplo-clique** roda no XRoar.
+**Shift+clique** = intervalo, **Ctrl+clique** = liga/desliga avulsos, **duplo-clique** abre **Enviar para…**.
 **Arrastar** linha entre painéis: **Ctrl** = copiar, **Shift** = mover; **alça ⠿** arrasta para fora (PC).
 
 ---

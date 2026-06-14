@@ -10,6 +10,41 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.66 — 2026-06-14
+--------------------------------------------------------------------------------
+Hubs "Enviar para..." e "Salvar arquivo..." na aba Servidores (e duplo-clique na aba DSK abrindo o hub); teclado CoCo/PC no XRoar com idioma do teclado (ABNT2) e auto-deteccao; highlight de sintaxe e "RODAR NO XROAR" no editor BASIC; e botao Recarregar na aba DSK.
+
+ADICIONADO
+  • ABA SERVIDORES — HUBS "ENVIAR PARA..." e "SALVAR ARQUIVO...": ao baixar um arquivo de um servidor (TNFS
+    ou URL) abre um HUB NA HORA; o download so acontece quando voce escolhe o destino. O tipo do disco
+    (RS-DOS / OS-9 / container) e detectado e so as opcoes compativeis ficam ativas. "Enviar para..." =
+    Painel DSK, Aba OS-9, XRoar (testar) e DriveWire (com seletor D0-D3, gravando numa pasta e montando no
+    drive). "Salvar arquivo..." = Salvar no PC ou "Salvar e apontar no Wi-Fi" (cai na pasta servida; um
+    container vira arquivo Container). Os hubs ficam a ESQUERDA da barra; a Ajuda fica a direita.
+  • XRoar — TECLADO CoCo / PC: novo toggle de layout. "Layout CoCo" = matriz fisica (autentico; SHIFT+0 trava
+    minusculas e Shift alterna). "Layout PC" = traducao (os simbolos batem com o seu teclado). Inclui SELETOR
+    DE IDIOMA do teclado (Brasil/ABNT2, US, UK, Alemanha, ...) com AUTO-DETECCAO pelo navegador e ajuste do
+    formato fisico ISO/ANSI -> assim "[" e "]" do ABNT2 saem certos.
+  • EDITOR BASIC — HIGHLIGHT DE SINTAXE no modo texto, com 4 temas (VS Code, Monokai, Dracula, Solar) num
+    seletor ao lado da escala. Novo botao "RODAR NO XROAR": cria um .dsk em memoria, injeta o programa e
+    roda (escolha do drive se o D0 estiver ocupado). O antigo "Rodar no XRoar" virou "EXP.XROAR". A
+    velocidade de digitacao no XRoar agora tem 25/12/8/2 ms.
+  • ABA DSK — botao "RECARREGAR" no painel (recarrega a imagem do disco; oferece SALVAR antes se houver
+    alteracoes) e hub "SALVAR ARQUIVO..." separado (Salvar Como, dispositivo, extrair p/ Windows).
+  • ABA K7 — hubs "ENVIAR PARA..." (XRoar / DSK / BASIC / sem loader) e "SALVAR ARQUIVO..." (.CAS / .WAV /
+    toda a fita / FIXCAS), aglutinando os botoes da barra.
+
+ALTERADO
+  • ABA DSK — DUPLO-CLIQUE num arquivo agora abre o hub "Enviar para..." (em vez de rodar direto no XRoar);
+    o card XRoar do arquivo tem o checkbox "Enviar e rodar" (ligado por padrao: monta e roda; desligado so
+    monta). O botao "Enviar" virou "Enviar para...".
+
+NOTAS
+  • XRoar: no "Layout PC" deste emulador a CAIXA (maiusc/minusc) nao e controlavel — para alternar use o
+    "Layout CoCo". Simbolos como "[" e "]" dependem do formato fisico (ISO/ANSI), agora ajustado pelo idioma.
+
+
+--------------------------------------------------------------------------------
 v1.0.65 — 2026-06-13
 --------------------------------------------------------------------------------
 Aba "Servidores" com servidor DriveWire (serial) e 4 floppy drives 5.25"; hub unificado "Enviar para..."; desfragmentacao por reconstrucao (disco e container); criar/expandir container DriveWire; e fix do instalador Linux.

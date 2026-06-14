@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Globe, Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw, Copy, Check, Lock, Pencil, EyeOff, ChevronDown } from 'lucide-react';
+import { Download, Server, FolderOpen, Power, Wifi, WifiOff, Loader, Link2, FileArchive, X, Folder, ArrowUp, Star, Trash2, Plus, RefreshCw, Copy, Check, Lock, Pencil, EyeOff, ChevronDown, Send, SaveAll, HardDrive, Cable, Save, Cpu, MonitorPlay } from 'lucide-react';
 import { HelpButton, TabHelpModal } from './TabHelp';
 import DriveWirePanel from './DriveWirePanel';
 
@@ -36,11 +36,12 @@ interface Props {
   lang: Lang;
   onLog: (pt: string, en: string, type?: 'info' | 'success' | 'warn' | 'error') => void;
   onOpenImage: (name: string, bytes: Uint8Array) => void; // App decide: abrir no painel / rotear OS-9
+  onSendXroar: (name: string, bytes: Uint8Array) => void; // App monta no XRoar (drive 0, reset)
   pendingDw?: { filePath: string; name: string; slot?: number; key: number } | null; // disco enviado da aba DSK → painel DriveWire
   onPendingDwConsumed?: () => void;
 }
 
-export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPendingDwConsumed }: Props) {
+export default function FujiNetTab({ lang, onLog, onOpenImage, onSendXroar, pendingDw, onPendingDwConsumed }: Props) {
   const pt = lang === 'pt-br';
   const t = (p: string, e: string) => (pt ? p : e);
   const [showHelp, setShowHelp] = useState(false);
@@ -51,6 +52,165 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
   const [busyKind, setBusyKind] = useState<'connect' | 'url' | 'download' | ''>('');
   const connectGen = useRef(0); // "geração" da conexão: permite ABANDONAR um connect em andamento (Desconectar)
   const [zipPick, setZipPick] = useState<null | { data: Uint8Array; entries: { name: string; size: number }[] }>(null);
+  // Os dois HUBs do topo (Enviar para…/Salvar arquivo…). FLUXO: o clique ABRE o HUB NA HORA (sem esperar
+  // download); o arquivo só é BAIXADO quando o usuário escolhe o destino dentro do HUB.
+  //  • hubSource = o item escolhido (nome+tamanho da listagem) — pode ainda NÃO estar baixado.
+  //  • staged    = o arquivo já baixado+analisado (preguiçoso): preenchido na 1ª ação que precisa dos bytes.
+  const [staged, setStaged] = useState<null | { name: string; bytes: Uint8Array; isOs9: boolean; isRsDos: boolean; count: number; volume?: string }>(null);
+  const [hubSource, setHubSource] = useState<null | { name: string; size: number }>(null);
+  const [sendOpen, setSendOpen] = useState(false);  // HUB "Enviar para…"
+  const [saveOpen, setSaveOpen] = useState(false);  // HUB "Salvar arquivo…"
+  const [hubBusy, setHubBusy] = useState(false);    // baixando/gravando dentro de um HUB
+  const [dwDrive, setDwDrive] = useState(0);         // drive D0–D3 escolhido p/ "Enviar p/ DriveWire"
+  const [localPendingDw, setLocalPendingDw] = useState<null | { filePath: string; name: string; slot?: number; key: number }>(null);
+  const hubTargetRef = useRef<'send' | 'save'>('send'); // p/ o fluxo de URL: qual HUB abrir após o download
+  const bigDlResolve = useRef<((ok: boolean) => void) | null>(null); // resolve da confirmação de arquivo grande
+
+  // Detecta o TIPO do disco baixado (OS-9 vs RS-DOS vs contêiner) p/ habilitar as opções certas no HUB.
+  const analyzeStaged = async (name: string, bytes: Uint8Array) => {
+    let isOs9 = false, volume: string | undefined;
+    try { const det = await window.cocoApi.os9DetectBuffer?.(bytes); if (det?.os9) { isOs9 = true; volume = det.volume; if (det.image) bytes = new Uint8Array(det.image); } } catch { /* */ }
+    let count = 1, isRsDos = false;
+    if (!isOs9) {
+      const multiple = bytes.length >= 161280 && bytes.length % 161280 === 0;
+      if (multiple) { try { const d = await window.cocoApi.dskDetectContainer?.(bytes, 161280); count = d?.count ?? 1; } catch { /* */ } isRsDos = true; }
+      else { try { const dir = await window.cocoApi.readDskDirectory?.(bytes); if (dir?.success) isRsDos = true; } catch { /* */ } }
+    }
+    return { name, bytes, isOs9, isRsDos, count, volume };
+  };
+  // Abre um HUB NA HORA sobre um item da listagem (sem baixar). O tipo só é conhecido após a 1ª ação.
+  const openHub = (target: 'send' | 'save', entry: { name: string; size: number }) => {
+    setHubSource({ name: entry.name, size: entry.size });
+    if (!staged || staged.name !== entry.name) setStaged(null); // tipo será detectado ao baixar
+    if (target === 'save') { setSaveOpen(true); setSendOpen(false); } else { setSendOpen(true); setSaveOpen(false); }
+  };
+  // Fluxo de URL (download já consumado): estaciona + abre o HUB-alvo (send por padrão).
+  const stageThenHub = async (name: string, bytes: Uint8Array) => {
+    const s = await analyzeStaged(name, bytes);
+    setStaged(s); setHubSource({ name, size: bytes.length });
+    if (hubTargetRef.current === 'save') { setSaveOpen(true); setSendOpen(false); }
+    else { setSendOpen(true); setSaveOpen(false); }
+    hubTargetRef.current = 'send';
+  };
+  // Botões da toolbar: abrem o HUB-alvo NA HORA sobre o item selecionado (1 clique); se já há um baixado, reabre nele.
+  const actSelected = (target: 'send' | 'save') => {
+    const sel = (tnfsEntries || []).find(e => e.name === tnfsSel && !e.isDir) || null;
+    if (sel) { openHub(target, sel); return; }
+    if (staged && hubSource) { target === 'save' ? (setSaveOpen(true), setSendOpen(false)) : (setSendOpen(true), setSaveOpen(false)); }
+  };
+
+  // Confirmação para downloads GRANDES (TNFS é lento). Promessa resolvida pelos botões do modal bigDl.
+  const confirmIfLarge = (name: string, size: number) => new Promise<boolean>((resolve) => {
+    if (size <= LARGE_DL) { resolve(true); return; }
+    bigDlResolve.current = resolve; setBigDl({ name, size });
+  });
+  // Baixa o arquivo do TNFS e devolve os bytes (descompacta .zip → 1ª imagem). NÃO abre HUB.
+  const fetchTnfsFile = async (name: string, size: number): Promise<{ name: string; bytes: Uint8Array } | null> => {
+    const h = host.trim(); const p = jp(tnfsPath, name);
+    setBusy(true); setBusyKind('download'); setDlGot(0); setDlTotal(size || 0); setDlName(name);
+    onLog(`FujiNet TNFS: baixando ${p}…`, `FujiNet TNFS: downloading ${p}…`, 'info');
+    try {
+      const r = await window.cocoApi.tnfsRead(h, p);
+      if (!r?.success) { onLog(`FujiNet TNFS: ${r?.error}`, `FujiNet TNFS: ${r?.error}`, r?.error === 'Download cancelado.' ? 'warn' : 'error'); return null; }
+      onLog(`FujiNet TNFS: ${r.name} (${r.bytes} bytes) baixado.`, `FujiNet TNFS: ${r.name} (${r.bytes} bytes) downloaded.`, 'success');
+      if (r.isZip) {
+        const openable = (r.entries || []).filter((e: any) => isOpenable(e.name));
+        if (openable.length === 0) { onLog('FujiNet: o ZIP não tem imagem reconhecível.', 'FujiNet: the ZIP has no recognizable image.', 'warn'); return null; }
+        if (openable.length > 1) onLog(`FujiNet: ZIP com ${openable.length} imagens — usando a primeira (${openable[0].name}).`, `FujiNet: ZIP with ${openable.length} images — using the first (${openable[0].name}).`, 'info');
+        const ex = await window.cocoApi.zipExtract(new Uint8Array(r.data), openable[0].name);
+        if (!ex?.success) { onLog(`FujiNet: falha ao extrair — ${ex?.error}`, `FujiNet: extract failed — ${ex?.error}`, 'error'); return null; }
+        return { name: ex.name, bytes: new Uint8Array(ex.data) };
+      }
+      return { name: r.name, bytes: new Uint8Array(r.data) };
+    } catch (e: any) { onLog(`FujiNet TNFS: erro — ${e?.message}`, `FujiNet TNFS: error — ${e?.message}`, 'error'); return null; }
+    finally { setBusy(false); setBusyKind(''); setDlGot(0); setDlName(''); }
+  };
+  // Garante o arquivo baixado+analisado (preguiçoso): reusa o staged se já é o mesmo; senão confirma-se-grande, baixa e analisa.
+  const ensureStaged = async (): Promise<typeof staged> => {
+    if (!hubSource) return staged;
+    if (staged && staged.name === hubSource.name) return staged;
+    const ok = await confirmIfLarge(hubSource.name, hubSource.size);
+    if (!ok) return null;
+    const got = await fetchTnfsFile(hubSource.name, hubSource.size);
+    if (!got) return null;
+    const s = await analyzeStaged(got.name, got.bytes);
+    setStaged(s);
+    return s;
+  };
+
+  // Garante uma PASTA destino: usa a já servida por Wi-Fi (modo Pasta), ou pede uma — que então VIRA a pasta servida.
+  const resolveServeFolder = async (): Promise<string | null> => {
+    if (serverMode === 'folder' && serverPath) return serverPath;
+    const r = await window.cocoApi.pickDirectory?.();
+    if (!r?.path) return null;
+    setServerMode('folder'); setServerWritable(false); setServerPath(r.path); setSharedFiles(null);
+    previewServer(r.path, 'folder'); pushRecent('folder', r.path);
+    return r.path;
+  };
+  const saveBytesToDir = async (dir: string, name: string, bytes: Uint8Array): Promise<string | null> => {
+    try { const r = await window.cocoApi.fnSaveToDir?.(dir, name, bytes); if (r?.success) return r.filePath; onLog(`Servidores: ${r?.error}`, `Servers: ${r?.error}`, 'error'); }
+    catch (e: any) { onLog(`Servidores: ${e?.message}`, `Servers: ${e?.message}`, 'error'); }
+    return null;
+  };
+
+  // HUB Enviar → Painel DSK / Aba OS-9: baixa (se preciso) e deixa o App rotear pelo tipo real.
+  const sendToApp = async () => {
+    setHubBusy(true);
+    try { const s = await ensureStaged(); if (!s) return; onOpenImage(s.name, s.bytes); setSendOpen(false); }
+    finally { setHubBusy(false); }
+  };
+  // HUB Enviar → XRoar: baixa (se preciso) e monta no emulador (drive 0, reset).
+  const sendToXroar = async () => {
+    setHubBusy(true);
+    try { const s = await ensureStaged(); if (!s) return; onSendXroar(s.name, s.bytes); setSendOpen(false); }
+    finally { setHubBusy(false); }
+  };
+  // HUB Enviar → DriveWire: escolhe a PASTA primeiro (instantâneo), depois baixa e monta no drive Dx.
+  const sendToDriveWire = async () => {
+    const folder = await resolveServeFolder();
+    if (!folder) { onLog('Envio ao DriveWire cancelado (sem pasta).', 'Send to DriveWire canceled (no folder).', 'warn'); return; }
+    setHubBusy(true);
+    try {
+      const s = await ensureStaged(); if (!s) return;
+      const fp = await saveBytesToDir(folder, s.name, s.bytes); if (!fp) return;
+      setLocalPendingDw({ filePath: fp, name: s.name, slot: dwDrive, key: Date.now() });
+      onLog(`Servidores: ${s.name} salvo na pasta e montado no DriveWire D${dwDrive}.`,
+            `Servers: ${s.name} saved to the folder and mounted on DriveWire D${dwDrive}.`, 'success');
+      setSendOpen(false);
+    } finally { setHubBusy(false); }
+  };
+  // HUB Salvar → no PC (diálogo livre): baixa (se preciso) e abre o diálogo de salvar.
+  const saveToPc = async () => {
+    setHubBusy(true);
+    try {
+      const s = await ensureStaged(); if (!s) return;
+      const r = await window.cocoApi.saveCartridgeFile(s.bytes, s.name, t('Salvar imagem no PC', 'Save image to PC'),
+        [{ name: t('Imagem de disco', 'Disk image'), extensions: ['dsk', 'os9', 'img', 'vdk', 'sdf'] }, { name: t('Todos os arquivos', 'All files'), extensions: ['*'] }]);
+      if (r?.success) { onLog(`Servidores: ${s.name} salvo no PC (${r.filePath}).`, `Servers: ${s.name} saved to the PC (${r.filePath}).`, 'success'); setSaveOpen(false); }
+      else if (!r?.cancelled) onLog(`Servidores: ${r?.error || 'falha ao salvar'}`, `Servers: ${r?.error || 'save failed'}`, 'error');
+    } catch (e: any) { onLog(`Servidores: ${e?.message}`, `Servers: ${e?.message}`, 'error'); }
+    finally { setHubBusy(false); }
+  };
+  // HUB Salvar → e apontar no Wi-Fi: escolhe a PASTA primeiro, depois baixa, grava e aponta o servidor WiFi.
+  const saveAndPointWifi = async () => {
+    const folder = await resolveServeFolder();
+    if (!folder) { onLog('Salvar/apontar cancelado (sem pasta).', 'Save/point canceled (no folder).', 'warn'); return; }
+    setHubBusy(true);
+    try {
+      const s = await ensureStaged(); if (!s) return;
+      const fp = await saveBytesToDir(folder, s.name, s.bytes); if (!fp) return;
+      if (s.count > 1) {
+        setServerMode('container'); setServerPath(fp); setSharedFiles(null); previewServer(fp, 'container'); pushRecent('container', fp);
+        onLog(`Servidores: contêiner ${s.name} salvo e apontado no Wi-Fi (modo Container).`,
+              `Servers: container ${s.name} saved and pointed on Wi-Fi (Container mode).`, 'success');
+      } else {
+        previewServer(folder, 'folder');
+        onLog(`Servidores: ${s.name} salvo na pasta servida por Wi-Fi — a FujiNet já o enxerga.`,
+              `Servers: ${s.name} saved to the Wi-Fi-served folder — the FujiNet now sees it.`, 'success');
+      }
+      setSaveOpen(false);
+    } finally { setHubBusy(false); }
+  };
 
   // extrai uma entrada do zip (no main) e manda abrir
   const openZipEntry = async (zipData: Uint8Array, entryName: string) => {
@@ -58,7 +218,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
     const r = await window.cocoApi.zipExtract(zipData, entryName);
     if (!r?.success) { onLog(`FujiNet: falha ao extrair — ${r?.error}`, `FujiNet: extract failed — ${r?.error}`, 'error'); return; }
     onLog(`FujiNet: ${r.name} (${r.bytes} bytes) extraído.`, `FujiNet: ${r.name} (${r.bytes} bytes) extracted.`, 'success');
-    onOpenImage(r.name, new Uint8Array(r.data));
+    await stageThenHub(r.name, new Uint8Array(r.data));
   };
 
   // Trata um resultado de download/leitura (URL ou TNFS): se for .zip → extrai/seletor; senão abre.
@@ -75,7 +235,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
         onLog(`FujiNet: ZIP com ${openable.length} imagens — escolha qual abrir.`, `FujiNet: ZIP with ${openable.length} images — choose which to open.`, 'info');
       }
     } else {
-      onOpenImage(r.name, new Uint8Array(r.data));
+      await stageThenHub(r.name, new Uint8Array(r.data));
     }
   };
 
@@ -101,8 +261,8 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
   const [tnfsEntries, setTnfsEntries] = useState<null | { name: string; isDir: boolean; size: number }[]>(null);
   const [tnfsSel, setTnfsSel] = useState<string | null>(null); // item selecionado (1 clique seleciona, 2 cliques age)
   useEffect(() => { setTnfsSel(null); }, [tnfsEntries]); // troca de pasta → limpa a seleção
-  // Ação do item selecionado (ou de um item específico): pasta → entra; arquivo → baixa e abre.
-  const tnfsActEntry = (e: { name: string; isDir: boolean; size: number }) => { if (e.isDir) tnfsGo(jp(tnfsPath, e.name)); else tnfsOpenFile(e.name, e.size); };
+  // Ação do item selecionado (ou de um item específico): pasta → entra; arquivo → abre o HUB "Enviar para…" NA HORA.
+  const tnfsActEntry = (e: { name: string; isDir: boolean; size: number }) => { if (e.isDir) tnfsGo(jp(tnfsPath, e.name)); else openHub('send', e); };
   const [bigDl, setBigDl] = useState<null | { name: string; size: number }>(null); // confirmação p/ arquivo grande
   const [dlGot, setDlGot] = useState(0);    // bytes baixados (progresso)
   const [dlTotal, setDlTotal] = useState(0); // tamanho total (do STAT/listagem)
@@ -134,25 +294,9 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
     finally { if (myGen === connectGen.current) { setBusy(false); setBusyKind(''); finishBar(); } }
   };
 
-  // TNFS é 512 bytes por ida-e-volta → arquivos grandes (ex.: imagem de cartão SDC de 30 MB) demoram
-  // DEMAIS. Acima do limite, confirma antes; e o download tem progresso + cancelar.
+  // TNFS é 512 bytes por ida-e-volta → arquivos grandes (ex.: imagem de cartão SDC de 30 MB) demoram DEMAIS.
+  // Acima do limite, confirma antes (ver confirmIfLarge); o download tem progresso + cancelar.
   const LARGE_DL = 4 * 1024 * 1024;
-  const tnfsOpenFile = (name: string, size: number) => {
-    if (size > LARGE_DL) { setBigDl({ name, size }); return; }
-    doTnfsRead(name, size);
-  };
-  const doTnfsRead = async (name: string, size: number) => {
-    const h = host.trim(); const p = jp(tnfsPath, name);
-    setBigDl(null); setBusy(true); setBusyKind('download'); setDlGot(0); setDlTotal(size || 0); setDlName(name);
-    onLog(`FujiNet TNFS: baixando ${p}…`, `FujiNet TNFS: downloading ${p}…`, 'info');
-    try {
-      const r = await window.cocoApi.tnfsRead(h, p);
-      if (!r?.success) { onLog(`FujiNet TNFS: ${r?.error}`, `FujiNet TNFS: ${r?.error}`, r?.error === 'Download cancelado.' ? 'warn' : 'error'); return; }
-      onLog(`FujiNet TNFS: ${r.name} (${r.bytes} bytes) baixado.`, `FujiNet TNFS: ${r.name} (${r.bytes} bytes) downloaded.`, 'success');
-      await processFetched(r);
-    } catch (e: any) { onLog(`FujiNet TNFS: erro — ${e?.message}`, `FujiNet TNFS: error — ${e?.message}`, 'error'); }
-    finally { setBusy(false); setBusyKind(''); setDlGot(0); setDlName(''); }
-  };
 
   // --- Servidor WiFi (TNFS): serve uma PASTA ou um CONTAINER (discos internos viram .dsk) ---
   const [serverMode, setServerMode] = useState<'folder' | 'container'>('folder');
@@ -296,10 +440,27 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden p-3" style={{ minHeight: 0 }}>
-      {/* Título + Ajuda */}
+      {/* HUBs (Enviar para… / Salvar arquivo…) à esquerda + Ajuda à direita — agem no arquivo SELECIONADO no cliente */}
       <div className="flex items-center gap-2 mb-3 flex-shrink-0">
-        <Globe size={16} className="text-[var(--primary)]" />
-        <span className="text-sm font-bold text-white uppercase tracking-wide">{t('Servidores', 'Servers')}</span>
+        {(() => {
+          const selFile = (tnfsEntries || []).find(e => e.name === tnfsSel && !e.isDir) || null;
+          const hubReady = !!selFile || !!staged;
+          const tip = selFile ? selFile.name : (staged ? staged.name : '');
+          return (
+            <>
+              <button onClick={() => actSelected('send')} disabled={busy || !hubReady} className="dsk-tool flex items-center gap-1.5" style={{ color: hubReady ? 'var(--primary)' : undefined }}
+                title={hubReady ? t(`Baixar ${tip} e escolher destino (painel DSK / aba OS-9 / drive DriveWire)`, `Download ${tip} and choose a destination (DSK pane / OS-9 tab / DriveWire drive)`)
+                                : t('Selecione um arquivo na listagem do cliente (1 clique)', 'Select a file in the client listing (single click)')}>
+                <Send size={14} /> {t('Enviar para…', 'Send to…')}
+              </button>
+              <button onClick={() => actSelected('save')} disabled={busy || !hubReady} className="dsk-tool flex items-center gap-1.5"
+                title={hubReady ? t(`Baixar ${tip} e salvar (no PC ou na pasta servida por Wi-Fi)`, `Download ${tip} and save it (to the PC or the Wi-Fi-served folder)`)
+                                : t('Selecione um arquivo na listagem do cliente (1 clique)', 'Select a file in the client listing (single click)')}>
+                <SaveAll size={14} /> {t('Salvar arquivo…', 'Save file…')}
+              </button>
+            </>
+          );
+        })()}
         <span className="ml-auto"><HelpButton onClick={() => setShowHelp(true)} lang={lang} /></span>
       </div>
 
@@ -588,8 +749,115 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
 
         {/* Splitter: servidor WiFi ↔ DriveWire + COLUNA 3 (servidor DriveWire serial) */}
         <VSplitter onDelta={(dx) => setDwWidth(w => Math.max(300, Math.min(520, w - dx)))} />
-        <DriveWirePanel lang={lang} onLog={onLog} width={dwWidth} pendingDisk={pendingDw} onConsumed={onPendingDwConsumed} />
+        <DriveWirePanel lang={lang} onLog={onLog} width={dwWidth} pendingDisk={localPendingDw || pendingDw}
+          onConsumed={() => { if (localPendingDw) setLocalPendingDw(null); else onPendingDwConsumed?.(); }} />
       </div>
+
+      {/* HUB "Enviar para…" — destino do arquivo: painel DSK (RS-DOS), aba OS-9 ou um drive DriveWire.
+          Abre NA HORA; o tipo só é detectado ao baixar (na 1ª ação) → antes disso todas as opções ficam ativas. */}
+      {sendOpen && hubSource && (() => {
+        const known = !!staged && staged.name === hubSource.name; // já baixado/analisado?
+        const dskOk = !known || !!staged?.isRsDos;
+        const os9Ok = !known || !!staged?.isOs9;
+        return (
+        <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={() => !hubBusy && setSendOpen(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 580, maxWidth: '94%' }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <Send size={18} className="text-[var(--primary)]" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{t('Enviar para…', 'Send to…')}</h3>
+              <span className="text-[10px] text-[var(--text-muted)] normal-case truncate flex-1" title={hubSource.name}>
+                {hubSource.name} · {known ? (staged!.isOs9 ? 'OS-9' : staged!.count > 1 ? t(`contêiner (${staged!.count} discos)`, `container (${staged!.count} disks)`) : 'RS-DOS')
+                                          : `${Math.max(1, Math.round(hubSource.size / 1024))} KB · ${t('tipo ao baixar', 'type on download')}`}
+              </span>
+              <button onClick={() => !hubBusy && setSendOpen(false)} className="dsk-tool" style={{ padding: '3px 6px' }}><X size={14} /></button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10 }}>
+              {/* → Painel DSK (só RS-DOS quando o tipo já é conhecido) */}
+              <button disabled={!dskOk || hubBusy} onClick={sendToApp}
+                className="glass-panel p-3 flex flex-col items-center gap-2 text-center" style={{ opacity: dskOk ? 1 : 0.4, cursor: dskOk && !hubBusy ? 'pointer' : 'not-allowed' }}
+                title={dskOk ? t('Baixar e abrir no painel DSK (RS-DOS)', 'Download and open in the DSK pane (RS-DOS)') : t('Disponível só para disco RS-DOS', 'Available only for an RS-DOS disk')}>
+                <HardDrive size={22} className="text-[var(--primary)]" />
+                <span className="text-[11px] font-bold uppercase">{t('Painel DSK', 'DSK pane')}</span>
+                <span className="text-[9px] text-[var(--text-muted)]">{known ? (staged!.isRsDos ? 'RS-DOS' : '🔒') : 'RS-DOS'}</span>
+              </button>
+              {/* → Aba OS-9 (só OS-9 quando o tipo já é conhecido) */}
+              <button disabled={!os9Ok || hubBusy} onClick={sendToApp}
+                className="glass-panel p-3 flex flex-col items-center gap-2 text-center" style={{ opacity: os9Ok ? 1 : 0.4, cursor: os9Ok && !hubBusy ? 'pointer' : 'not-allowed' }}
+                title={os9Ok ? t('Baixar e abrir na aba OS-9 (editável)', 'Download and open in the OS-9 tab (editable)') : t('Disponível só para disco OS-9/NitrOS-9', 'Available only for an OS-9/NitrOS-9 disk')}>
+                <Cpu size={22} className="text-[var(--primary)]" />
+                <span className="text-[11px] font-bold uppercase">{t('Aba OS-9', 'OS-9 tab')}</span>
+                <span className="text-[9px] text-[var(--text-muted)]">{known ? (staged!.isOs9 ? (staged!.volume || 'OS-9') : '🔒') : 'OS-9'}</span>
+              </button>
+              {/* → XRoar (testar no emulador — drive 0, com reset) */}
+              <button disabled={hubBusy} onClick={sendToXroar}
+                className="glass-panel p-3 flex flex-col items-center gap-2 text-center" style={{ cursor: hubBusy ? 'not-allowed' : 'pointer' }}
+                title={t('Baixar e testar no emulador XRoar (drive 0, com reset)', 'Download and test in the XRoar emulator (drive 0, with reset)')}>
+                <MonitorPlay size={22} className="text-[var(--primary)]" />
+                <span className="text-[11px] font-bold uppercase">{t('XRoar', 'XRoar')}</span>
+                <span className="text-[9px] text-[var(--text-muted)]">{t('testar', 'test')}</span>
+              </button>
+              {/* → DriveWire (com seletor de drive) */}
+              <div className="glass-panel p-3 flex flex-col items-center gap-2 text-center">
+                <Cable size={22} className="text-[var(--primary)]" />
+                <span className="text-[11px] font-bold uppercase">{t('DriveWire', 'DriveWire')}</span>
+                <div className="flex gap-1">
+                  {[0, 1, 2, 3].map(d => (
+                    <button key={d} disabled={hubBusy} onClick={() => setDwDrive(d)} className="dsk-tool" style={{ padding: '2px 6px', color: dwDrive === d ? 'var(--primary)' : undefined, borderColor: dwDrive === d ? 'var(--primary)' : undefined }}>D{d}</button>
+                  ))}
+                </div>
+                <button disabled={hubBusy} onClick={sendToDriveWire} className="dsk-tool" style={{ padding: '3px 12px', color: '#34d399' }}>{t('Enviar', 'Send')}</button>
+              </div>
+            </div>
+            <div className="text-[9px] text-[var(--text-muted)] leading-tight flex items-center gap-1.5">
+              {hubBusy && <Loader size={11} className="spin" style={{ color: 'var(--primary)' }} />}
+              {hubBusy ? t('Baixando/gravando…', 'Downloading/writing…')
+                       : t('DriveWire grava numa PASTA (a servida por Wi-Fi, ou uma que você escolher) e monta no drive — a FujiNet também passa a enxergar o arquivo.',
+                           'DriveWire writes to a FOLDER (the Wi-Fi-served one, or one you pick) and mounts it on the drive — the FujiNet also sees the file.')}
+            </div>
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* HUB "Salvar arquivo…" — grava: no PC (livre) ou na pasta servida por Wi-Fi. Abre NA HORA; baixa na ação. */}
+      {saveOpen && hubSource && (
+        <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={() => !hubBusy && setSaveOpen(false)}>
+          <div className="glass-panel p-5 flex flex-col gap-4" style={{ width: 520, maxWidth: '94%' }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-2">
+              <SaveAll size={18} className="text-[var(--primary)]" />
+              <h3 className="text-sm font-bold text-white uppercase tracking-wide">{t('Salvar arquivo…', 'Save file…')}</h3>
+              <span className="text-[10px] text-[var(--text-muted)] normal-case truncate flex-1" title={hubSource.name}>
+                {hubSource.name} · {Math.max(1, Math.round(hubSource.size / 1024))} KB
+              </span>
+              <button onClick={() => !hubBusy && setSaveOpen(false)} className="dsk-tool" style={{ padding: '3px 6px' }}><X size={14} /></button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 10 }}>
+              {/* Salvar no PC (livre) */}
+              <button disabled={hubBusy} onClick={saveToPc} className="glass-panel p-4 flex flex-col items-center gap-2 text-center" style={{ cursor: hubBusy ? 'not-allowed' : 'pointer' }}
+                title={t('Baixar e escolher onde salvar no computador', 'Download and choose where to save on the computer')}>
+                <Save size={24} className="text-[var(--primary)]" />
+                <span className="text-[11px] font-bold uppercase">{t('Salvar no PC', 'Save to PC')}</span>
+                <span className="text-[9px] text-[var(--text-muted)] leading-tight">{t('Diálogo livre — salve onde quiser', 'Free dialog — save anywhere')}</span>
+              </button>
+              {/* Salvar e apontar no Wi-Fi */}
+              <button disabled={hubBusy} onClick={saveAndPointWifi} className="glass-panel p-4 flex flex-col items-center gap-2 text-center" style={{ cursor: hubBusy ? 'not-allowed' : 'pointer' }}
+                title={t('Escolher a pasta e apontar o servidor Wi-Fi para ela — a FujiNet passa a ver o arquivo', 'Pick the folder and point the Wi-Fi server at it — the FujiNet will see the file')}>
+                <Wifi size={24} className="text-[var(--primary)]" />
+                <span className="text-[11px] font-bold uppercase">{t('Salvar e apontar no Wi-Fi', 'Save & point on Wi-Fi')}</span>
+                <span className="text-[9px] text-[var(--text-muted)] leading-tight">
+                  {serverMode === 'folder' && serverPath ? t('Vai p/ a pasta já servida', 'Goes to the already-served folder') : t('Escolha a pasta a servir', 'Pick the folder to serve')}
+                </span>
+              </button>
+            </div>
+            <div className="text-[9px] text-[var(--text-muted)] leading-tight flex items-center gap-1.5">
+              {hubBusy && <Loader size={11} className="spin" style={{ color: 'var(--primary)' }} />}
+              {hubBusy ? t('Baixando/gravando…', 'Downloading/writing…')
+                       : t('"Apontar no Wi-Fi": a pasta escolhida vira a pasta servida pelo Servidor WiFi. Um contêiner é apontado como arquivo Container (cada disco interno vira um .dsk p/ a FujiNet).',
+                           '"Point on Wi-Fi": the chosen folder becomes the one served by the WiFi server. A container is pointed as a Container file (each inner disk becomes a .dsk for the FujiNet).')}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal: gerenciar servidores favoritos + ver comunidade */}
       {manageOpen && (
@@ -649,7 +917,7 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
 
       {/* Confirmação: arquivo grande (download TNFS é lento — 512 B por ida-e-volta) */}
       {bigDl && (
-        <div className="glass-modal-overlay" onClick={() => setBigDl(null)}>
+        <div className="glass-modal-overlay" onClick={() => { setBigDl(null); bigDlResolve.current?.(false); bigDlResolve.current = null; }}>
           <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 500, maxWidth: '92%' }} onClick={e => e.stopPropagation()}>
             <div className="flex items-center gap-2"><Download size={18} className="text-[var(--primary)]" /><h3 className="text-sm font-bold text-white uppercase tracking-wide">{t('Arquivo grande', 'Large file')}</h3></div>
             <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
@@ -657,8 +925,8 @@ export default function FujiNetTab({ lang, onLog, onOpenImage, pendingDw, onPend
                   : `"${bigDl.name}" is ${(bigDl.size / 1024 / 1024).toFixed(1)} MB. Over TNFS the download is 512 bytes at a time (one round-trip per block), so it may take a VERY long time — minutes to hours, depending on the server. Files this size are usually CARD images (CoCoSDC), not floppies. Continue anyway?`}
             </p>
             <div className="flex justify-end gap-2">
-              <button onClick={() => setBigDl(null)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('Cancelar', 'Cancel')}</button>
-              <button onClick={() => doTnfsRead(bigDl.name, bigDl.size)} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase" style={{ color: '#fbbf24' }}>{t('Baixar mesmo assim', 'Download anyway')}</button>
+              <button onClick={() => { setBigDl(null); bigDlResolve.current?.(false); bigDlResolve.current = null; }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase">{t('Cancelar', 'Cancel')}</button>
+              <button onClick={() => { setBigDl(null); bigDlResolve.current?.(true); bigDlResolve.current = null; }} className="btn btn-secondary py-2 px-4 text-xs font-bold uppercase" style={{ color: '#fbbf24' }}>{t('Baixar mesmo assim', 'Download anyway')}</button>
             </div>
           </div>
         </div>

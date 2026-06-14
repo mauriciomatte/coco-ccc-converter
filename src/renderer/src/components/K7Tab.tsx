@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
-  FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2,
+  FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2, Send, X,
   Play, Pause, Square, Circle, Rewind, FastForward, AudioLines, ZoomIn, ZoomOut, FileCode2,
   Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles, Wrench, HardDrive,
 } from 'lucide-react';
@@ -203,6 +203,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
 }) {
   const pt = lang === 'pt-br';
   const [showHelp, setShowHelp] = useState(false);
+  const [sendHubOpen, setSendHubOpen] = useState(false); // hub "Enviar para…" (XRoar/DSK/BASIC/Sem loader)
+  const [saveHubOpen, setSaveHubOpen] = useState(false); // hub "Salvar arquivo…" (CAS/WAV/Toda K7/FIXCAS/Reverter)
   const t = (a: string, b: string) => (pt ? a : b);
   // Configurações persistentes da aba K7 (localStorage): ajustes de som, velocidade, formato de
   // extração, espelhamento e os pesos (larguras) dos 3 painéis de baixo.
@@ -1157,15 +1159,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[var(--border)] flex-wrap flex-shrink-0">
         {tool(<FolderOpen size={14} />, t('Abrir', 'Open'), openDialog, true, t('Abrir uma fita do PC (.wav, .cas, .voc, .c10) — também pode arrastar e soltar na onda', 'Open a tape from the PC (.wav, .cas, .voc, .c10) — you can also drag-and-drop onto the wave'))}
         {onPullFromPanel && tool(<HardDrive size={14} />, t('Do disco', 'From disk'), onPullClick, true, t('Carregar o arquivo SELECIONADO num painel de disco (A/B) como fita: empacota em .CAS e abre aqui p/ tocar, editar e exportar .CAS/.WAV (disco → fita).', 'Load the file SELECTED in a disk pane (A/B) as a tape: packs it into .CAS and opens it here to play, edit and export .CAS/.WAV (disk → tape).'))}
-        {tool(<Wrench size={14} />, 'FIXCAS', onFixCasClick, !fixing, t('Validar/reparar um .CAS do PC: recalcula checksums, refaz o leader/sync e garante o EOF — salva um .CAS íntegro (não altera o arquivo carregado na onda).', 'Validate/repair a .CAS from the PC: recomputes checksums, rebuilds leader/sync and ensures EOF — saves a clean .CAS (does not touch the waveform loaded here).'))}
-        {tool(<CassetteTape size={14} />, '→ CAS', () => exportClean('cas'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .CAS LIMPO e minúsculo só com os dados decodificados (padrão CoCo/Dragon)', 'NORMALIZE: save a CLEAN, tiny .CAS with just the decoded data (standard CoCo/Dragon)'))}
-        {tool(<AudioWaveform size={14} />, '→ WAV', () => exportClean('wav'), !!decoded?.foundSync && !exporting, t('NORMALIZAR: salvar um .WAV LIMPO a 11 kHz, bem menor que a captura original, que lê confiável no hardware', 'NORMALIZE: save a CLEAN 11 kHz .WAV, much smaller than the original capture, reliable on real hardware'))}
-        {tool(<Download size={14} />, t('→ Toda K7', '→ Whole tape'), exportFullWav, !!audio && !exporting, t('Salvar a FITA COMPLETA (.wav do áudio original) — captura TUDO: header, tela, loader e jogo turbo. Use p/ fitas com tela de abertura, que rodam inteiras no XRoar.', 'Save the WHOLE TAPE (.wav of the original audio) — captures EVERYTHING: header, screen, loader and turbo game. Use for tapes with an opening screen that run fully in XRoar.'))}
-        {tool(<FileCode2 size={14} />, '', openInBasic, !!decoded?.files?.some((f: any) => f.ftype === 0), t('Abrir o programa BASIC lido da fita no editor BASIC (detokeniza automaticamente)', 'Open the BASIC program read from the tape in the BASIC editor (auto-detokenizes)'))}
-        {tool(<><ArrowRightLeft size={14} /><Save size={13} /></>, '', onDskClick, !!(rawRef.current && fileMeta && onSendToDsk), t('Gravar o arquivo lido (BASIC/ML) num painel DSK. Fita com tela+loader → use "→ Sem loader".', 'Write the read file (BASIC/ML) into a DSK pane. Screen+loader tape → use "→ No loader".'))}
-        {tool(<MonitorPlay size={14} />, '', onXroarClick, !!(rawRef.current && audio && onSendToXroar), t('Carregar esta fita no emulador XRoar (fita com loader → use "→ Sem loader" ou o mini-XRoar)', 'Load this tape into the XRoar emulator (loader tape → use "→ No loader" or the mini-XRoar)'))}
-        {tool(<Rocket size={14} />, t('→ Sem loader', '→ No loader'), openLoaderDlg, !!rawRef.current && !skBusy, t('Detecta o loader da fita (SoftKristian, PLAN-SOFT…). SoftKristian → gera um .BIN/.DSK que RODA SOZINHO com LOADM (autostart, sem :EXEC), mantendo a tela. PLAN-SOFT/multi-parte (all-RAM) → informa que o .CAS fiel roda no mini-XRoar (conversão p/ disco é projeto futuro).', 'Detects the tape loader (SoftKristian, PLAN-SOFT…). SoftKristian → builds a .BIN/.DSK that AUTOSTARTS with LOADM (no :EXEC), keeping the screen. PLAN-SOFT/multi-part (all-RAM) → tells you the faithful .CAS runs in the mini-XRoar (disk conversion is a future project).'))}
-        {tool(<Undo2 size={14} />, t('Reverter', 'Revert'), revertCdcu, !skBusy, t('Abrir um .BIN nosso (assinatura CoCo DCU) e recuperar o PROGRAMA PURO em .CAS/.WAV (sem a tela/stub de disco)', 'Open one of our .BIN files (CoCo DCU signature) and recover the PURE PROGRAM as .CAS/.WAV (without the screen/disk stub)'))}
+        {tool(<Send size={14} />, t('Enviar para…', 'Send to…'), () => setSendHubOpen(true), !!rawRef.current, t('Enviar a fita / o arquivo lido para outra aba: XRoar, DSK, BASIC ou "Sem loader" (→ DSK).', 'Send the tape / read file to another tab: XRoar, DSK, BASIC or "No loader" (→ DSK).'))}
+        {tool(<Save size={14} />, t('Salvar arquivo…', 'Save file…'), () => setSaveHubOpen(true), true, t('Salvar em arquivo no PC: .CAS, .WAV, a fita completa, ou reparar/recuperar (FIXCAS, Reverter).', 'Save to a PC file: .CAS, .WAV, the whole tape, or repair/recover (FIXCAS, Revert).'))}
         {mirrorXroar && <button onClick={() => setFastLoad(v => !v)} className="dsk-tool flex items-center gap-1" style={{ color: fastLoad ? ACCENT : GREEN, fontWeight: fastLoad ? 700 : 400 }} title={t('Leitura da mini-XRoar: "Ler rápido" = carrega o .cas com fast-load (sem animação, p/ arquivos digitais). "Ler normal" = WAV em tempo real (com os gaps reais, p/ fitas com loader). Liga sozinho ao abrir um .cas.', 'mini-XRoar read: "Fast read" = loads the .cas with fast-load (no animation, for digital files). "Normal read" = real-time WAV (with real gaps, for loader tapes). Auto-on when opening a .cas.')}>{fastLoad ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}<span className="text-[11px]">{fastLoad ? t('Ler rápido', 'Fast read') : t('Ler normal', 'Normal read')}</span></button>}
         {sep}
         {tool(<Undo2 size={14} />, '', undo, undoRef.current.length > 0, t('Desfazer a última edição da onda', 'Undo the last waveform edit'))}
@@ -1181,6 +1176,46 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         <span className="ml-auto"><HelpButton onClick={() => setShowHelp(true)} lang={lang as any} /></span>
       </div>
       {showHelp && <TabHelpModal topic="k7" lang={lang as any} onClose={() => setShowHelp(false)} />}
+
+      {/* HUBS "Enviar para…" e "Salvar arquivo…" — concentram os envios p/ outras abas e as saídas em arquivo. */}
+      {(sendHubOpen || saveHubOpen) && (() => {
+        const isSend = sendHubOpen;
+        const close = () => { setSendHubOpen(false); setSaveHubOpen(false); };
+        const dests: any[] = isSend ? [
+          { icon: <MonitorPlay size={16} />, label: 'XRoar', desc: t('tocar/rodar a fita', 'play/run the tape'), enabled: !!(rawRef.current && audio && onSendToXroar), reason: t('precisa de uma fita com áudio', 'needs a tape with audio'), run: onXroarClick },
+          { icon: <ArrowRightLeft size={16} />, label: 'DSK', desc: t('gravar o arquivo num painel', 'write the file to a pane'), enabled: !!(rawRef.current && fileMeta && onSendToDsk), reason: t('precisa de um arquivo lido', 'needs a read file'), run: onDskClick },
+          { icon: <FileCode2 size={16} />, label: 'BASIC', desc: t('abrir no editor', 'open in the editor'), enabled: !!decoded?.files?.some((f: any) => f.ftype === 0), reason: t('a fita não tem programa BASIC', 'the tape has no BASIC program'), run: openInBasic },
+          { icon: <Rocket size={16} />, label: t('Sem loader → DSK', 'No loader → DSK'), desc: t('detectar loader e gerar .bin/.dsk', 'detect loader, build .bin/.dsk'), enabled: !!rawRef.current && !skBusy, reason: t('precisa de uma fita', 'needs a tape'), run: openLoaderDlg },
+        ] : [
+          { icon: <CassetteTape size={16} />, label: '→ CAS', desc: t('.cas limpo (decodificado)', 'clean .cas (decoded)'), enabled: !!decoded?.foundSync && !exporting, reason: t('decodifique a fita primeiro', 'decode the tape first'), run: () => exportClean('cas') },
+          { icon: <AudioWaveform size={16} />, label: '→ WAV', desc: t('.wav limpo 11 kHz', 'clean 11 kHz .wav'), enabled: !!decoded?.foundSync && !exporting, reason: t('decodifique a fita primeiro', 'decode the tape first'), run: () => exportClean('wav') },
+          { icon: <Download size={16} />, label: t('Toda a fita', 'Whole tape'), desc: t('.wav do áudio completo', '.wav of the whole audio'), enabled: !!audio && !exporting, reason: t('abra uma fita', 'open a tape'), run: exportFullWav },
+          { icon: <Wrench size={16} />, label: 'FIXCAS', desc: t('reparar um .cas do PC', 'repair a .cas from the PC'), enabled: !fixing, run: onFixCasClick },
+          { icon: <RotateCcw size={16} />, label: t('Reverter', 'Revert'), desc: t('recuperar .cas/.wav de um .bin nosso', 'recover .cas/.wav from our .bin'), enabled: !skBusy, run: revertCdcu },
+        ];
+        const card = (d: any, i: number) => (
+          <button key={i} onClick={() => { if (d.enabled) { close(); d.run(); } }} disabled={!d.enabled} title={d.enabled ? '' : (d.reason || '')}
+            className="glass-panel" style={{ textAlign: 'left', padding: '8px 10px', display: 'flex', flexDirection: 'column', gap: 3, opacity: d.enabled ? 1 : 0.4, cursor: d.enabled ? 'pointer' : 'not-allowed' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6, color: d.enabled ? GREEN : 'var(--text-muted)' }}>
+              {d.icon}<span className="text-xs font-bold normal-case" style={{ color: d.enabled ? '#fff' : 'var(--text-muted)' }}>{d.label}</span>
+              {!d.enabled && <span style={{ marginLeft: 'auto', fontSize: 11 }}>🔒</span>}
+            </span>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{d.desc}</span>
+          </button>
+        );
+        return (
+          <div className="glass-modal-overlay flex items-center justify-center p-8" onClick={close}>
+            <div className="glass-panel p-5 flex flex-col gap-3" style={{ width: 600, maxWidth: '94%' }} onClick={e => e.stopPropagation()}>
+              <div className="flex items-center gap-2">
+                {isSend ? <Send size={18} className="text-[var(--primary)]" /> : <Save size={18} className="text-[var(--primary)]" />}
+                <h3 className="text-sm font-bold text-white uppercase tracking-wide">{isSend ? t('Enviar para…', 'Send to…') : t('Salvar arquivo…', 'Save file…')}</h3>
+                <button onClick={close} className="ml-auto dsk-tool" style={{ padding: '3px 6px' }}><X size={14} /></button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>{dests.map(card)}</div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* CORPO */}
       <div className="flex-1 flex" style={{ minHeight: 0 }}>
