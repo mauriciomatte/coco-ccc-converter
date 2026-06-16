@@ -10,6 +10,32 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.68 — 2026-06-16
+--------------------------------------------------------------------------------
+FIX: XRoar's "Re-insert" (drives D0-D3) and "Reload" (.bin/.rom/.ccc) buttons, and the DriveWire
+server drives, now RE-READ the file FROM its source on disk instead of reusing the bytes cached when
+it was first opened -- so edits made to the file (e.g. a .dsk edited in the DSK tab, a re-converted
+.ccc) are now reflected.
+
+FIXED
+  • XRoar — "Re-insert" (drives D0-D3) and "Reload" (program .bin/.rom/.ccc) re-read the file from its
+    SOURCE before re-injecting into the emulator. Previously they only re-injected the copy cached at
+    open time, ignoring changes made to the file. When the disk/program came from another tab (generated
+    in memory, no source file) it keeps using the in-memory bytes, as before.
+  • DriveWire — new "Reload from disk" button (refresh icon) on each of the 4 drives. With the server
+    LIVE, it re-reads the .dsk from its source into the served buffer (the CoCo reads the new version on
+    its next access, without stopping/restarting the server); with the server stopped it refreshes the
+    drive label (the next "Start server" already re-read everything from source).
+
+ADDED
+  • XRoar — new "x" (Release) button next to AutoRun, in the Program section: EJECTS the loaded
+    .bin/.rom/.ccc. Since this XRoar build has no "remove cartridge", the app re-mounts the emulator CLEAN
+    (without the boot file) to take the program out of the machine; drives are ejected on the reboot, like
+    switching machines. The name disappears and Reload is disabled.
+  • IPC "xroar-read-file" (re-reads a file by path) and "dw-reload-drive" (reloads a drive of the
+    running DriveWire server). XRoar and Servers tab help updated (PT and EN).
+
+--------------------------------------------------------------------------------
 v1.0.67 — 2026-06-16
 --------------------------------------------------------------------------------
 ASCII/SG4 SCREEN EDITOR on the K7 tab (create/edit tape and loader splash screens), a preview thumbnail with injection, the no-loader file signature renamed CDCU -> CFIU, and XRoar improvements (drag-and-drop a disk onto a drive + Reinsert/Reload buttons).

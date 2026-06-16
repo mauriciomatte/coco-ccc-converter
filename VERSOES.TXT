@@ -10,6 +10,32 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.68 — 2026-06-16
+--------------------------------------------------------------------------------
+CORRECAO: os botoes "Reinserir" (drives D0-D3) e "Recarregar" (.bin/.rom/.ccc) do XRoar, e os drives
+do servidor DriveWire, agora RELEEM o arquivo DA ORIGEM no disco em vez de reusar os bytes em cache de
+quando foram abertos -- entao edicoes feitas no arquivo (ex.: o .dsk editado na aba DSK, um .ccc
+reconvertido) passam a ser refletidas.
+
+CORRIGIDO
+  • XRoar — "Reinserir" (drives D0-D3) e "Recarregar" (programa .bin/.rom/.ccc) releem o arquivo da ORIGEM
+    antes de reinjetar no emulador. Antes apenas reinjetavam a copia em cache da abertura, ignorando
+    alteracoes feitas no arquivo. Quando o disco/programa veio de outra aba (gerado em memoria, sem
+    arquivo de origem) continua usando os bytes em memoria, como antes.
+  • DriveWire — novo botao "Recarregar do disco" (icone de atualizar) em cada um dos 4 drives. Com o
+    servidor NO AR, rele o .dsk da origem para o buffer servido (o CoCo le a versao nova no proximo
+    acesso, sem precisar desligar/religar o servidor); com o servidor parado, atualiza a etiqueta do
+    drive (o proximo "Ligar servidor" ja relia tudo da origem).
+
+ADICIONADO
+  • XRoar — novo botao "x" (Liberar) ao lado do AutoRun, na secao Programa: EJETA o .bin/.rom/.ccc
+    carregado. Como este build do XRoar nao tem "remover cartucho", o app remonta o emulador LIMPO (sem o
+    arquivo de boot) p/ tirar o programa da maquina; as drives sao ejetadas no reboot, como ao trocar de
+    maquina. Some o nome e desabilita o Recarregar.
+  • IPC "xroar-read-file" (relê um arquivo por caminho) e "dw-reload-drive" (recarrega um drive do
+    servidor DriveWire em execucao). Ajuda das abas XRoar e Servidores atualizada (PT e EN).
+
+--------------------------------------------------------------------------------
 v1.0.67 — 2026-06-16
 --------------------------------------------------------------------------------
 EDITOR DE TELA ASCII/SG4 na aba K7 (criar/editar telas de abertura de fitas e loaders), miniatura de pre-visualizacao com injecao, assinatura dos arquivos sem-loader renomeada CDCU -> CFIU, e melhorias no XRoar (arrastar-e-soltar disco no drive + botoes Reinserir/Recarregar).

@@ -67,6 +67,15 @@ ipcMain.handle('dw-server-stop', async () => {
   catch (e: any) { return { success: false, error: e?.message }; }
 });
 ipcMain.handle('dw-server-status', async () => ({ running: !!dwSrv, portPath: dwSrv?.portPath || '', baudRate: dwSrv?.baudRate || 0, drives: dwSrv?.drives || [] }));
+// RELÊ o .dsk de um drive do disco para o buffer do servidor EM EXECUÇÃO (reflete edições externas sem
+// parar/religar). Sem servidor no ar, não há nada a recarregar (o start já relê tudo da origem).
+ipcMain.handle('dw-reload-drive', async (_, slot: number) => {
+  try {
+    if (!dwSrv) return { success: false, error: 'Servidor parado.' };
+    const r = dwSrv.reloadDrive(slot);
+    return r.success ? { success: true, size: r.size } : { success: false, error: r.error };
+  } catch (e: any) { return { success: false, error: e?.message }; }
+});
 // Info de um .dsk para a etiqueta do drive (nome/tamanho/tipo/nº de arquivos).
 ipcMain.handle('dw-disk-info', async (_, filePath: string) => {
   try {
@@ -895,7 +904,20 @@ ipcMain.handle('xroar-pick-file', async (_, kind?: string) => {
   const fp = result.filePaths[0];
   try {
     const data = fs.readFileSync(fp);
-    return { success: true, name: path.basename(fp), ext: path.extname(fp).slice(1).toLowerCase(), data: new Uint8Array(data) };
+    // `path` é devolvido p/ o "Reinserir/Recarregar" do XRoar RELER a origem do disco (refletir edições) em vez do cache.
+    return { success: true, path: fp, name: path.basename(fp), ext: path.extname(fp).slice(1).toLowerCase(), data: new Uint8Array(data) };
+  } catch (error: any) {
+    return { success: false, error: error.message };
+  }
+});
+
+// Relê um arquivo por CAMINHO ABSOLUTO (p/ "Reinserir" drive / "Recarregar" .bin do XRoar pegarem a
+// versão atual do disco em vez dos bytes em cache de quando foi aberto).
+ipcMain.handle('xroar-read-file', async (_, filePath: string) => {
+  try {
+    if (!filePath) return { success: false, error: 'No path.' };
+    const data = fs.readFileSync(filePath);
+    return { success: true, path: filePath, name: path.basename(filePath), ext: path.extname(filePath).slice(1).toLowerCase(), data: new Uint8Array(data) };
   } catch (error: any) {
     return { success: false, error: error.message };
   }

@@ -219,7 +219,9 @@ nativo do CoCo, sem WiFi. O CoCo real (com a ROM **HDB-DOS/DriveWire** do seu mo
   **Personalizado** para outros bauds (até 921600). O baud precisa **casar com a ROM** do CoCo. Depois de
   definir, clique no cabeçalho para **colapsar** e dar espaço aos drives.
 - **Os 4 drives:** cada drive 5.25" recebe um `.dsk` — **arraste** um arquivo sobre o drive **ou clique** para
-  escolher. A etiqueta mostra o **nome e as informações** do disco. **Dentro** do drive: o **cadeado** alterna
+  escolher. A etiqueta mostra o **nome e as informações** do disco. **Dentro** do drive: o **⟳ recarregar** relê
+  o `.dsk` **da origem no disco** (reflete edições feitas no arquivo) — com o **servidor no ar** o CoCo passa a
+  ler a versão nova no próximo acesso, sem desligar; a **lista** mostra os arquivos, o **cadeado** alterna
   **leitura-escrita / só-leitura** e a **seta** **ejeta** o disco. O **LED** acende (verde) quando há disco e
   **pulsa** com o servidor no ar.
 - **Ligar servidor:** com a porta escolhida e ao menos um disco montado, clique **Ligar servidor**. Ligue o

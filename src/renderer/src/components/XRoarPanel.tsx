@@ -83,11 +83,12 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   const [drives, setDrives] = useState<string[]>(['', '', '', '']);
   const [dragDrive, setDragDrive] = useState<number | null>(null); // drive sob o cursor durante um arrastar (highlight)
   useEffect(() => { onDrivesChange?.(drives); }, [drives]); // espelha os drives ocupados pro App (RODAR NO XROAR do BASIC)
-  // Guarda o disco montado em cada drive (nome/ext/bytes) p/ o botão "Reinserir" reinjetar — o XRoar faz
-  // cache da imagem, então após um reset o "Reinserir" recarrega o .dsk sem reabrir o seletor de arquivo.
-  const driveDataRef = useRef<({ name: string; ext: string; data: Uint8Array } | null)[]>([null, null, null, null]);
-  // Último programa (.bin/.rom/…) carregado, p/ o botão "Recarregar" reinjetar após um reset do XRoar.
-  const lastProgRef = useRef<{ name: string; ext: string; data: number[] } | null>(null);
+  // Guarda o disco montado em cada drive (nome/ext/bytes + caminho de origem) p/ o botão "Reinserir". O
+  // XRoar faz cache da imagem; ao reinserir, RELEMOS o arquivo da origem (`path`) p/ refletir edições — só
+  // caímos no cache de bytes quando não há caminho (disco empurrado de outra aba, gerado em memória).
+  const driveDataRef = useRef<({ name: string; ext: string; data: Uint8Array; path?: string } | null)[]>([null, null, null, null]);
+  // Último programa (.bin/.rom/…) carregado, p/ "Recarregar". Mesmo critério: relê de `path` quando há.
+  const lastProgRef = useRef<{ name: string; ext: string; data: number[]; path?: string } | null>(null);
   const [tapeName, setTapeName] = useState('');                                  // fita montada (.cas/.wav)
   const [tapeAutorun, setTapeAutorun] = useState(false);                          // CLOAD(M) automático: ON=XRoar roda sozinho; OFF=espera o usuário
   const [binAutorun, setBinAutorun] = useState(true);                             // .bin AutoRun: ON=boot com o arquivo (-run); OFF=só carrega
@@ -128,7 +129,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
     sendCmd('focus');
   };
 
-  const loadToDrive = (drive: number, name: string, ext: string, data: Uint8Array) => {
+  const loadToDrive = (drive: number, name: string, ext: string, data: Uint8Array, path?: string) => {
     const arr = Array.from(data);
     const e = ext.toLowerCase();
     // Feedback de carga vai para o LOG (não para o indicador ao lado de "XRoar", que mostra só o estado).
@@ -137,7 +138,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
       // mantém o original.
       const vfsName = e === 'os9' ? name.replace(/\.os9$/i, '') + '.dsk' : name;
       sendCmd('insert_disk', { drive, fileName: vfsName, fileData: arr });
-      driveDataRef.current[drive] = { name, ext: e, data }; // guarda p/ "Reinserir"
+      driveDataRef.current[drive] = { name, ext: e, data, path }; // guarda p/ "Reinserir" (path → relê da origem)
       setDrives(d => { const n = [...d]; n[drive] = name; return n; });
       onLog?.(`D${drive}: ${name}`, `D${drive}: ${name}`, 'info');
     } else if (CASSETTE_EXTS.includes(e)) {
@@ -173,7 +174,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
       const res = await window.cocoApi.xroarPickFile('disk');   // filtro só de disco (.dsk/.vdk/.jvc/.dmk)
       if (res?.cancelled) return;
       if (!res?.success) { onLog?.(`XRoar: ${res?.error}`, `XRoar: ${res?.error}`, 'error'); return; }
-      loadToDrive(drive, res.name, res.ext, new Uint8Array(res.data));
+      loadToDrive(drive, res.name, res.ext, new Uint8Array(res.data), res.path);
     } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
   };
 
@@ -198,18 +199,29 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
     }
     try {
       const buf = await f.arrayBuffer();
-      loadToDrive(drive, f.name, ext, new Uint8Array(buf));
+      // Caminho real do arquivo arrastado (Electron) → "Reinserir" relê a origem; vazio = só cache.
+      const fp = window.cocoApi.getPathForFile?.(f) || '';
+      loadToDrive(drive, f.name, ext, new Uint8Array(buf), fp || undefined);
     } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
   };
 
-  // Reinsere no drive o último disco montado (o XRoar faz cache → após um reset, isto reinjeta a imagem
-  // na mesma drive sem reabrir o seletor de arquivo). Mesmo padrão do "Recarregar" da aba DSK.
-  const reinsertDrive = (drive: number) => {
+  // Reinsere no drive o disco montado. RELÊ o arquivo DA ORIGEM (`path`) antes de reinjetar, para refletir
+  // edições feitas no .dsk fora do emulador (ex.: editado na aba DSK). Sem caminho (disco empurrado de outra
+  // aba / gerado em memória) cai nos bytes em cache. O XRoar faz cache da imagem, então reinjetar reseta o disco.
+  const reinsertDrive = async (drive: number) => {
     const p = driveDataRef.current[drive];
     if (!p) return;
+    let data = p.data;
+    if (p.path) {
+      try {
+        const res = await window.cocoApi.xroarReadFile(p.path);
+        if (res?.success) { data = new Uint8Array(res.data); driveDataRef.current[drive] = { ...p, data }; }
+        else onLog?.(`XRoar: não consegui reler "${p.name}" — usando a versão em cache.`, `XRoar: could not re-read "${p.name}" — using the cached copy.`, 'warn');
+      } catch { /* mantém o cache */ }
+    }
     const vfsName = p.ext === 'os9' ? p.name.replace(/\.os9$/i, '') + '.dsk' : p.name;
-    sendCmd('insert_disk', { drive, fileName: vfsName, fileData: Array.from(p.data) });
-    onLog?.(`D${drive}: ${p.name} (reinserido)`, `D${drive}: ${p.name} (reinserted)`, 'info');
+    sendCmd('insert_disk', { drive, fileName: vfsName, fileData: Array.from(data) });
+    onLog?.(`D${drive}: ${p.name} (reinserido${p.path ? ', relido da origem' : ''})`, `D${drive}: ${p.name} (reinserted${p.path ? ', re-read from source' : ''})`, 'info');
     setTimeout(focusEmu, 60);
   };
 
@@ -245,17 +257,41 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
       if (!res?.success) { onLog?.(`XRoar: ${res?.error}`, `XRoar: ${res?.error}`, 'error'); return; }
       const e = (res.ext || '').toLowerCase();
       const arr = Array.from(new Uint8Array(res.data));
-      lastProgRef.current = { name: res.name, ext: e, data: arr }; // guarda p/ "Recarregar"
+      lastProgRef.current = { name: res.name, ext: e, data: arr, path: res.path }; // guarda p/ "Recarregar" (path → relê da origem)
       applyProgram(res.name, e, arr);
     } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
   };
 
-  // Recarrega o último programa (.bin/.rom) — o XRoar faz cache, então após um reset isto reinjeta o
-  // arquivo sem reabrir o seletor. Mesmo papel do "Reinserir" das drives.
-  const reloadProgram = () => {
+  // Recarrega o último programa (.bin/.rom/.ccc). RELÊ o arquivo DA ORIGEM (`path`) antes de reinjetar, p/
+  // refletir alterações (ex.: o .ccc foi reconvertido). Sem caminho, usa os bytes em cache. O XRoar faz
+  // cache da imagem, então isto descarta a anterior e carrega a versão nova.
+  const reloadProgram = async () => {
     const p = lastProgRef.current;
     if (!p) return;
-    applyProgram(p.name, p.ext, p.data, true);
+    let data = p.data;
+    if (p.path) {
+      try {
+        const res = await window.cocoApi.xroarReadFile(p.path);
+        if (res?.success) { data = Array.from(new Uint8Array(res.data)); lastProgRef.current = { ...p, data }; }
+        else onLog?.(`XRoar: não consegui reler "${p.name}" — usando a versão em cache.`, `XRoar: could not re-read "${p.name}" — using the cached copy.`, 'warn');
+      } catch { /* mantém o cache */ }
+    }
+    applyProgram(p.name, p.ext, data, true);
+  };
+
+  // Libera (ejeta) o programa carregado. Este build do XRoar não expõe "detach" de cartucho, então a
+  // forma limpa de remover o .bin/.ccc/.rom da máquina é REMONTAR o emulador sem o arquivo de boot
+  // (bootProg=null → URL sem bootfile) — boot limpo, igual ao que acontece ao trocar de máquina (as
+  // drives são ejetadas no reboot). Some o nome e desabilita o "Recarregar".
+  const clearProgram = () => {
+    if (!progName) return;
+    const name = progName;
+    setProgName('');
+    lastProgRef.current = null;
+    bootProgRef.current = null;
+    setBootProg(null);
+    setBootProgKey(k => k + 1); // remonta limpo → remove o programa da máquina
+    onLog?.(`Programa liberado: ${name}`, `Program released: ${name}`, 'info');
   };
 
   // Controles de imagem AO VIVO. Fonte XRoar (wasm.c + vo_render.c): tags 'brightness',
@@ -545,6 +581,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
               title={t('AutoRun do .bin. LIGADO: .bin/.hex bootam o XRoar com o arquivo (xroar arquivo.bin) e RODAM sozinhos. DESLIGADO: só carregam na memória (você roda com EXEC). (.ccc/.rom/.sna sempre rodam.)', '.bin AutoRun. ON: .bin/.hex boot XRoar with the file (xroar file.bin) and RUN automatically. OFF: just load into memory (run with EXEC). (.ccc/.rom/.sna always run.)')}>
               {binAutorun ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
               <span className="text-[10px] font-bold">{t('AutoRun', 'AutoRun')}</span>
+            </button>
+            <button onClick={clearProgram} disabled={!ready || !progName} className="dsk-tool flex-shrink-0" style={{ padding: '3px 6px' }}
+              title={t('Liberar o programa carregado (remonta o XRoar limpo, removendo o .bin/.rom/.ccc da máquina; as drives são ejetadas).', 'Release the loaded program (re-mounts XRoar clean, removing the .bin/.rom/.ccc from the machine; drives are ejected).')}>
+              <X size={13} />
             </button>
             <button onClick={reloadProgram} disabled={!ready || !progName} className="dsk-tool flex-shrink-0" style={{ padding: '3px 6px' }}
               title={t('Recarregar o .bin/.rom carregado (o XRoar faz cache; reinjeta o arquivo após um reset).', 'Reload the loaded .bin/.rom (XRoar caches; re-injects the file after a reset).')}>

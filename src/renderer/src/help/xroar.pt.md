@@ -111,9 +111,11 @@ reaplicados a cada boot.
 
 No painel esquerdo, cada linha **D0–D3** mostra o **nome do disco montado** (ou `—` se vazia; o rótulo
 `Dx` fica na cor primária quando há disco), mais três botões:
-- **Reinserir** (⟳) — reinjeta na drive o **mesmo disco** que já estava montado. O XRoar faz **cache** da
-  imagem, então depois de um reset (ou se a imagem sumiu da memória) este botão recarrega o `.dsk` sem
-  reabrir o seletor de arquivo. Só fica habilitado quando a drive **tem** disco.
+- **Reinserir** (⟳) — reinjeta na drive o disco montado, **relendo o arquivo da origem no disco** — então se
+  você editou o `.dsk` fora do emulador (ex.: na aba DSK), a versão **nova** entra. O XRoar faz **cache** da
+  imagem, então use isto depois de um reset (ou se a imagem sumiu da memória) sem reabrir o seletor. Quando o
+  disco veio de outra aba (gerado em memória, sem arquivo) ele reinjeta os bytes em cache. Só fica habilitado
+  quando a drive **tem** disco.
 - **Abrir** (pasta) — escolhe um disco do PC (`.dsk/.vdk/.jvc/.dmk/.os9`) e o monta naquela drive (um `.os9`
   é tratado como `.dsk` pela geometria). Fica desabilitado enquanto o emulador não está **pronto**.
 - **Ejetar** (×) — desmonta aquela drive. Só fica habilitado quando a drive **tem** disco.
@@ -147,9 +149,14 @@ A **drive 0** é a de boot. Normalmente você nem usa isto à mão: as outras ab
 - O toggle **"AutoRun"** (ao lado de Abrir): **ligado** = um `.bin/.hex` boota o emulador **com** o arquivo e roda sozinho;
   **desligado** = só carrega na memória (você roda com `EXEC`). Cartuchos `.ccc/.rom/.pak` e snapshots `.sna`
   **sempre** rodam direto.
-- **Recarregar** (⟳, ao lado dos botões) — reinjeta o **último** `.bin/.rom` carregado. Como o XRoar faz
-  **cache**, use isto para reinicializar o arquivo depois de um reset do emulador, sem reabrir o seletor.
-  Só fica habilitado quando há um programa carregado.
+- **Liberar** (×, ao lado do AutoRun) — **ejeta o programa** carregado. Este build do XRoar não tem "remover
+  cartucho", então o app **remonta o emulador limpo** (sem o arquivo de boot) para tirar o `.bin/.rom/.ccc` da
+  máquina — como ao trocar de máquina, **as drives são ejetadas** no reboot. Some o nome e desabilita o
+  Recarregar. Só fica habilitado quando há um programa carregado.
+- **Recarregar** (⟳, ao lado dos botões) — recarrega o **último** `.bin/.rom/.ccc`, **relendo o arquivo da
+  origem no disco** — se você reconverteu/editou o arquivo, a versão **nova** entra (não os bytes antigos em
+  cache). Como o XRoar faz **cache**, use isto depois de um reset do emulador sem reabrir o seletor. Só fica
+  habilitado quando há um programa carregado.
 
 ---
 

@@ -31,6 +31,8 @@ const api = {
 
   xroarPickFile: (kind?: string) =>
     ipcRenderer.invoke('xroar-pick-file', kind),
+  // Relê um arquivo por caminho (p/ "Reinserir/Recarregar" do XRoar pegarem a versão atual do disco).
+  xroarReadFile: (filePath: string) => ipcRenderer.invoke('xroar-read-file', filePath),
   k7Decode: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('k7-decode', wavBytes, opts),
   // Recuperação R3/R4: diagnóstico, re-decode de região e fusão de capturas.
   tapeDiagnostics: (wavBytes: Uint8Array, opts?: any) => ipcRenderer.invoke('tape-diagnostics', wavBytes, opts),
@@ -109,6 +111,7 @@ const api = {
   dwListPorts: () => ipcRenderer.invoke('dw-list-ports'),
   dwServerStart: (opts: { portPath: string; baudRate: number; drives: { slot: number; filePath: string; writable: boolean }[] }) => ipcRenderer.invoke('dw-server-start', opts),
   dwServerStop: () => ipcRenderer.invoke('dw-server-stop'),
+  dwReloadDrive: (slot: number) => ipcRenderer.invoke('dw-reload-drive', slot),
   dwServerStatus: () => ipcRenderer.invoke('dw-server-status'),
   dwDiskInfo: (filePath: string) => ipcRenderer.invoke('dw-disk-info', filePath),
   dwStageDisk: (name: string, buffer: Uint8Array) => ipcRenderer.invoke('dw-stage-disk', name, buffer),

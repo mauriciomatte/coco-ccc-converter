@@ -221,9 +221,11 @@ straight from the PC. Great for **live-testing** an image you just edited, witho
   **Custom** for other bauds (up to 921600). The baud must **match the CoCo's ROM**. Once set, click the header
   to **collapse** it and free room for the drives.
 - **The 4 drives:** each 5.25" drive takes a `.dsk` — **drag** a file onto the drive **or click** to choose.
-  The label shows the disk's **name and info**. **Inside** the drive: the **lock** toggles **read-write /
-  read-only** and the **arrow ejects** the disk. The **LED** lights (green) when a disk is present and
-  **pulses** while the server is live.
+  The label shows the disk's **name and info**. **Inside** the drive: the **⟳ reload** re-reads the `.dsk`
+  **from its source on disk** (reflects edits made to the file) — with the **server live** the CoCo reads the
+  new version on its next access, without stopping; the **list** shows the files, the **lock** toggles
+  **read-write / read-only** and the **arrow ejects** the disk. The **LED** lights (green) when a disk is
+  present and **pulses** while the server is live.
 - **Start server:** with a port chosen and at least one disk mounted, click **Start server**. Connect the
   cable, **boot** the CoCo (with the DriveWire ROM) and it will read the PC's drives. Connections show in the console.
 - **On the CoCo:** you need the model's **HDB-DOS/DW** ROM (the baud matches it) and the serial cable. Anyone

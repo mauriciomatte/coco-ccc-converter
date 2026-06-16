@@ -48,6 +48,7 @@ export interface DwDrive {
 
 export interface DwServerHandle {
   stop: () => void;
+  reloadDrive: (slot: number) => { success: boolean; size?: number; error?: string };
   portPath: string;
   baudRate: number;
   drives: { slot: number; filePath: string; writable: boolean; size: number }[];
@@ -207,6 +208,18 @@ export async function startDriveWireServer(
     baudRate: opts.baudRate,
     drives: opts.drives.map(d => ({ slot: d.slot, filePath: d.filePath, writable: d.writable, size: drives.get(d.slot)?.buffer.length || 0 })),
     stop: () => { try { port.close(); } catch { /* */ } },
+    // Relê o .dsk do drive (origem) para o buffer em memória — reflete edições feitas no arquivo enquanto
+    // o servidor está no ar, sem reabrir a porta serial. O CoCo passa a ler a versão nova no próximo READ.
+    reloadDrive: (slot: number) => {
+      const drv = drives.get(slot);
+      if (!drv) return { success: false, error: 'Drive vazio.' };
+      try {
+        drv.buffer = Buffer.from(fs.readFileSync(drv.filePath));
+        log(`DW drive ${slot}: ${drv.filePath} recarregado da origem (${drv.buffer.length} B).`,
+            `DW drive ${slot}: ${drv.filePath} reloaded from source (${drv.buffer.length} B).`, 'info');
+        return { success: true, size: drv.buffer.length };
+      } catch (e: any) { return { success: false, error: e?.message }; }
+    },
   };
 }
 

@@ -109,6 +109,20 @@ export default function DriveWirePanel({ lang, onLog, width, pendingDisk, onCons
     if (fp) loadDrive(slot, fp);
   };
 
+  // Recarrega o .dsk do drive DA ORIGEM (reflete edições no arquivo). Com o servidor NO AR, manda o main
+  // reler o arquivo para o buffer servido (o CoCo lê a versão nova no próximo acesso); parado, só atualiza
+  // a etiqueta (o próximo "Ligar" já relê tudo da origem). Útil após editar o .dsk em outra aba/programa.
+  const reloadFromDisk = async (slot: number) => {
+    const d = drives[slot]; if (!d) return;
+    if (running) {
+      const r = await window.cocoApi.dwReloadDrive?.(slot);
+      if (!r?.success) { onLog(`DriveWire: não consegui recarregar o drive ${slot} — ${r?.error || 'erro'}.`, `DriveWire: could not reload drive ${slot} — ${r?.error || 'error'}.`, 'error'); return; }
+    }
+    const info = await window.cocoApi.dwDiskInfo(d.filePath).catch(() => null);
+    if (info?.success) setDrives(ds => ds.map((x, i) => i === slot && x ? { ...x, name: info.name, size: info.size, kind: info.kind, files: info.files, tracks: info.tracks, count: info.count || 1 } : x));
+    onLog(`DriveWire: drive ${slot} recarregado da origem.`, `DriveWire: drive ${slot} reloaded from source.`, 'success');
+  };
+
   const eject = (slot: number) => { if (!running) setDrives(ds => ds.map((d, i) => i === slot ? null : d)); };
   const toggleRW = (slot: number) => { if (!running) setDrives(ds => ds.map((d, i) => i === slot && d ? { ...d, writable: !d.writable } : d)); };
 
@@ -243,6 +257,9 @@ export default function DriveWirePanel({ lang, onLog, width, pendingDisk, onCons
                 <span className="text-[9px] font-mono truncate flex-1 normal-case" style={{ color: '#8b94a0' }}>
                   {d ? [fmtBytes(d.size), d.count > 1 ? null : (d.files >= 0 ? `${d.files} ${t('arq', 'files')}` : null)].filter(Boolean).join(' · ') : ''}
                 </span>
+                <button onClick={() => reloadFromDisk(i)} disabled={!d} className="dw-mini-btn" title={running ? t('Recarregar do disco (relê o arquivo para o servidor no ar)', 'Reload from disk (re-reads the file into the live server)') : t('Recarregar do disco (atualiza a etiqueta; o servidor relê ao ligar)', 'Reload from disk (refreshes the label; the server re-reads on start)')} style={{ color: d ? '#86efac' : '#6b7280', opacity: d ? 1 : 0.35 }}>
+                  <RefreshCw size={13} />
+                </button>
                 <button onClick={() => openFileList(i)} disabled={!d} className="dw-mini-btn" title={t('Ver os arquivos do disco', 'View the disk files')} style={{ color: d ? '#93c5fd' : '#6b7280', opacity: d ? 1 : 0.35 }}>
                   <List size={13} />
                 </button>

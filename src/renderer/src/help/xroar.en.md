@@ -110,9 +110,11 @@ Three sliders adjust the picture **live** (no restart). The values are saved and
 
 In the left panel, each **D0–D3** row shows the **mounted disk name** (or `—` if empty; the `Dx` label turns
 primary-colored when a disk is present), plus three buttons:
-- **Re-insert** (⟳) — re-injects the **same disk** already mounted in that drive. XRoar **caches** the image,
-  so after a reset (or if the image dropped out of memory) this button reloads the `.dsk` without reopening
-  the file picker. Enabled only when the drive **has** a disk.
+- **Re-insert** (⟳) — re-injects the disk mounted in that drive, **re-reading the file from its source on
+  disk** — so if you edited the `.dsk` outside the emulator (e.g. in the DSK tab), the **new** version goes in.
+  XRoar **caches** the image, so use this after a reset (or if the image dropped out of memory) without
+  reopening the picker. When the disk came from another tab (generated in memory, no file) it re-injects the
+  cached bytes. Enabled only when the drive **has** a disk.
 - **Open** (folder) — picks a PC disk (`.dsk/.vdk/.jvc/.dmk/.os9`) and mounts it in that drive (a `.os9` is
   treated as a `.dsk` by geometry). Disabled until the emulator is **ready**.
 - **Eject** (×) — unmounts that drive. Enabled only when the drive **has** a disk.
@@ -146,9 +148,14 @@ You can also **drag and drop** a disk from Explorer **straight onto the row of t
 - The **"AutoRun"** toggle (next to Open): **on** = a `.bin/.hex` boots the emulator **with** the file and runs by
   itself; **off** = it only loads into memory (you run it with `EXEC`). Cartridges `.ccc/.rom/.pak` and snapshots
   `.sna` **always** run directly.
-- **Reload** (⟳, next to the buttons) — re-injects the **last** `.bin/.rom` you loaded. Since XRoar **caches**,
-  use this to re-initialize the file after the emulator is reset, without reopening the picker. Enabled only
-  when a program is loaded.
+- **Release** (×, next to AutoRun) — **ejects the loaded program**. This XRoar build has no "remove cartridge",
+  so the app **re-mounts the emulator clean** (without the boot file) to take the `.bin/.rom/.ccc` out of the
+  machine — like switching machines, **the drives are ejected** on the reboot. The name disappears and Reload
+  is disabled. Enabled only when a program is loaded.
+- **Reload** (⟳, next to the buttons) — reloads the **last** `.bin/.rom/.ccc` you loaded, **re-reading the file
+  from its source on disk** — if you re-converted/edited the file, the **new** version goes in (not the stale
+  cached bytes). Since XRoar **caches**, use this after the emulator is reset without reopening the picker.
+  Enabled only when a program is loaded.
 
 ---
 
