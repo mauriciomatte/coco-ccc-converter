@@ -42,6 +42,20 @@ const JOY_OPTIONS = [
 interface PendingLoad { name: string; ext: string; data: Uint8Array; key: number; drive?: number; runCmd?: string; reset?: boolean; tvInput?: string; glFilter?: string; }
 interface PendingType { text: string; key: number; reset?: boolean; }
 
+// Splitter VERTICAL arrastável (reaproveita .splitter-v do index.css) — mesmo padrão da aba Servidores.
+function VSplitter({ onDelta, title }: { onDelta: (dx: number) => void; title?: string }) {
+  const onDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    let last = e.clientX;
+    const mv = (ev: MouseEvent) => { onDelta(ev.clientX - last); last = ev.clientX; };
+    const up = () => { window.removeEventListener('mousemove', mv); window.removeEventListener('mouseup', up); };
+    window.addEventListener('mousemove', mv); window.addEventListener('mouseup', up);
+  };
+  return <div className="splitter-v" onMouseDown={onDown} title={title} style={{ flexShrink: 0, alignSelf: 'stretch' }} />;
+}
+const LEFT_W_MIN = 160, LEFT_W_MAX = 420, LEFT_W_DEFAULT = 210;
+const RIGHT_W_MIN = 160, RIGHT_W_MAX = 420, RIGHT_W_DEFAULT = 210;
+
 // Atraso por tecla na injeção BASIC→XRoar. O xroar.html SEMPRE digita caractere-a-caractere (o envio
 // em bloco descartava a 1ª linha no CoCo). A velocidade é o toggle "Vel.Export.Código" do editor BASIC
 // (localStorage 'xroarTypeSpeed'): 'fast' = 12ms/tecla, 'normal'/padrão = 25ms. Lido a cada digitação.
@@ -77,6 +91,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   const [colour, setColour] = useState(50);
   const [brightness, setBrightness] = useState(50);
   const [contrast, setContrast] = useState(50);
+  const [leftWidth, setLeftWidth] = useState(LEFT_W_DEFAULT);   // largura do painel esquerdo (splitter, persistida)
+  const [rightWidth, setRightWidth] = useState(RIGHT_W_DEFAULT); // largura do painel direito (splitter, persistida)
   const [ready, setReady] = useState(false);
   const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState('');
@@ -472,6 +488,8 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
           if (typeof x.colour === 'number') setColour(x.colour);
           if (typeof x.brightness === 'number') setBrightness(x.brightness);
           if (typeof x.contrast === 'number') setContrast(x.contrast);
+          if (typeof x.leftWidth === 'number') setLeftWidth(Math.max(LEFT_W_MIN, Math.min(LEFT_W_MAX, x.leftWidth)));
+          if (typeof x.rightWidth === 'number') setRightWidth(Math.max(RIGHT_W_MIN, Math.min(RIGHT_W_MAX, x.rightWidth)));
         }
       } catch { /* ignore */ }
       if (!done) setLoaded(true);
@@ -483,10 +501,10 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   useEffect(() => {
     if (!loaded || !window.cocoApi || typeof window.cocoApi.saveConfig !== 'function') return;
     const id = setTimeout(() => {
-      window.cocoApi.saveConfig({ xroar: { machine, tvInput, glFilter, kbdLayout, kbdLang, colour, brightness, contrast, rightJoy, leftJoy } });
+      window.cocoApi.saveConfig({ xroar: { machine, tvInput, glFilter, kbdLayout, kbdLang, colour, brightness, contrast, rightJoy, leftJoy, leftWidth, rightWidth } });
     }, 400);
     return () => clearTimeout(id);
-  }, [loaded, machine, tvInput, glFilter, kbdLayout, kbdLang, colour, brightness, contrast, rightJoy, leftJoy]);
+  }, [loaded, machine, tvInput, glFilter, kbdLayout, kbdLang, colour, brightness, contrast, rightJoy, leftJoy, leftWidth, rightWidth]);
 
   const togglePause = () => {
     if (paused) { sendCmd('resume'); setPaused(false); }
@@ -502,7 +520,6 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
 
   const sectionTitle = 'text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] mb-1.5';
 
-  const SIDEBAR_W = 210;
   const joyRows = [
     { port: 0, lbl: t('Joystick 0 (direito)', 'Joystick 0 (right)'), val: rightJoy },
     { port: 1, lbl: t('Joystick 1 (esquerdo)', 'Joystick 1 (left)'), val: leftJoy },
@@ -516,7 +533,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   return (
     <div className="flex-1 flex flex-row overflow-hidden p-3 gap-3" style={{ minHeight: 0 }}>
       {/* ESQUERDA: drives + joystick/teclado (oculta no modo Expandir p/ a tela usar toda a área) */}
-      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: SIDEBAR_W, display: expanded ? 'none' : 'flex' }}>
+      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: leftWidth, display: expanded ? 'none' : 'flex' }}>
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
           <div className={sectionTitle}>{t('Drives', 'Drives')}</div>
           {[0, 1, 2, 3].map(d => (
@@ -591,7 +608,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
               <RefreshCw size={13} />
             </button>
           </div>
-          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM/.PAK (cartucho) e .SNA rodam direto. .BIN de máquina precisa do AutoRun p/ executar.', '.CCC/.ROM/.PAK (cartridge) and .SNA run directly. Machine .BIN needs AutoRun to execute.')}</div>
+          <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM/.PAK(cartucho)/.SNA rodam direto. .BIN precisa do AutoRun p/rodar.', '.CCC/.ROM/.PAK (cartridge) and .SNA run directly. Machine .BIN needs AutoRun to execute.')}</div>
         </div>
 
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
@@ -639,14 +656,18 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
           )}
           <div className="text-[9px] text-[var(--text-muted)] leading-tight mt-0.5">
             {kbdLayout === 'pc'
-              ? t('Layout PC: símbolos batem com o seu teclado (escolha o idioma acima). ⚠ Mas a CAIXA fica presa em maiúscula — Shift/CapsLock não alternam aqui. Para maiúsc/minúsc use o layout CoCo.', 'PC layout: symbols match your keyboard (pick the language above). ⚠ But CASE is stuck on uppercase — Shift/CapsLock don\'t toggle here. For upper/lowercase use CoCo layout.')
-              : t('Layout CoCo: teclado autêntico do CoCo. SHIFT+0 trava minúsculas e o Shift alterna maiúsc/minúsc. (Símbolos seguem a posição no teclado do CoCo.)', 'CoCo layout: authentic CoCo keyboard. SHIFT+0 locks lowercase and Shift toggles upper/lowercase. (Symbols follow the CoCo key positions.)')}
+              ? t('Layout PC:Símbolos conf.seu teclado(escolha idioma acima).⚠ Mas a CAIXA fica em maiúscula—Shift/CapsLock não alternam aqui. Para maiúsc/minúsc use layout CoCo.', 'PC layout: symbols match your keyboard (pick the language above). ⚠ But CASE is stuck on uppercase — Shift/CapsLock don\'t toggle here. For upper/lowercase use CoCo layout.')
+              : t('Layout CoCo:Teclado do CoCo.SHIFT+0 trava minúsc. e Shift alterna maiúsc/minúsc.(Símbolos conf.posição teclado CoCo.)', 'CoCo layout: authentic CoCo keyboard. SHIFT+0 locks lowercase and Shift toggles upper/lowercase. (Symbols follow the CoCo key positions.)')}
           </div>
           <div className="text-[9px] text-[var(--text-muted)] leading-tight mt-0.5">
-            {t('No CoCo o joystick 0 é o direito. Use um teclado-joystick para jogar.', 'On the CoCo joystick 0 is the right one. Use a keyboard-joystick to play.')}
+            {t('No CoCo o JOY 0 é o DIR. Use um teclado-joystick p/jogar.', 'On the CoCo joystick 0 is the right one. Use a keyboard-joystick to play.')}
           </div>
         </div>
       </div>
+
+      {/* Splitter entre o painel esquerdo e a tela do emulador (oculto no modo Expandir). Largura persistida. */}
+      {!expanded && <VSplitter title={t('Arraste para redimensionar o painel', 'Drag to resize the panel')}
+        onDelta={(dx) => setLeftWidth(w => Math.max(LEFT_W_MIN, Math.min(LEFT_W_MAX, w + dx)))} />}
 
       {/* CENTRO: tela do emulador 4:3 */}
       <div ref={stageRef} className="flex-1 glass-panel overflow-hidden flex items-center justify-center bg-black" style={{ minHeight: 0, minWidth: 0, position: 'relative' }}>
@@ -673,8 +694,13 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
         )}
       </div>
 
+      {/* Splitter entre a tela do emulador e o painel direito (oculto no modo Expandir). Largura persistida.
+          dx INVERTIDO: arrastar p/ a esquerda AUMENTA o painel direito. */}
+      {!expanded && <VSplitter title={t('Arraste para redimensionar o painel', 'Drag to resize the panel')}
+        onDelta={(dx) => setRightWidth(w => Math.max(RIGHT_W_MIN, Math.min(RIGHT_W_MAX, w - dx)))} />}
+
       {/* DIREITA: máquina + vídeo + imagem + controles (oculta no modo Expandir) */}
-      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: SIDEBAR_W, display: expanded ? 'none' : 'flex' }}>
+      <div className="flex flex-col gap-3 overflow-y-auto flex-shrink-0" style={{ width: rightWidth, display: expanded ? 'none' : 'flex' }}>
         <div className="flex items-center gap-2">
           <Cpu size={16} className="text-[var(--primary)]" />
           <span className="text-sm font-bold text-white uppercase tracking-wide">XRoar</span>

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   FolderOpen, Save, Download, ArrowRightLeft, MonitorPlay, Undo2, Redo2, Send, X,
   Play, Pause, Square, Circle, Rewind, FastForward, AudioLines, ZoomIn, ZoomOut, FileCode2,
-  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles, Wrench, HardDrive, Palette, Image as ImageIcon,
+  Scissors, Copy, ClipboardPaste, Trash2, Crop, Maximize2, ArrowUpFromLine, Plus, Minus, ChevronDown, ChevronUp, ToggleLeft, ToggleRight, SeparatorVertical, RotateCcw, Rocket, CassetteTape, AudioWaveform, ScreenShare, Sparkles, Wrench, HardDrive, Palette, Binary, Image as ImageIcon,
 } from 'lucide-react';
 import MiniXRoar from './MiniXRoar';
 import { HelpButton, TabHelpModal } from './TabHelp';
@@ -44,6 +44,23 @@ async function decodeWavAsync(bytes: Uint8Array, onProgress: (p: number) => void
     await new Promise(r => setTimeout(r, 0));                      // cede à UI para a barra animar
   }
   return { sampleRate, channels, bits, durationSec: n / sampleRate, samples };
+}
+
+/** Lê SÓ o cabeçalho de um WAV (sem decodificar as amostras) — rápido, p/ o aviso de "não parece fita". */
+function wavHeader(bytes: Uint8Array): { channels: number; sampleRate: number; bits: number; durationSec: number } | null {
+  if (bytes.byteLength < 44) return null;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (dv.getUint32(0, false) !== 0x52494646 || dv.getUint32(8, false) !== 0x57415645) return null; // 'RIFF'/'WAVE'
+  let off = 12, channels = 0, sampleRate = 0, bits = 0, dataLen = 0;
+  while (off + 8 <= bytes.byteLength) {
+    const id = dv.getUint32(off, false), size = dv.getUint32(off + 4, true);
+    if (id === 0x666d7420) { channels = dv.getUint16(off + 10, true); sampleRate = dv.getUint32(off + 12, true); bits = dv.getUint16(off + 22, true); } // 'fmt '
+    else if (id === 0x64617461) { dataLen = Math.min(size, bytes.byteLength - (off + 8)); } // 'data'
+    off += 8 + size + (size & 1);
+  }
+  if (!sampleRate || !channels || !bits) return null;
+  const frame = (bits / 8) * channels;
+  return { channels, sampleRate, bits, durationSec: frame ? (dataLen / frame) / sampleRate : 0 };
 }
 
 const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}.${String(Math.floor((s % 1) * 10))}`;
@@ -215,6 +232,8 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [audio, setAudio] = useState<Audio | null>(null);
   const [err, setErr] = useState('');
   const [confirm, setConfirm] = useState<null | 'rec' | 'eject'>(null); // diálogo de confirmação (REC/Eject)
+  const [wavWarn, setWavWarn] = useState<null | { name: string; info: string }>(null); // aviso ".wav não parece fita"
+  const wavWarnResolve = useRef<((ok: boolean) => void) | null>(null);                  // resolve a Promise do aviso
   // Diálogo "→ Sem loader (autostart)": resultado do scan SoftKristian + parâmetros editáveis.
   const [skDlg, setSkDlg] = useState<null | {
     name: string; familyName: string; confidence: number; telaLen: number; hasScreen: boolean;
@@ -228,8 +247,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   const [screenEdOpen, setScreenEdOpen] = useState(false);   // editor de tela do diálogo SoftKristian
   const [screenToolOpen, setScreenToolOpen] = useState(false); // editor de tela STANDALONE (criar do zero)
   const [screenToolSeed, setScreenToolSeed] = useState<Uint8Array | null>(null); // tela inicial do standalone
-  const [screenPromptSeed, setScreenPromptSeed] = useState<Uint8Array | null>(null); // tela da fita p/ o prompt importar-vs-zero
+  const [screenPromptSeed, setScreenPromptSeed] = useState<Uint8Array | null>(null); // tela ORIGINAL da fita p/ o prompt importar-vs-atual-vs-zero
   const [miniScreenOpen, setMiniScreenOpen] = useState<boolean>(!!cfg.miniOpen);  // coluna de miniatura (persistida)
+  const [basicPanelOpen, setBasicPanelOpen] = useState<boolean>(cfg.basicOpen ?? true); // painel BASIC (tokenizador) visível (persistido)
+  const [hexPanelOpen, setHexPanelOpen] = useState<boolean>(cfg.hexOpen ?? true);        // painel HEX (programa) visível (persistido)
   const [miniScreen, setMiniScreen] = useState<Uint8Array | null>(cfg.miniScreen ? base64ToVram(cfg.miniScreen, 512) : null); // tela da miniatura (persistida em base64)
   const miniDatInputRef = useRef<HTMLInputElement | null>(null);
   const autoMiniScreenRef = useRef(false);                                   // já auto-populou a miniatura desta fita?
@@ -488,19 +509,20 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
       else if (r?.error) setErr('Tela: ' + r.error);
     } catch (e: any) { setErr('Tela: ' + (e?.message || e)); }
   };
-  // Abre o editor de tela STANDALONE. Se há uma fita com tela+loader carregada, pergunta antes se o
-  // usuário quer importar a tela dela ou começar do zero.
-  const openScreenTool = async () => {
+  // Abre o editor de tela a partir da miniatura. Se a fita carregada tem uma tela de abertura DIFERENTE da
+  // que está na miniatura (ou a miniatura está vazia), pergunta antes: importar a tela ORIGINAL da fita,
+  // continuar editando a atual, ou começar do zero. Caso contrário, abre direto com a tela da miniatura.
+  const openScreenEditor = async () => {
+    let tapeScreen: Uint8Array | null = null;
     if (rawRef.current) {
       try {
         const s = await window.cocoApi.loaderScan(rawRef.current, dec);
-        if (s?.success && s.detected && s.hasScreen && s.screen) {
-          setScreenPromptSeed(new Uint8Array(s.screen));
-          return;   // abre o prompt (renderizado quando screenPromptSeed != null)
-        }
-      } catch { /* sem loader → abre do zero */ }
+        if (s?.success && s.detected && s.hasScreen && s.screen) tapeScreen = new Uint8Array(s.screen);
+      } catch { /* sem loader → segue sem tela da fita */ }
     }
-    setScreenToolSeed(null);
+    const sameAsMini = !!(tapeScreen && miniScreen && tapeScreen.length === miniScreen.length && tapeScreen.every((b, i) => b === miniScreen[i]));
+    if (tapeScreen && !sameAsMini) { setScreenPromptSeed(tapeScreen); return; } // abre o prompt importar-vs-atual-vs-zero
+    setScreenToolSeed(miniScreen ?? tapeScreen ?? null);
     setScreenToolOpen(true);
   };
   // Miniatura: carregar uma tela .DAT (512B) do PC para pré-visualizar (e depois injetar).
@@ -813,11 +835,40 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     if (!r?.success) { setErr('BASIC: ' + r?.error); return; }
     onOpenBasic?.(new Uint8Array(r.data), r.name || 'FITA.BAS');
   };
+  // Antes de carregar um .wav ABERTO pelo usuário: confere se ele casa com os padrões de fita do CoCo. Música/
+  // áudio comum não tem o SINCRONISMO da FSK que o programa usa → pergunta se deseja carregar mesmo assim.
+  // Só roda o decodificador (custo) quando o header já é atípico de fita (estéreo e/ou ≥44.1 kHz) — fitas
+  // normais (mono, 8/16-bit, ~9.6–22 kHz) passam direto sem aviso. Devolve true se pode prosseguir.
+  const confirmTapeWav = async (bytes: Uint8Array, name: string): Promise<boolean> => {
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    if (ext !== 'wav') return true;                 // .cas/.c10/.voc já são formatos de fita por definição
+    const h = wavHeader(bytes);
+    if (!h) return true;                            // header inválido/não-PCM → loadBytes mostra o erro próprio
+    const headerSuspeito = h.channels >= 2 || h.sampleRate >= 44100; // música típica: estéreo e/ou 44.1/48 kHz
+    if (!headerSuspeito) return true;
+    // Header atípico p/ fita → confirma rodando o decodificador FSK. CUIDADO: o marcador de sync ($55 $3C)
+    // aparece POR ACASO em áudio longo (16 bits → 1/65536, e há milhões de posições), então `foundSync`
+    // sozinho dá falso-positivo em música. Só consideramos FITA DE VERDADE se o decode extraiu BLOCOS VÁLIDOS
+    // (arquivos com checksum) ou bytes de payload — música dá foundSync=true mas files=0 e byteCount=0.
+    try {
+      const r = await window.cocoApi.k7Decode(bytes, dec);
+      const ehFita = !!(r?.success && r.foundSync && (((r.files?.length ?? 0) > 0) || ((r.byteCount ?? 0) > 0)));
+      if (ehFita) return true;
+    } catch { /* trata como não-fita */ }
+    const info = `${h.channels === 1 ? 'mono' : h.channels + (pt ? ' canais' : ' channels')}, ${h.bits}-bit, ${(h.sampleRate / 1000).toFixed(1)} kHz, ${h.durationSec.toFixed(1)}s`;
+    // Abre o MODAL próprio do app (padrão glass-panel) e espera a decisão do usuário.
+    return await new Promise<boolean>(resolve => { wavWarnResolve.current = resolve; setWavWarn({ name, info }); });
+  };
+  // Resolve o aviso ".wav não parece fita" com a escolha do usuário (true = carregar mesmo assim).
+  const resolveWavWarn = (ok: boolean) => { setWavWarn(null); const r = wavWarnResolve.current; wavWarnResolve.current = null; r?.(ok); };
+
   const openDialog = async () => {
     const r = await window.cocoApi.xroarPickFile('tape');
     if (r?.cancelled) return;
     if (!r?.success) { setErr('Erro: ' + r?.error); return; }
-    await loadBytes(new Uint8Array(r.data), r.name);
+    const bytes = new Uint8Array(r.data);
+    if (!(await confirmTapeWav(bytes, r.name))) return;
+    await loadBytes(bytes, r.name);
   };
 
   // ---- player (Web Audio) ----
@@ -1009,7 +1060,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
   // ---- drag-and-drop ----
   const onDragOver = (e: React.DragEvent) => { if (Array.from(e.dataTransfer.types || []).includes('Files')) { e.preventDefault(); if (!dragOver) setDragOver(true); } };
   const onDragLeave = (e: React.DragEvent) => { if (e.currentTarget === e.target) setDragOver(false); };
-  const onDrop = async (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (!f) return; try { await loadBytes(new Uint8Array(await f.arrayBuffer()), f.name); } catch (er: any) { setLoading(false); setErr('Erro: ' + er.message); } };
+  const onDrop = async (e: React.DragEvent) => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files?.[0]; if (!f) return; try { const bytes = new Uint8Array(await f.arrayBuffer()); if (!(await confirmTapeWav(bytes, f.name))) return; await loadBytes(bytes, f.name); } catch (er: any) { setLoading(false); setErr('Erro: ' + er.message); } };
 
   // ---- helpers de render ----
   const GREEN = '#34d399';
@@ -1105,10 +1156,10 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     try {
       localStorage.setItem('k7Settings', JSON.stringify({
         midUs: dec.midUs, minAmp: dec.minAmp, speedKey, extFmt, mirror: mirrorXroar, panelW, wavRate, progExpanded, waveStyle,
-        miniOpen: miniScreenOpen, miniScreen: miniScreen ? vramToBase64(miniScreen) : null,
+        miniOpen: miniScreenOpen, miniScreen: miniScreen ? vramToBase64(miniScreen) : null, basicOpen: basicPanelOpen, hexOpen: hexPanelOpen,
       }));
     } catch { /* ignore */ }
-  }, [dec.midUs, dec.minAmp, speedKey, extFmt, mirrorXroar, panelW, wavRate, progExpanded, waveStyle, miniScreenOpen, miniScreen]);
+  }, [dec.midUs, dec.minAmp, speedKey, extFmt, mirrorXroar, panelW, wavRate, progExpanded, waveStyle, miniScreenOpen, miniScreen, basicPanelOpen, hexPanelOpen]);
   // PREVIEW em TEMPO REAL dos tamanhos finais (sem salvar): recalcula ao mexer no som (K8) ou no kHz.
   useEffect(() => {
     if (!rawRef.current || !decoded?.foundSync) { setSizes(null); return; }
@@ -1119,10 +1170,13 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     return () => clearTimeout(id);
   }, [decoded, dec, wavRate]);
   // Splitter: começa o arraste entre dois painéis adjacentes (o par mantém a soma de pesos).
-  const onSplitDown = (e: React.MouseEvent, leftK: 'basic' | 'hex', rightK: 'hex' | 'mini') => {
+  const onSplitDown = (e: React.MouseEvent, leftK: 'basic' | 'hex' | 'mini', rightK: 'basic' | 'hex' | 'mini') => {
     const row = panelsRowRef.current; if (!row) return;
     e.preventDefault();
-    const visible: Array<'basic' | 'hex' | 'mini'> = mirrorXroar ? ['basic', 'hex', 'mini'] : ['basic', 'hex'];
+    const visible: Array<'basic' | 'hex' | 'mini'> = [];
+    if (basicPanelOpen) visible.push('basic');
+    if (hexPanelOpen) visible.push('hex');
+    if (mirrorXroar) visible.push('mini');
     const totalW = visible.reduce((s, k) => s + panelW[k], 0);
     const totalPx = row.clientWidth;
     const sum = panelW[leftK] + panelW[rightK];
@@ -1141,7 +1195,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
     window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); };
   }, []);
-  const splitter = (leftK: 'basic' | 'hex', rightK: 'hex' | 'mini') => (
+  const splitter = (leftK: 'basic' | 'hex' | 'mini', rightK: 'basic' | 'hex' | 'mini') => (
     <div onMouseDown={e => onSplitDown(e, leftK, rightK)} title={t('Arraste para redimensionar os painéis', 'Drag to resize the panels')}
       style={{ width: 6, flexShrink: 0, cursor: 'col-resize', alignSelf: 'stretch', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div style={{ width: 2, height: '40%', minHeight: 16, borderRadius: 2, background: 'var(--border)' }} />
@@ -1191,6 +1245,31 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
             <div className="flex justify-end gap-2">
               <button onClick={() => setConfirm(null)} className="dsk-tool text-[11px]" style={{ padding: '4px 10px' }}>{t('Cancelar', 'Cancel')}</button>
               <button onClick={confirmYes} className="dsk-tool text-[11px]" style={{ padding: '4px 10px', color: confirm === 'rec' ? '#f87171' : ACCENT, fontWeight: 700 }}>{confirm === 'rec' ? t('Gravar', 'Record') : t('Ejetar', 'Eject')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AVISO ".wav não parece uma fita do CoCo" — modal próprio (não bloqueia: pede confirmação) */}
+      {wavWarn && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 60, background: 'rgba(2,6,12,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => resolveWavWarn(false)}>
+          <div className="glass-panel" style={{ padding: 18, width: 420, maxWidth: '92%', border: `1px solid ${ACCENT}` }} onClick={e => e.stopPropagation()}>
+            <div className="text-[13px] font-bold mb-2 flex items-center gap-2" style={{ color: '#fbbf24' }}>
+              <span>⚠</span> {t('Esse .wav não parece uma fita do CoCo', 'This .wav doesn\'t look like a CoCo tape')}
+            </div>
+            <div className="text-[11px] mb-2" style={{ color: 'var(--text-secondary)' }}>
+              {pt
+                ? <>O arquivo <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{wavWarn.name}</span> não casa com os padrões de fita usados pelo programa.</>
+                : <>The file <span className="font-mono" style={{ color: 'var(--text-primary)' }}>{wavWarn.name}</span> doesn't match the tape patterns used by the program.</>}
+            </div>
+            <div className="text-[11px] mb-3 leading-snug" style={{ color: 'var(--text-secondary)' }}>
+              {t('Não encontrei os blocos/sincronismo (FSK) que o programa usa para ler fitas — parece um áudio/música comum, não um programa.', 'I couldn\'t find the (FSK) blocks/sync the program uses to read tapes — it looks like ordinary audio/music, not a program.')}
+            </div>
+            <div className="text-[10px] font-mono mb-3 px-2 py-1.5 rounded" style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)' }}>{wavWarn.info}</div>
+            <div className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>{t('Deseja carregar mesmo assim?', 'Load it anyway?')}</div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => resolveWavWarn(false)} className="dsk-tool text-[11px]" style={{ padding: '4px 10px', fontWeight: 700 }}>{t('Cancelar', 'Cancel')}</button>
+              <button onClick={() => resolveWavWarn(true)} className="dsk-tool text-[11px]" style={{ padding: '4px 10px', color: '#fbbf24', fontWeight: 700 }}>{t('Carregar mesmo assim', 'Load anyway')}</button>
             </div>
           </div>
         </div>
@@ -1253,16 +1332,19 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         />
       )}
 
-      {/* PROMPT: ao abrir o editor com uma fita tela+loader carregada, perguntar importar-vs-zero. */}
+      {/* PROMPT: a fita tem uma tela de abertura diferente da miniatura → importar-vs-editar-atual-vs-zero. */}
       {screenPromptSeed && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 70, background: 'rgba(2,6,12,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setScreenPromptSeed(null)}>
           <div className="glass-panel" style={{ padding: 18, maxWidth: 400, border: `1px solid ${ACCENT}` }} onClick={e => e.stopPropagation()}>
             <div className="text-[13px] font-bold mb-2 flex items-center gap-2" style={{ color: ACCENT }}><Palette size={15} /> {t('Editor de tela', 'Screen editor')}</div>
             <div className="text-[11px] mb-3" style={{ color: 'var(--text-secondary)' }}>
-              {t('A fita carregada tem uma tela de abertura. Quer importá-la para editar, ou começar uma tela do zero?', 'The loaded tape has a splash screen. Import it to edit, or start a new screen from scratch?')}
+              {miniScreen
+                ? t('A fita carregada tem uma tela de abertura diferente da que está na miniatura. O que quer editar?', 'The loaded tape has a splash screen different from the one in the preview. What do you want to edit?')
+                : t('A fita carregada tem uma tela de abertura. Quer importá-la para editar, ou começar uma tela do zero?', 'The loaded tape has a splash screen. Import it to edit, or start a new screen from scratch?')}
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 flex-wrap">
               <button onClick={() => { setScreenToolSeed(null); setScreenPromptSeed(null); setScreenToolOpen(true); }} className="dsk-tool text-[11px]" style={{ padding: '4px 10px' }}>{t('Começar do zero', 'Start from scratch')}</button>
+              {miniScreen && <button onClick={() => { setScreenToolSeed(miniScreen); setScreenPromptSeed(null); setScreenToolOpen(true); }} className="dsk-tool text-[11px]" style={{ padding: '4px 10px' }}>{t('Editar a atual', 'Edit the current')}</button>}
               <button onClick={() => { setScreenToolSeed(screenPromptSeed); setScreenPromptSeed(null); setScreenToolOpen(true); }} className="dsk-tool text-[11px]" style={{ padding: '4px 10px', color: ACCENT, fontWeight: 700 }}>{t('Importar tela da fita', 'Import the tape screen')}</button>
             </div>
           </div>
@@ -1302,7 +1384,6 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
         {ebtn(<Maximize2 size={14} />, t('Normalizar a amplitude (melhora a decodificação)', 'Normalize the amplitude (improves decoding)'), doNormalize, !!audio)}
         {ebtn(<SeparatorVertical size={14} />, t('Inserir PAUSA (1,0s de silêncio) no playhead/seleção — cria um gap entre segmentos (p/ fitas com loader, em tempo real)', 'Insert a PAUSE (1.0s silence) at the playhead/selection — creates a gap between segments (for loader tapes, real-time)'), doInsertGap, !!audio)}
         <span className="ml-auto" />
-        {tool(<Palette size={14} />, t('Editor de tela', 'Screen editor'), openScreenTool, true, t('Abrir o editor de tela ASCII/SG4 (32×16, 512B em $0400): criar uma tela do zero, abrir/salvar .DAT, ou (com uma fita tela+loader carregada) importar a tela dela para editar.', 'Open the ASCII/SG4 screen editor (32×16, 512B at $0400): create a screen from scratch, open/save .DAT, or (with a screen+loader tape loaded) import its screen to edit.'))}
         <HelpButton onClick={() => setShowHelp(true)} lang={lang as any} />
       </div>
       {showHelp && <TabHelpModal topic="k7" lang={lang as any} onClose={() => setShowHelp(false)} />}
@@ -1437,6 +1518,7 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
 
           {/* PAINÉIS: BASIC | HEX | mini-XRoar — larguras ajustáveis por splitters (pesos persistidos) */}
           <div ref={panelsRowRef} className="flex" style={{ flex: '1 1 0%', minHeight: 80 }}>
+            {basicPanelOpen && (
             <div className="glass-panel flex flex-col" style={{ flex: `${panelW.basic} 1 0%`, minWidth: 60, minHeight: 0, overflow: 'hidden' }}>
               <div className="px-2 py-1 border-b border-[var(--border)] text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] flex-shrink-0 flex justify-between"><span>{t('BASIC (detokenizado · 32 col)', 'BASIC (detokenized · 32 col)')}</span>{playing && revealFrac < 1 && <span style={{ color: '#34d399' }}>▶ {t('lendo…', 'reading…')}</span>}</div>
               <div ref={basicScrollRef} className="flex-1 overflow-auto p-2" style={{ minHeight: 0 }}>
@@ -1446,7 +1528,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
                       : <span className="text-[11px]" style={{ color: '#fbbf24' }}>{t('Não foi possível detokenizar este BASIC.', 'Could not detokenize this BASIC.')}</span>}
               </div>
             </div>
-            {splitter('basic', 'hex')}
+            )}
+            {basicPanelOpen && hexPanelOpen && splitter('basic', 'hex')}
+            {hexPanelOpen && (
             <div className="glass-panel flex flex-col" style={{ flex: `${panelW.hex} 1 0%`, minWidth: 60, minHeight: 0, overflow: 'hidden' }}>
               <div className="px-2 py-1 border-b border-[var(--border)] text-[9px] font-bold uppercase tracking-widest text-[var(--text-muted)] flex-shrink-0 flex justify-between"><span>{t('Hexadecimal (programa)', 'Hex (program)')}</span>{streamBytes && <span className="text-[var(--text-secondary)]">{playing && hexRevealN < streamBytes.length ? `${hexRevealN} / ${streamBytes.length} B` : `${streamBytes.length} B`}</span>}</div>
               <div ref={hexScrollRef} className="flex-1 overflow-auto p-2" style={{ minHeight: 0 }}>
@@ -1454,8 +1538,9 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
                   : <span className="text-[11px] text-[var(--text-muted)]">{t('Decodifique uma fita para ver os bytes.', 'Decode a tape to see the bytes.')}</span>}
               </div>
             </div>
+            )}
             {/* 3ª coluna: mini-XRoar (mudo) — colapsável. Colapsado = só o botão; expandido = roda CLOAD/CLOADM ao dar PLAY. Tamanho (panelW.mini) persiste. */}
-            {mirrorXroar && splitter('hex', 'mini')}
+            {mirrorXroar && (hexPanelOpen ? splitter('hex', 'mini') : basicPanelOpen ? splitter('basic', 'mini') : null)}
             {mirrorXroar && <MiniXRoar lang={pt ? 'pt-br' : 'en-us'} platform={platform} active={active !== false} load={miniLoad} fast={fastLoad} flexGrow={panelW.mini} onCommandIssued={onMiniCommandIssued} onLog={onLog} />}
             {/* Coluna: MINIATURA da tela do loader — pré-visualiza a tela (do editor ou .DAT) antes de injetar. */}
             {miniScreenOpen && (
@@ -1464,15 +1549,19 @@ export function K7Tab({ lang, active, platform, onOpenBasic, detokenize, onSendT
                 <ScreenPreview bytes={miniScreen} width={200} />
                 {!miniScreen && <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t('Sem tela. Crie no editor 🎨 (Aplicar) ou carregue um .DAT.', 'No screen. Make one in the editor 🎨 (Apply) or load a .DAT.')}</span>}
                 <div className="flex flex-col gap-1 flex-shrink-0">
-                  <button onClick={() => { setScreenToolSeed(miniScreen); setScreenToolOpen(true); }} className="dsk-tool text-[11px]" style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 5, color: ACCENT }} title={t('Abrir esta tela no editor; ao Aplicar, a miniatura atualiza', 'Open this screen in the editor; on Apply the preview updates')}><Palette size={13} /> {t('Editar', 'Edit')}</button>
+                  <button onClick={openScreenEditor} className="dsk-tool text-[11px]" style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 5, color: ACCENT }} title={t('Abrir o editor de tela. Se a fita tiver uma tela de abertura diferente da miniatura, pergunta se quer importá-la, editar a atual ou começar do zero. Ao Aplicar, a miniatura atualiza.', 'Open the screen editor. If the tape has a splash screen different from the preview, it asks whether to import it, edit the current one, or start from scratch. On Apply the preview updates.')}><Palette size={13} /> {t('Editar', 'Edit')}</button>
                   <button onClick={loadMiniDat} className="dsk-tool text-[11px]" style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 5 }} title={t('Carregar uma tela .DAT (512B) do PC', 'Load a .DAT screen (512B) from the PC')}><FolderOpen size={13} /> {t('Carregar .DAT', 'Load .DAT')}</button>
                   <button onClick={() => miniScreen && injectScreenLoader(miniScreen)} disabled={!miniScreen || !rawRef.current || skBusy} className="dsk-tool text-[11px]" style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 5, color: GREEN, fontWeight: 700, opacity: (miniScreen && rawRef.current && !skBusy) ? 1 : 0.4 }} title={t('Embrulha o programa da fita carregada com esta tela + autostart e salva em .CAS/.WAV/.VOC/.DSK', 'Wraps the loaded tape program with this screen + autostart and saves to .CAS/.WAV/.VOC/.DSK')}><Rocket size={13} /> {t('Injetar tela + loader', 'Inject screen + loader')}</button>
                 </div>
                 <input ref={miniDatInputRef} type="file" accept=".dat" onChange={onMiniDatFile} style={{ display: 'none' }} />
               </div>
             )}
-            {/* Faixa vertical de alternância: mini-XRoar no TOPO, divisória, e a miniatura da tela embaixo. */}
+            {/* Faixa vertical de alternância (de cima p/ baixo): BASIC · HEX · mini-XRoar · miniatura da tela. */}
             <div className="glass-panel flex flex-col items-center" style={{ flex: '0 0 30px', minWidth: 30, marginLeft: 4, padding: '5px 0', gap: 6 }}>
+              <button onClick={() => setBasicPanelOpen(v => !v)} className="dsk-tool" style={{ padding: '6px 3px', color: basicPanelOpen ? ACCENT : GREEN }} title={t('Exibir/ocultar o painel BASIC (tokenizador)', 'Show/hide the BASIC (tokenizer) panel')}><FileCode2 size={16} /></button>
+              <div style={{ width: '66%', height: 1, background: 'var(--border)', flexShrink: 0 }} />
+              <button onClick={() => setHexPanelOpen(v => !v)} className="dsk-tool" style={{ padding: '6px 3px', color: hexPanelOpen ? ACCENT : GREEN }} title={t('Exibir/ocultar o painel Hexadecimal (programa)', 'Show/hide the Hexadecimal (program) panel')}><Binary size={16} /></button>
+              <div style={{ width: '66%', height: 1, background: 'var(--border)', flexShrink: 0 }} />
               <button onClick={() => setMirrorXroar(v => !v)} className="dsk-tool" style={{ padding: '6px 3px', color: mirrorXroar ? ACCENT : GREEN }} title={t('Espelhar no mini-XRoar (mudo): ao dar PLAY, reseta e roda CLOAD/CLOADM numa tela embutida ao lado do hex', 'Mirror in the mini-XRoar (muted): on PLAY, resets and runs CLOAD/CLOADM in an embedded screen next to the hex')}><ScreenShare size={16} /></button>
               <div style={{ width: '66%', height: 1, background: 'var(--border)', flexShrink: 0 }} />
               <button onClick={() => setMiniScreenOpen(v => !v)} className="dsk-tool" style={{ padding: '6px 3px', color: miniScreenOpen ? ACCENT : GREEN }} title={t('Abrir/fechar a miniatura da tela do loader: pré-visualize a tela e injete tela + loader na fita carregada', 'Open/close the loader screen preview: preview the screen and inject screen + loader into the loaded tape')}><ImageIcon size={16} /></button>

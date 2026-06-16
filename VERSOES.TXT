@@ -10,6 +10,31 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.69 — 2026-06-16
+--------------------------------------------------------------------------------
+Melhorias de USABILIDADE na aba XRoar (splitters dos paineis) e na aba K7 (aviso ao abrir .wav de
+musica, reorganizacao do editor de tela e botoes para exibir/ocultar os paineis BASIC e HEX).
+
+ADICIONADO
+  • XRoar — SPLITTERS VERTICAIS dos dois lados da tela do emulador: arraste para redimensionar o painel
+    ESQUERDO (Drives/Fita/Joystick) e o DIREITO (Maquina/Video/Controles). Larguras persistidas (160–420 px),
+    ocultos no modo Expandir; a tela 4:3 se reajusta sozinha.
+  • K7 — AVISO ".wav que nao e fita": ao abrir um .wav com cara de musica/audio comum (estereo e/ou
+    >=44,1 kHz) o app confere se ha BLOCOS/sincronismo (FSK) validos. Se nao houver, abre um MODAL proprio
+    (padrao do app) mostrando os dados do arquivo (mono/canais, bits, kHz, duracao) e perguntando se quer
+    carregar mesmo assim. Fitas normais (mono, ~9,6–22 kHz) passam direto. (Corrige o falso-positivo do
+    marcador de sync, que aparece por acaso em audio longo.)
+  • K7 — BOTOES EXIBIR/OCULTAR PAINEIS na faixa vertical (de cima p/ baixo): BASIC (tokenizador), HEX
+    (programa), mini-XRoar e Miniatura da tela. Estado de cada um persistido; splitters se ajustam a
+    qualquer combinacao de paineis visiveis.
+
+ALTERADO
+  • K7 — removido o botao redundante "Editor de tela" da barra de ferramentas. O fluxo dele foi mesclado
+    no botao "Editar" da miniatura: se a fita tem uma tela de abertura diferente da miniatura, pergunta
+    se quer IMPORTAR a tela da fita, EDITAR a atual ou COMECAR DO ZERO.
+  • XRoar — textos de ajuda do teclado (layout CoCo/PC) e do programa encurtados; rotulo do joystick 0.
+
+--------------------------------------------------------------------------------
 v1.0.68 — 2026-06-16
 --------------------------------------------------------------------------------
 CORRECAO: os botoes "Reinserir" (drives D0-D3) e "Recarregar" (.bin/.rom/.ccc) do XRoar, e os drives

@@ -10,6 +10,31 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.69 — 2026-06-16
+--------------------------------------------------------------------------------
+USABILITY improvements on the XRoar tab (panel splitters) and the K7 tab (warning when opening a music
+.wav, screen-editor reorg, and buttons to show/hide the BASIC and HEX panels).
+
+ADDED
+  • XRoar — VERTICAL SPLITTERS on both sides of the emulator screen: drag to resize the LEFT panel
+    (Drives/Tape/Joystick) and the RIGHT panel (Machine/Video/Controls). Widths are persisted (160–420 px),
+    hidden in Expand mode; the 4:3 screen re-fits automatically.
+  • K7 — "not a tape .wav" WARNING: when you open a .wav that looks like ordinary music/audio (stereo
+    and/or >=44.1 kHz) the app checks for valid (FSK) blocks/sync. If none, it opens an in-app MODAL
+    (app style) showing the file's data (mono/channels, bits, kHz, duration) and asks whether to load it
+    anyway. Normal tapes (mono, ~9.6–22 kHz) load straight through. (Fixes the sync-marker false positive,
+    which appears by chance in long audio.)
+  • K7 — SHOW/HIDE PANEL BUTTONS in the vertical strip (top to bottom): BASIC (tokenizer), HEX (program),
+    mini-XRoar and Screen preview. Each one's state is persisted; splitters adapt to any combination of
+    visible panels.
+
+CHANGED
+  • K7 — removed the redundant "Screen editor" toolbar button. Its flow was merged into the thumbnail's
+    "Edit" button: if the tape has a splash screen different from the preview, it asks whether to IMPORT
+    the tape screen, EDIT the current one, or START from scratch.
+  • XRoar — keyboard (CoCo/PC layout) and program help texts shortened; joystick 0 label.
+
+--------------------------------------------------------------------------------
 v1.0.68 — 2026-06-16
 --------------------------------------------------------------------------------
 FIX: XRoar's "Re-insert" (drives D0-D3) and "Reload" (.bin/.rom/.ccc) buttons, and the DriveWire
