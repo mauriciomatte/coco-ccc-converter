@@ -5,12 +5,15 @@
 //     endereçamentos absolutos do 6809 (JMP/JSR estendido, página direta…) quebrariam;
 //   - um STUB position-independent (em RAM alta, fora de $0600–$25FF reservada pelo Disk BASIC)
 //     reproduz a "espera do loader" (tecla OU delay) e salta para o EXEC original.
-// Cada binário leva uma ASSINATURA "CDCU" no bloco do stub, permitindo ao app reconhecer arquivos
+// Cada binário leva uma ASSINATURA "CFIU" no bloco do stub, permitindo ao app reconhecer arquivos
 // próprios e, em conversões de volta (→ CAS/WAV/programa puro), descartar os extras de disco.
+// COMPAT: arquivos gerados antes da renomeação do app levam a assinatura antiga "CDCU"; a LEITURA
+// (readCdcuInfo/stripToProgram) aceita as duas, mas a GRAVAÇÃO usa sempre a atual (CFIU_MAGIC).
 // Ref. de mapa de memória: Disk ROM @ $C000–$DFFF; RAM do DOS $0600–$25FF; RSTVEC $71/$72; ver
 // memory/disk-rom-memmap-and-loader-conversion.md.
 
-export const CDCU_MAGIC = 'CDCU';
+export const CFIU_MAGIC = 'CFIU';            // assinatura ATUAL (gravada) — CoCo File Image Utility
+export const LEGACY_MAGICS = ['CDCU'];       // assinaturas antigas ainda RECONHECIDAS na leitura
 export const CDCU_VERSION = 1;
 export const CDCU_HEADER_LEN = 18; // magic(4)+ver(1)+flags(1)+origLoad(2)+origExec(2)+telaLoad(2)+telaLen(2)+progLoad(2)+progLen(2)
 
@@ -64,10 +67,10 @@ function stubCode(origExec: number, mode: 'key' | 'delay', trap: boolean): Buffe
   return Buffer.from([...disarm, 0xAD, 0x9F, 0xA0, 0x00, 0x4D, 0x27, 0xF9, ...tail]);
 }
 
-// Cabeçalho de assinatura CDCU (18 bytes) gravado no início do bloco do stub.
+// Cabeçalho de assinatura CFIU (18 bytes) gravado no início do bloco do stub.
 function cdcuHeader(opts: NoLoaderOpts, flags: number): Buffer {
   const h = Buffer.alloc(CDCU_HEADER_LEN);
-  h.write(CDCU_MAGIC, 0, 'ascii');
+  h.write(CFIU_MAGIC, 0, 'ascii');
   h[4] = CDCU_VERSION; h[5] = flags;
   h.writeUInt16BE(opts.progLoad & 0xFFFF, 6);   // origLoad (= progLoad)
   h.writeUInt16BE(opts.origExec & 0xFFFF, 8);
@@ -134,11 +137,13 @@ export function parseDecb(buf: Buffer): { segs: Array<{ load: number; data: Buff
   return { segs, exec };
 }
 
-// Reconhece a assinatura CDCU num binário DECB (.bin) — retorna o mapa ou null se não for nosso.
+// Reconhece a assinatura do app num binário DECB (.bin) — aceita a atual (CFIU) e as legadas (CDCU).
+// Retorna o mapa ou null se não for nosso.
 export function readCdcuInfo(buf: Buffer): CdcuInfo | null {
   const { segs } = parseDecb(buf);
   for (const s of segs) {
-    if (s.data.length >= CDCU_HEADER_LEN && s.data.subarray(0, 4).toString('ascii') === CDCU_MAGIC) {
+    const tag = s.data.length >= 4 ? s.data.subarray(0, 4).toString('ascii') : '';
+    if (s.data.length >= CDCU_HEADER_LEN && (tag === CFIU_MAGIC || LEGACY_MAGICS.includes(tag))) {
       return {
         version: s.data[4], flags: s.data[5],
         origLoad: s.data.readUInt16BE(6), origExec: s.data.readUInt16BE(8),

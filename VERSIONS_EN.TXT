@@ -10,6 +10,38 @@ changed/added/fixed.
 
 
 --------------------------------------------------------------------------------
+v1.0.67 — 2026-06-16
+--------------------------------------------------------------------------------
+ASCII/SG4 SCREEN EDITOR on the K7 tab (create/edit tape and loader splash screens), a preview thumbnail with injection, the no-loader file signature renamed CDCU -> CFIU, and XRoar improvements (drag-and-drop a disk onto a drive + Reinsert/Reload buttons).
+
+ADDED
+  • SCREEN EDITOR (ASCII / SG4) — new modal that edits the CoCo 32x16 = 512-byte screen at $0400 (the same
+    format as tape splash screens). ASCII mode ($00-$7F, text/symbols, with NORMAL/INVERSE following Caps Lock)
+    and SG4 mode ($80-$FF, colored semigraphic blocks). Tools: pen, eraser, bucket, line, rectangle, circle
+    (right-click = filled), select (Ctrl+C/X/V) and paste. Import an image (PNG/JPG) with Floyd-Steinberg
+    dithering to the SG4 palette. OPEN and SAVE .DAT (raw 512 bytes, reusable across loaders). Navigation:
+    ALT+drag = pan, Ctrl+wheel = centered zoom, Ctrl+Z/Y = undo/redo. Tool/zoom/grid/colors and the drawing are
+    PERSISTENT across sessions. (Editor ported from the CGS project.)
+  • K7 TAB — a "SCREEN EDITOR" button in the toolbar (always available). The "-> No loader" dialog has
+    "Edit/Create splash screen": edit the tape's original screen or make a new one; the edited screen replaces
+    the original at $0400 in the generated BIN/DSK. When you open the editor with a screen+loader tape loaded,
+    the app asks whether to IMPORT the tape's screen or start from scratch.
+  • K7 TAB — LOADER SCREEN PREVIEW: a new column (next to the mini-XRoar) that PREVIEWS the screen before
+    injecting. When you load a screen+loader tape, the preview ALREADY SHOWS the screen that came in the file.
+    Buttons: Edit (opens the editor; on Apply the preview updates), Load .DAT and "Inject screen + loader"
+    (wraps the tape program with the screen + autostart -> .BIN/.DSK). The vertical strip was reorganized:
+    mini-XRoar on top, divider, and the preview below. The preview (open + screen) is PERSISTENT.
+
+CHANGED
+  • The "no-loader" file SIGNATURE was renamed from "CDCU" to "CFIU" (CoCo File Image Utility). WRITES always
+    use CFIU; READS (Revert) recognize CFIU AND the legacy CDCU -> full backward compatibility with old files.
+  • XRoar — D0-D3 DRIVES: now accept DRAG-AND-DROP of a disk from Explorer straight onto the drive row
+    (.dsk/.vdk/.jvc/.dmk/.os9); the row highlights on hover. New REINSERT button (re-injects the same disk
+    cached by XRoar after a reset, without reopening the picker).
+  • XRoar — PROGRAM: new RELOAD button (re-injects the last loaded .bin/.rom, reusing the XRoar cache) next to
+    the load controls.
+
+--------------------------------------------------------------------------------
 v1.0.66 — 2026-06-14
 --------------------------------------------------------------------------------
 "Send to..." and "Save file..." hubs on the Servers tab (and double-click on the DSK tab opening the hub); CoCo/PC keyboard in XRoar with a keyboard language (ABNT2) and auto-detection; syntax highlighting and "RUN IN XROAR" in the BASIC editor; and a Reload button on the DSK tab.

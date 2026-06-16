@@ -109,11 +109,17 @@ reaplicados a cada boot.
 
 ## 7. Drives D0–D3 — montar disco
 
-No painel esquerdo, cada linha **D0–D3** mostra o **nome do disco montado** (ou `—` se vazia), com um ícone
-de disquete que **acende** (cor primária) quando há disco, mais dois botões:
+No painel esquerdo, cada linha **D0–D3** mostra o **nome do disco montado** (ou `—` se vazia; o rótulo
+`Dx` fica na cor primária quando há disco), mais três botões:
+- **Reinserir** (⟳) — reinjeta na drive o **mesmo disco** que já estava montado. O XRoar faz **cache** da
+  imagem, então depois de um reset (ou se a imagem sumiu da memória) este botão recarrega o `.dsk` sem
+  reabrir o seletor de arquivo. Só fica habilitado quando a drive **tem** disco.
 - **Abrir** (pasta) — escolhe um disco do PC (`.dsk/.vdk/.jvc/.dmk/.os9`) e o monta naquela drive (um `.os9`
   é tratado como `.dsk` pela geometria). Fica desabilitado enquanto o emulador não está **pronto**.
 - **Ejetar** (×) — desmonta aquela drive. Só fica habilitado quando a drive **tem** disco.
+
+Você também pode **arrastar e soltar** um disco do Explorer **direto na linha do drive** que quiser
+(`.dsk/.vdk/.jvc/.dmk/.os9`) — a linha realça enquanto você arrasta por cima.
 
 A **drive 0** é a de boot. Normalmente você nem usa isto à mão: as outras abas montam o disco para você
 (seção 11). Trocar de máquina/vídeo **ejeta tudo** (as drives são limpas no reboot).
@@ -141,6 +147,9 @@ A **drive 0** é a de boot. Normalmente você nem usa isto à mão: as outras ab
 - O toggle **"AutoRun"** (ao lado de Abrir): **ligado** = um `.bin/.hex` boota o emulador **com** o arquivo e roda sozinho;
   **desligado** = só carrega na memória (você roda com `EXEC`). Cartuchos `.ccc/.rom/.pak` e snapshots `.sna`
   **sempre** rodam direto.
+- **Recarregar** (⟳, ao lado dos botões) — reinjeta o **último** `.bin/.rom` carregado. Como o XRoar faz
+  **cache**, use isto para reinicializar o arquivo depois de um reset do emulador, sem reabrir o seletor.
+  Só fica habilitado quando há um programa carregado.
 
 ---
 

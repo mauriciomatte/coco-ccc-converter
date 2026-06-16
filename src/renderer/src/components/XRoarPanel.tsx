@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, Disc3, Music, ToggleLeft, ToggleRight, Maximize2, Minimize2, HelpCircle } from 'lucide-react';
+import { RotateCcw, Power, FolderOpen, Pause, Play, Cpu, X, RefreshCw, Music, ToggleLeft, ToggleRight, Maximize2, Minimize2, HelpCircle } from 'lucide-react';
 import { TabHelpModal } from './TabHelp';
 
 // Discos vão para uma drive via insert_disk; FITA (.cas/.wav) vai pro deck via insert_tape;
@@ -81,7 +81,13 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   const [paused, setPaused] = useState(false);
   const [status, setStatus] = useState('');
   const [drives, setDrives] = useState<string[]>(['', '', '', '']);
+  const [dragDrive, setDragDrive] = useState<number | null>(null); // drive sob o cursor durante um arrastar (highlight)
   useEffect(() => { onDrivesChange?.(drives); }, [drives]); // espelha os drives ocupados pro App (RODAR NO XROAR do BASIC)
+  // Guarda o disco montado em cada drive (nome/ext/bytes) p/ o botão "Reinserir" reinjetar — o XRoar faz
+  // cache da imagem, então após um reset o "Reinserir" recarrega o .dsk sem reabrir o seletor de arquivo.
+  const driveDataRef = useRef<({ name: string; ext: string; data: Uint8Array } | null)[]>([null, null, null, null]);
+  // Último programa (.bin/.rom/…) carregado, p/ o botão "Recarregar" reinjetar após um reset do XRoar.
+  const lastProgRef = useRef<{ name: string; ext: string; data: number[] } | null>(null);
   const [tapeName, setTapeName] = useState('');                                  // fita montada (.cas/.wav)
   const [tapeAutorun, setTapeAutorun] = useState(false);                          // CLOAD(M) automático: ON=XRoar roda sozinho; OFF=espera o usuário
   const [binAutorun, setBinAutorun] = useState(true);                             // .bin AutoRun: ON=boot com o arquivo (-run); OFF=só carrega
@@ -131,6 +137,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
       // mantém o original.
       const vfsName = e === 'os9' ? name.replace(/\.os9$/i, '') + '.dsk' : name;
       sendCmd('insert_disk', { drive, fileName: vfsName, fileData: arr });
+      driveDataRef.current[drive] = { name, ext: e, data }; // guarda p/ "Reinserir"
       setDrives(d => { const n = [...d]; n[drive] = name; return n; });
       onLog?.(`D${drive}: ${name}`, `D${drive}: ${name}`, 'info');
     } else if (CASSETTE_EXTS.includes(e)) {
@@ -172,7 +179,38 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
 
   const eject = (drive: number) => {
     sendCmd('eject_disk', { drive });
+    driveDataRef.current[drive] = null;
     setDrives(d => { const n = [...d]; n[drive] = ''; return n; });
+  };
+
+  // Arrastar-e-soltar um disco do Explorer DIRETO na linha do drive escolhido (D0–D3). Lê os bytes do
+  // arquivo no renderer (File.arrayBuffer) e monta com o mesmo loadToDrive do botão "Abrir".
+  const onDropDrive = async (drive: number, e: React.DragEvent) => {
+    e.preventDefault(); setDragDrive(null);
+    if (!ready) return;
+    const f = e.dataTransfer.files?.[0];
+    if (!f) return;
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    if (!DISK_EXTS.includes(ext)) {
+      onLog?.(`XRoar: "${f.name}" não é uma imagem de disco aceita (.dsk/.vdk/.jvc/.dmk/.os9).`,
+              `XRoar: "${f.name}" is not an accepted disk image (.dsk/.vdk/.jvc/.dmk/.os9).`, 'warn');
+      return;
+    }
+    try {
+      const buf = await f.arrayBuffer();
+      loadToDrive(drive, f.name, ext, new Uint8Array(buf));
+    } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
+  };
+
+  // Reinsere no drive o último disco montado (o XRoar faz cache → após um reset, isto reinjeta a imagem
+  // na mesma drive sem reabrir o seletor de arquivo). Mesmo padrão do "Recarregar" da aba DSK.
+  const reinsertDrive = (drive: number) => {
+    const p = driveDataRef.current[drive];
+    if (!p) return;
+    const vfsName = p.ext === 'os9' ? p.name.replace(/\.os9$/i, '') + '.dsk' : p.name;
+    sendCmd('insert_disk', { drive, fileName: vfsName, fileData: Array.from(p.data) });
+    onLog?.(`D${drive}: ${p.name} (reinserido)`, `D${drive}: ${p.name} (reinserted)`, 'info');
+    setTimeout(focusEmu, 60);
   };
 
   // ─── Programa (.bin/.rom/.ccc/.pak/.hex/.sna) ───
@@ -181,27 +219,43 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   //  • .ccc/.rom (cartucho) / .sna (snapshot): o load_file em runtime (autorun) já mapeia e roda.
   //  • .pak (Program Pak do VCC) = ROM de cartucho crua, idêntica a .rom/.ccc. O XRoar reconhece
   //    cartucho pela EXTENSÃO, então o apresentamos como ".rom" (o nome de tela continua o original).
+  const applyProgram = (name: string, ext: string, arr: number[], reload = false) => {
+    const e = ext.toLowerCase();
+    const isBin = e === 'bin' || e === 'hex';
+    setProgName(name);
+    const xName = e === 'pak' ? name.replace(/\.pak$/i, '.rom') : name; // .pak → .rom p/ o XRoar mapear no cartucho
+    const tag = reload ? ' (recarregado)' : '';
+    const tagEn = reload ? ' (reloaded)' : '';
+    if (isBin && binAutorun) {
+      bootProgRef.current = { name, data: arr };
+      setBootProg({ name, data: arr });
+      setBootProgKey(k => k + 1);                                       // remonta o iframe (bootfile=1) → boot com o programa
+      onLog?.(`Programa (boot): ${name}${tag}`, `Program (boot): ${name}${tagEn}`, 'info');
+    } else {
+      sendCmd('load_file', { fileName: xName, fileData: arr, loadType: (isBin && !binAutorun) ? 0 : 1, drive: 0 });
+      onLog?.(binAutorun ? `Programa: ${name}${tag}` : `Programa anexado: ${name}${tag}`, binAutorun ? `Program: ${name}${tagEn}` : `Program attached: ${name}${tagEn}`, 'info');
+      setTimeout(focusEmu, 60);
+    }
+  };
+
   const openProgram = async () => {
     try {
       const res = await window.cocoApi.xroarPickFile('program');
       if (res?.cancelled) return;
       if (!res?.success) { onLog?.(`XRoar: ${res?.error}`, `XRoar: ${res?.error}`, 'error'); return; }
       const e = (res.ext || '').toLowerCase();
-      const isBin = e === 'bin' || e === 'hex';
       const arr = Array.from(new Uint8Array(res.data));
-      setProgName(res.name);
-      const xName = e === 'pak' ? res.name.replace(/\.pak$/i, '.rom') : res.name; // .pak → .rom p/ o XRoar mapear no cartucho
-      if (isBin && binAutorun) {
-        bootProgRef.current = { name: res.name, data: arr };
-        setBootProg({ name: res.name, data: arr });
-        setBootProgKey(k => k + 1);                                       // remonta o iframe (bootfile=1) → boot com o programa
-        onLog?.(`Programa (boot): ${res.name}`, `Program (boot): ${res.name}`, 'info');
-      } else {
-        sendCmd('load_file', { fileName: xName, fileData: arr, loadType: (isBin && !binAutorun) ? 0 : 1, drive: 0 });
-        onLog?.(binAutorun ? `Programa: ${res.name}` : `Programa anexado: ${res.name}`, binAutorun ? `Program: ${res.name}` : `Program attached: ${res.name}`, 'info');
-        setTimeout(focusEmu, 60);
-      }
+      lastProgRef.current = { name: res.name, ext: e, data: arr }; // guarda p/ "Recarregar"
+      applyProgram(res.name, e, arr);
     } catch (err: any) { onLog?.(`XRoar: ${err.message}`, `XRoar: ${err.message}`, 'error'); }
+  };
+
+  // Recarrega o último programa (.bin/.rom) — o XRoar faz cache, então após um reset isto reinjeta o
+  // arquivo sem reabrir o seletor. Mesmo papel do "Reinserir" das drives.
+  const reloadProgram = () => {
+    const p = lastProgRef.current;
+    if (!p) return;
+    applyProgram(p.name, p.ext, p.data, true);
   };
 
   // Controles de imagem AO VIVO. Fonte XRoar (wasm.c + vo_render.c): tags 'brightness',
@@ -296,7 +350,7 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
   // após uma troca de máquina (ex.: "Testar Painel" de um disco Dragon com o XRoar em CoCo) ESPERA
   // a máquina certa subir antes de montar.
   useEffect(() => {
-    setDrives(['', '', '', '']); setTapeName('');
+    setDrives(['', '', '', '']); setTapeName(''); driveDataRef.current = [null, null, null, null];
     // Remontagem (não a 1ª montagem) limpa as drives → re-aplica o disco/texto pendente no novo boot,
     // senão a imagem some do emulador (mas o nome ficava no D1) e o usuário tinha que testar 2×.
     if (mounted) { setReady(false); lastLoadKey.current = 0; lastTypeKey.current = 0; }
@@ -430,10 +484,16 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
         <div className="glass-panel p-2.5 flex flex-col gap-1.5">
           <div className={sectionTitle}>{t('Drives', 'Drives')}</div>
           {[0, 1, 2, 3].map(d => (
-            <div key={d} className="flex items-center gap-1.5">
-              <Disc3 size={13} className={drives[d] ? 'text-[var(--primary)]' : 'text-[var(--text-muted)]'} />
-              <span className="text-[10px] font-mono w-6 flex-shrink-0">D{d}</span>
+            <div key={d}
+              onDragOver={e => { if (ready) { e.preventDefault(); setDragDrive(d); } }}
+              onDragLeave={() => setDragDrive(c => (c === d ? null : c))}
+              onDrop={e => onDropDrive(d, e)}
+              className="flex items-center gap-1.5 rounded"
+              style={dragDrive === d ? { outline: '1px dashed var(--primary)', background: 'var(--primary-glow)' } : undefined}
+              title={t('Arraste e solte um disco (.dsk/.vdk/.jvc/.dmk/.os9) aqui para montar neste drive', 'Drag and drop a disk (.dsk/.vdk/.jvc/.dmk/.os9) here to mount it in this drive')}>
+              <span className="text-[10px] font-mono w-6 flex-shrink-0" style={{ color: drives[d] ? 'var(--primary)' : 'var(--text-muted)' }}>D{d}</span>
               <span className="text-[10px] text-[var(--text-secondary)] font-mono truncate flex-1" title={drives[d]}>{drives[d] || '—'}</span>
+              <button onClick={() => reinsertDrive(d)} disabled={!ready || !drives[d]} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Reinserir o disco (o XRoar faz cache; reinjeta a imagem após um reset)', 'Re-insert the disk (XRoar caches; re-injects the image after a reset)')}><RefreshCw size={12} /></button>
               <button onClick={() => openToDrive(d)} disabled={!ready} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Abrir', 'Open')}><FolderOpen size={12} /></button>
               <button onClick={() => eject(d)} disabled={!ready || !drives[d]} className="dsk-tool" style={{ padding: '2px 6px' }} title={t('Ejetar', 'Eject')}><X size={12} /></button>
             </div>
@@ -477,14 +537,18 @@ export default function XRoarPanel({ lang, active, pendingLoad, pendingType, onD
             </div>
           )}
           <div className="flex gap-1.5">
-            <button onClick={openProgram} disabled={!ready} className="dsk-tool flex-1 flex items-center gap-1.5 justify-center" style={{ padding: '3px 7px' }}
+            <button onClick={openProgram} disabled={!ready} className="dsk-tool flex-1 flex items-center gap-1 justify-center" style={{ padding: '3px 5px' }}
               title={t('Abrir e RODAR um programa (.bin/.rom/.ccc/.pak/.hex/.sna) — o XRoar detecta o formato e executa (LOADM/EXEC automático). .pak = cartucho do VCC.', 'Open and RUN a program (.bin/.rom/.ccc/.pak/.hex/.sna) — XRoar detects the format and executes it (LOADM/EXEC auto). .pak = VCC cartridge.')}>
-              <FolderOpen size={13} /><span className="text-[10px] font-bold">{t('Abrir', 'Open')}</span>
+              <FolderOpen size={12} /><span className="text-[10px] font-bold">{t('Abrir', 'Open')}</span>
             </button>
-            <button onClick={() => setBinAutorun(v => !v)} className="dsk-tool flex-1 flex items-center gap-1.5 justify-center" style={{ padding: '3px 7px', color: binAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
+            <button onClick={() => setBinAutorun(v => !v)} className="dsk-tool flex-1 flex items-center gap-1 justify-center" style={{ padding: '3px 5px', color: binAutorun ? 'var(--primary)' : 'var(--text-muted)' }}
               title={t('AutoRun do .bin. LIGADO: .bin/.hex bootam o XRoar com o arquivo (xroar arquivo.bin) e RODAM sozinhos. DESLIGADO: só carregam na memória (você roda com EXEC). (.ccc/.rom/.sna sempre rodam.)', '.bin AutoRun. ON: .bin/.hex boot XRoar with the file (xroar file.bin) and RUN automatically. OFF: just load into memory (run with EXEC). (.ccc/.rom/.sna always run.)')}>
-              {binAutorun ? <ToggleRight size={15} /> : <ToggleLeft size={15} />}
+              {binAutorun ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
               <span className="text-[10px] font-bold">{t('AutoRun', 'AutoRun')}</span>
+            </button>
+            <button onClick={reloadProgram} disabled={!ready || !progName} className="dsk-tool flex-shrink-0" style={{ padding: '3px 6px' }}
+              title={t('Recarregar o .bin/.rom carregado (o XRoar faz cache; reinjeta o arquivo após um reset).', 'Reload the loaded .bin/.rom (XRoar caches; re-injects the file after a reset).')}>
+              <RefreshCw size={13} />
             </button>
           </div>
           <div className="text-[9px] text-[var(--text-muted)] leading-tight">{t('.CCC/.ROM/.PAK (cartucho) e .SNA rodam direto. .BIN de máquina precisa do AutoRun p/ executar.', '.CCC/.ROM/.PAK (cartridge) and .SNA run directly. Machine .BIN needs AutoRun to execute.')}</div>

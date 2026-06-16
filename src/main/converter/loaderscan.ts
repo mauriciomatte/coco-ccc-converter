@@ -232,6 +232,7 @@ export interface UnifiedLoaderResult {
   name: string;
   // Campos da Família A (0/vazio nas demais) — usados pelo diálogo de build:
   telaLoad: number; telaLen: number; hasScreen: boolean;
+  screen?: Buffer;        // os 512 bytes da tela extraída (p/ semear o editor de tela)
   progLoad: number; progExec: number; progLen: number; progEnd: number;
   cloadmCalls: number;
   // Info da Família B:
@@ -248,7 +249,7 @@ export function scanLoaders(wavBuffer: Buffer, opts?: any): UnifiedLoaderResult 
     return {
       detected: true, family: 'softkristian', familyName: 'SoftKristian', confidence: a.confidence,
       convertible: true, name: a.name,
-      telaLoad: a.telaLoad, telaLen: a.telaLen, hasScreen: a.telaLen > 0,
+      telaLoad: a.telaLoad, telaLen: a.telaLen, hasScreen: a.telaLen > 0, screen: a.screen,
       progLoad: a.progLoad, progExec: a.progExec, progLen: a.program.length, progEnd, cloadmCalls: a.cloadmCalls,
       notes: a.notes,
     };

@@ -108,11 +108,17 @@ Three sliders adjust the picture **live** (no restart). The values are saved and
 
 ## 7. Drives D0–D3 — mount a disk
 
-In the left panel, each **D0–D3** row shows the **mounted disk name** (or `—` if empty), with a floppy icon
-that **lights up** (primary color) when a disk is present, plus two buttons:
+In the left panel, each **D0–D3** row shows the **mounted disk name** (or `—` if empty; the `Dx` label turns
+primary-colored when a disk is present), plus three buttons:
+- **Re-insert** (⟳) — re-injects the **same disk** already mounted in that drive. XRoar **caches** the image,
+  so after a reset (or if the image dropped out of memory) this button reloads the `.dsk` without reopening
+  the file picker. Enabled only when the drive **has** a disk.
 - **Open** (folder) — picks a PC disk (`.dsk/.vdk/.jvc/.dmk/.os9`) and mounts it in that drive (a `.os9` is
   treated as a `.dsk` by geometry). Disabled until the emulator is **ready**.
 - **Eject** (×) — unmounts that drive. Enabled only when the drive **has** a disk.
+
+You can also **drag and drop** a disk from Explorer **straight onto the row of the drive** you want
+(`.dsk/.vdk/.jvc/.dmk/.os9`) — the row highlights while you drag over it.
 
 **Drive 0** is the boot drive. You usually don't do this by hand: the other tabs mount the disk for you
 (section 11). Switching machine/video **ejects everything** (drives are cleared on the reboot).
@@ -140,6 +146,9 @@ that **lights up** (primary color) when a disk is present, plus two buttons:
 - The **"AutoRun"** toggle (next to Open): **on** = a `.bin/.hex` boots the emulator **with** the file and runs by
   itself; **off** = it only loads into memory (you run it with `EXEC`). Cartridges `.ccc/.rom/.pak` and snapshots
   `.sna` **always** run directly.
+- **Reload** (⟳, next to the buttons) — re-injects the **last** `.bin/.rom` you loaded. Since XRoar **caches**,
+  use this to re-initialize the file after the emulator is reset, without reopening the picker. Enabled only
+  when a program is loaded.
 
 ---
 

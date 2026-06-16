@@ -1044,3 +1044,24 @@ input[type="number"] {
 .dw-mini-btn { background: transparent; border: 0; padding: 1px; cursor: pointer; display: inline-flex; border-radius: 3px; }
 .dw-mini-btn:hover:not(:disabled) { background: #ffffff14; }
 .dw-mini-btn:disabled { cursor: default; }
+
+/* ── Editor de tela ASCII/SG4 (portado do CGS) ───────────────────────────────
+   O editor usa nomes de CSS-vars próprios do CGS; mapeamos para a nossa paleta
+   aqui (escopo .screen-editor) para não poluir o :root global. */
+.screen-editor {
+  --bg-base: hsl(225, 60%, 4%);
+  --bg-darker: hsl(225, 55%, 7%);
+  --bg-panel: hsla(223, 47%, 9%, 0.92);
+  --bg-active: hsla(120, 100%, 45%, 0.08);
+  --border-color: hsla(140, 25%, 18%, 0.7);
+  --border-subtle: hsla(140, 20%, 16%, 0.5);
+  --border-active: hsla(120, 100%, 45%, 0.55);
+  --text-muted: hsl(120, 8%, 46%);
+  --accent-yellow: hsl(48, 100%, 55%);
+  --accent-purple: hsl(280, 70%, 65%);
+  --accent-orange: hsl(30, 100%, 55%);
+  --vdg-green: #00E600;
+  --vdg-green-dim: hsla(120, 100%, 45%, 0.5);
+  --vdg-green-glow: hsla(120, 100%, 45%, 0.15);
+  --radius-sm: 4px;
+}

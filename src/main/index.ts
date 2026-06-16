@@ -1126,6 +1126,7 @@ ipcMain.handle('loader-scan', async (_, wavBytes: Uint8Array, opts: any) => {
       family: pr.family, familyName: pr.familyName, convertible: pr.convertible,
       confidence: pr.confidence, name: pr.name,
       telaLoad: pr.telaLoad, telaLen: pr.telaLen, hasScreen: pr.hasScreen,
+      screen: pr.screen && pr.screen.length ? new Uint8Array(pr.screen) : null,  // p/ semear o editor de tela
       progLoad: pr.progLoad, progExec: pr.progExec, progLen: pr.progLen, progEnd: pr.progEnd,
       cloadmCalls: pr.cloadmCalls, parts: pr.parts, romCalls: pr.romCalls, notes: pr.notes,
       warnStack: pr.progEnd >= 0x7E00,                                // encosta na pilha do sistema
@@ -1140,8 +1141,13 @@ ipcMain.handle('loader-build', async (_, wavBytes: Uint8Array, opts: any, params
   try {
     const pr = scanSoftKristian(Buffer.from(wavBytes), opts || {});
     if (!pr || !pr.program.length) return { success: false, error: 'Loader não detectado nesta fita.' };
+    // Tela CUSTOM (editor ASCII/SG4): se o usuário editou/criou uma tela, ela sobrescreve a extraída da
+    // fita. São sempre 512 bytes de VRAM VDG em $0400 (mesmo formato que pr.screen).
+    const customScreen = params.screenBytes && params.screenBytes.length ? Buffer.from(params.screenBytes) : null;
+    const screen = customScreen ?? pr.screen;
+    const screenLoad = params.screenLoad ?? (pr.telaLoad || 0x0400);
     const bin = buildNoLoaderBin({
-      screen: pr.screen, screenLoad: params.screenLoad ?? pr.telaLoad,
+      screen, screenLoad,
       program: pr.program, progLoad: params.progLoad ?? pr.progLoad,
       origExec: params.progExec ?? pr.progExec,
       mode: params.mode === 'delay' ? 'delay' : 'key', trap: params.trap !== false,
@@ -1186,7 +1192,7 @@ ipcMain.handle('loader-revert', async () => {
   try {
     if (!mainWindow) return { success: false, error: 'Sem janela.' };
     const open = await dialog.showOpenDialog(mainWindow, {
-      title: 'Reverter arquivo do app (CDCU) → programa puro', properties: ['openFile'],
+      title: 'Reverter arquivo do app (CFIU) → programa puro', properties: ['openFile'],
       filters: [{ name: 'CoCo binary (.bin)', extensions: ['bin'] }, { name: 'All Files', extensions: ['*'] }],
     });
     if (open.canceled || !open.filePaths[0]) return { cancelled: true };

@@ -10,6 +10,39 @@ alterado/adicionado/corrigido.
 
 
 --------------------------------------------------------------------------------
+v1.0.67 — 2026-06-16
+--------------------------------------------------------------------------------
+EDITOR DE TELA ASCII/SG4 na aba K7 (criar/editar telas de abertura de fitas e loaders), miniatura de pre-visualizacao com injecao, assinatura dos arquivos sem-loader renomeada CDCU -> CFIU, e melhorias no XRoar (arrastar-e-soltar disco no drive + botoes Reinserir/Recarregar).
+
+ADICIONADO
+  • EDITOR DE TELA (ASCII / SG4) — novo modal que edita a tela do CoCo de 32x16 = 512 bytes em $0400 (o mesmo
+    formato das telas de abertura das fitas). Modos ASCII ($00-$7F, texto/simbolos, com PADRAO/REVERSO seguindo
+    o Caps Lock) e SG4 ($80-$FF, blocos semigraficos coloridos). Ferramentas: caneta, borracha, balde, linha,
+    retangulo, circulo (clique-direito = preenchido), selecao (Ctrl+C/X/V) e colar. Importar imagem (PNG/JPG)
+    com dithering Floyd-Steinberg para a paleta SG4. ABRIR e SALVAR .DAT (512 bytes crus, reaproveitavel entre
+    loaders). Navegacao: ALT+arrastar = mover, Ctrl+roda = zoom centralizado, Ctrl+Z/Y = desfazer/refazer.
+    Ferramenta/zoom/grade/cores e o desenho ficam PERSISTENTES entre sessoes. (Editor portado do projeto CGS.)
+  • ABA K7 — botao "EDITOR DE TELA" na barra (sempre disponivel). No dialogo "-> Sem loader" ha "Editar/Criar
+    tela de abertura": edita a tela original da fita ou cria uma do zero; a tela editada substitui a original
+    em $0400 no BIN/DSK gerado. Ao abrir o editor com uma fita tela+loader carregada, o app pergunta se quer
+    IMPORTAR a tela da fita ou comecar do zero.
+  • ABA K7 — MINIATURA DA TELA DO LOADER: nova coluna (ao lado do mini-XRoar) que PRE-VISUALIZA a tela antes de
+    injetar. Ao carregar uma fita com tela+loader, a miniatura JA EXIBE a tela que veio no arquivo. Botoes
+    Editar (abre no editor; ao Aplicar a miniatura atualiza), Carregar .DAT e "Injetar tela + loader" (embrulha
+    o programa da fita com a tela + autostart -> .BIN/.DSK). A faixa vertical foi reorganizada: mini-XRoar no
+    topo, divisoria, e a miniatura embaixo. A miniatura (aberta + tela) fica PERSISTENTE.
+
+ALTERADO
+  • ASSINATURA dos arquivos "sem loader": renomeada de "CDCU" para "CFIU" (CoCo File Image Utility). A GRAVACAO
+    usa sempre CFIU; a LEITURA (Reverter) reconhece CFIU E o legado CDCU -> compatibilidade total com arquivos
+    antigos.
+  • XRoar — DRIVES D0-D3: agora aceita ARRASTAR E SOLTAR um disco do Explorer direto na linha do drive
+    (.dsk/.vdk/.jvc/.dmk/.os9); a linha realca ao passar por cima. Novo botao REINSERIR (reinjeta o mesmo disco
+    cacheado pelo XRoar apos um reset, sem reabrir o seletor).
+  • XRoar — PROGRAMA: novo botao RECARREGAR (reinjeta o ultimo .bin/.rom carregado, reaproveitando o cache do
+    XRoar) ao lado dos controles de carga.
+
+--------------------------------------------------------------------------------
 v1.0.66 — 2026-06-14
 --------------------------------------------------------------------------------
 Hubs "Enviar para..." e "Salvar arquivo..." na aba Servidores (e duplo-clique na aba DSK abrindo o hub); teclado CoCo/PC no XRoar com idioma do teclado (ABNT2) e auto-deteccao; highlight de sintaxe e "RODAR NO XROAR" no editor BASIC; e botao Recarregar na aba DSK.
